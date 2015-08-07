@@ -12379,7 +12379,10 @@ arguments[4][51][0].apply(exports,arguments)
 var h = require('hyperscript')
 
 document.getElementById('page').appendChild(
-  h('h1.classy', 'help')
+  h('div.row#options',
+    h('button#group', 'groups'),
+    h('button#group', 'knowledge')
+  )
 )
 },{"hyperscript":67}],"debug":[function(require,module,exports){
 

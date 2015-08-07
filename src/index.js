@@ -1,5 +1,8 @@
 var h = require('hyperscript')
 
 document.getElementById('page').appendChild(
-  h('h1.classy', 'help')
+  h('div.row#options',
+    h('button#group', 'groups'),
+    h('button#group', 'knowledge')
+  )
 )
