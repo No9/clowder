@@ -1,6 +1,6 @@
 var path = require('path')
 var lca = require('launch-chrome-app')
-var app = path.join(process.cwd(), process.args[3])
+var app = path.join(process.cwd(), process.argv[2])
 
 lca(app, function (err) {
   if (err) {
