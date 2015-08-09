@@ -38,7 +38,8 @@
     "chrome-util-deprecate": "^1.0.0",
     "http-node": "0.0.2",
     "hyperscript": "^1.4.6",
-    "launch-chrome-app": "^1.0.1"
+    "launch-chrome-app": "^1.0.1",
+    "pouchdb": "^4.0.0"
   },
   "devDependencies": {
     "chokidar": "^1.0.5",
