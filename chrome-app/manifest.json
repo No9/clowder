@@ -13,15 +13,30 @@
   },
   "permissions": [
     "unlimitedStorage",
-    "system.network"
+    "system.network",
+    "webview"
   ],
+  "webview": {
+    "partitions": [
+      {
+        "name": "pageeditor",
+        "accessible_resources": [
+          "editor/pageeditor.html",
+          "editor/ghostdown.css",
+          "editor/ghostdown.js",
+          "editor/ghostdow.jquery.plugin.html",
+          "editor/jquery.ghostdown.js"
+        ]
+      }
+    ]
+  },
   "sockets": {
     "tcp": {
       "connect": ["*:*"]
     },
     "udp": {"send":["*:*"], "bind":["*:*"], "multicastMembership": ""},
     "tcpServer" : {
-      "listen": [":1337"]
+      "listen": [":3000"]
     }
   }
 }

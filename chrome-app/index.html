@@ -27,12 +27,15 @@
   <link rel="icon" type="image/png" href="images/favicon.png">
 
 </head>
-<body>
+<body style="padding-top:5px">
 
   <!-- Primary Page Layout
   –––––––––––––––––––––––––––––––––––––––––––––––––– -->
   <div class="container" id="page">
-
+    <div class="row" style="height:1000px">
+    <button id="btnAdd">Add</button>
+    <webview src="editor/pageeditor.html" id="wv" partition="pageeditor" hidden="true" width="100%" height="100%"></webview>
+    </div>
   </div>
 
 <!-- End Document
@@ -44,5 +47,7 @@
 <!-- Application Libraries
   -------------------------------------------------- -->
 <script src="index.js"></script>
+  <!--
 <script src="dev/livereload.js?host=localhost&port=35729"></script>
+-->
 </html>

@@ -9,6 +9,15 @@ shares.all(function (err, data) {
     )
   }
 })
+
+document.getElementById('btnAdd').addEventListener('click', function (evt) {
+  console.log('add clicked')
+  document.getElementById('wv').hidden = false
+  document.getElementById('wv').style.width = '100%'
+  document.getElementById('wv').style.height = '100%'
+})
+
+// document.getElementById('wv').setAttribute('src', '/editor/pageeditor.html')
 /*document.getElementById('page').appendChild(
   h('div.row#options',
     h('button#group', 'groups'),
