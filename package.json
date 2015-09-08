@@ -42,7 +42,7 @@
     "http-node": "0.0.2",
     "hyperscript": "^1.4.6",
     "launch-chrome-app": "^1.0.1",
-    "multicast-dns": "^3.0.0",
+    "node-ssdp": "git+https://github.com/No9/node-ssdp.git",
     "pouchdb": "^4.0.0",
     "querystring": "^0.2.0"
   },

@@ -6,43 +6,42 @@ chrome.app.runtime.onLaunched.addListener(function () { // eslint-disable-line
     }
   })
 })
-//var express = require('express');
-//var app = express();
-//
-//app.get('/', function (req, res) {
-//  console.log('connect')
-//  res.send('Hello World!');
-//  res.end();
-//});
-//
-//var server = app.listen(3000, '127.0.0.1', function () {
-//  var host = server.address().address;
-//  var port = server.address().port;
-//
-//  console.log('Example app listening at http://%s:%s', host, port);
-//});
-var http = require('http');
+
+var http = require('http')
+var Server = require('node-ssdp').Server
+var Client = require('node-ssdp').Client
+
 http.createServer(function (req, res) {
-  res.writeHead(200, {'Content-Type': 'text/plain'});
-  res.end('Hello World\n');
-}).listen(3000, '127.0.0.1');
-console.log('Server running at http://127.0.0.1:3000/');
+  res.writeHead(200, {'Content-Type': 'text/plain'})
+  res.end('Hello World\n')
+}).listen(3000, '127.0.0.1')
+console.log('Server running at http://127.0.0.1:3000/')
 
+var server = new Server()
+server.addUSN('upnp:rootdevice')
+server.addUSN('urn:schemas-upnp-org:device:MediaServer:1')
+server.addUSN('urn:schemas-upnp-org:service:ContentDirectory:1')
+server.addUSN('urn:schemas-upnp-org:service:ConnectionManager:1')
 
-var mdns = require('multicast-dns')()
-
-mdns.on('response', function(response) {
-  console.log('got a response packet:', response)
+server.on('advertise-alive', function (headers) {
+  console.log('advertise-alive', headers)
+  // Expire old devices from your cache.
+  // Register advertising device somewhere (as designated in http headers heads)
 })
 
-mdns.on('query', function(query) {
-  console.log('got a query packet:', query)
+server.on('advertise-bye', function (headers) {
+  // Remove specified device from cache.
 })
 
-// lets query for an A record for 'brunhilde.local'
-mdns.query({
-  questions:[{
-    name: 'brunhilde.local',
-    type: 'A'
-  }]
-})
+// start the server
+server.start()
+
+var client = new Client();
+
+    client.on('response', function (headers, statusCode, rinfo) {
+      console.log('Got a response to an m-search.');
+      console.log(headers)
+      console.log(statusCode)
+      console.log(rinfo)
+    });
+    client.search('urn:schemas-upnp-org:service:ContentDirectory:1')

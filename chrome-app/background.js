@@ -1,4 +1,7890 @@
 require=(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+
+/**
+ * This is the common logic for both the Node.js and web browser
+ * implementations of `debug()`.
+ *
+ * Expose `debug()` as the module.
+ */
+
+exports = module.exports = debug;
+exports.coerce = coerce;
+exports.disable = disable;
+exports.enable = enable;
+exports.enabled = enabled;
+exports.humanize = require('ms');
+
+/**
+ * The currently active debug mode names, and names to skip.
+ */
+
+exports.names = [];
+exports.skips = [];
+
+/**
+ * Map of special "%n" handling functions, for the debug "format" argument.
+ *
+ * Valid key names are a single, lowercased letter, i.e. "n".
+ */
+
+exports.formatters = {};
+
+/**
+ * Previously assigned color.
+ */
+
+var prevColor = 0;
+
+/**
+ * Previous log timestamp.
+ */
+
+var prevTime;
+
+/**
+ * Select a color.
+ *
+ * @return {Number}
+ * @api private
+ */
+
+function selectColor() {
+  return exports.colors[prevColor++ % exports.colors.length];
+}
+
+/**
+ * Create a debugger with the given `namespace`.
+ *
+ * @param {String} namespace
+ * @return {Function}
+ * @api public
+ */
+
+function debug(namespace) {
+
+  // define the `disabled` version
+  function disabled() {
+  }
+  disabled.enabled = false;
+
+  // define the `enabled` version
+  function enabled() {
+
+    var self = enabled;
+
+    // set `diff` timestamp
+    var curr = +new Date();
+    var ms = curr - (prevTime || curr);
+    self.diff = ms;
+    self.prev = prevTime;
+    self.curr = curr;
+    prevTime = curr;
+
+    // add the `color` if not set
+    if (null == self.useColors) self.useColors = exports.useColors();
+    if (null == self.color && self.useColors) self.color = selectColor();
+
+    var args = Array.prototype.slice.call(arguments);
+
+    args[0] = exports.coerce(args[0]);
+
+    if ('string' !== typeof args[0]) {
+      // anything else let's inspect with %o
+      args = ['%o'].concat(args);
+    }
+
+    // apply any `formatters` transformations
+    var index = 0;
+    args[0] = args[0].replace(/%([a-z%])/g, function(match, format) {
+      // if we encounter an escaped % then don't increase the array index
+      if (match === '%%') return match;
+      index++;
+      var formatter = exports.formatters[format];
+      if ('function' === typeof formatter) {
+        var val = args[index];
+        match = formatter.call(self, val);
+
+        // now we need to remove `args[index]` since it's inlined in the `format`
+        args.splice(index, 1);
+        index--;
+      }
+      return match;
+    });
+
+    if ('function' === typeof exports.formatArgs) {
+      args = exports.formatArgs.apply(self, args);
+    }
+    var logFn = console.log.bind(console);
+    logFn.apply(self, args);
+  }
+  enabled.enabled = true;
+
+  var fn = exports.enabled(namespace) ? enabled : disabled;
+
+  fn.namespace = namespace;
+
+  return fn;
+}
+
+/**
+ * Enables a debug mode by namespaces. This can include modes
+ * separated by a colon and wildcards.
+ *
+ * @param {String} namespaces
+ * @api public
+ */
+
+function enable(namespaces) {
+  exports.save(namespaces);
+
+  var split = (namespaces || '').split(/[\s,]+/);
+  var len = split.length;
+
+  for (var i = 0; i < len; i++) {
+    if (!split[i]) continue; // ignore empty strings
+    namespaces = split[i].replace(/\*/g, '.*?');
+    if (namespaces[0] === '-') {
+      exports.skips.push(new RegExp('^' + namespaces.substr(1) + '$'));
+    } else {
+      exports.names.push(new RegExp('^' + namespaces + '$'));
+    }
+  }
+}
+
+/**
+ * Disable debug output.
+ *
+ * @api public
+ */
+
+function disable() {
+  exports.enable('');
+}
+
+/**
+ * Returns true if the given mode name is enabled, false otherwise.
+ *
+ * @param {String} name
+ * @return {Boolean}
+ * @api public
+ */
+
+function enabled(name) {
+  var i, len;
+  for (i = 0, len = exports.skips.length; i < len; i++) {
+    if (exports.skips[i].test(name)) {
+      return false;
+    }
+  }
+  for (i = 0, len = exports.names.length; i < len; i++) {
+    if (exports.names[i].test(name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Coerce `val`.
+ *
+ * @param {Mixed} val
+ * @return {Mixed}
+ * @api private
+ */
+
+function coerce(val) {
+  if (val instanceof Error) return val.stack || val.message;
+  return val;
+}
+
+},{"ms":3}],2:[function(require,module,exports){
+(function(root) {
+  var localStorageMemory = {};
+  var cache = {};
+
+  /**
+   * number of stored items.
+   */
+  localStorageMemory.length = 0;
+
+  /**
+   * returns item for passed key, or null
+   *
+   * @para {String} key
+   *       name of item to be returned
+   * @returns {String|null}
+   */
+  localStorageMemory.getItem = function(key) {
+    return cache[key] || null;
+  };
+
+  /**
+   * sets item for key to passed value, as String
+   *
+   * @para {String} key
+   *       name of item to be set
+   * @para {String} value
+   *       value, will always be turned into a String
+   * @returns {undefined}
+   */
+  localStorageMemory.setItem = function(key, value) {
+    if (typeof value === 'undefined') {
+      localStorageMemory.removeItem(key);
+    } else {
+      cache[key] = '' + value;
+      localStorageMemory.length++;
+    }
+  };
+
+  /**
+   * removes item for passed key
+   *
+   * @para {String} key
+   *       name of item to be removed
+   * @returns {undefined}
+   */
+  localStorageMemory.removeItem = function(key) {
+    delete cache[key];
+    localStorageMemory.length--;
+  };
+
+  /**
+   * returns name of key at passed index
+   *
+   * @para {Number} index
+   *       Position for key to be returned (starts at 0)
+   * @returns {String|null}
+   */
+  localStorageMemory.key = function(index) {
+    return Object.keys(cache)[index] || null;
+  };
+
+  /**
+   * removes all stored items and sets length to 0
+   *
+   * @returns {undefined}
+   */
+  localStorageMemory.clear = function() {
+    cache = {};
+    localStorageMemory.length = 0;
+  };
+
+  if (typeof exports === 'object') {
+    module.exports = localStorageMemory;
+  } else {
+    root.localStorageMemory = localStorageMemory;
+  }
+})(this);
+
+
+
+},{}],3:[function(require,module,exports){
+/**
+ * Helpers.
+ */
+
+var s = 1000;
+var m = s * 60;
+var h = m * 60;
+var d = h * 24;
+var y = d * 365.25;
+
+/**
+ * Parse or format the given `val`.
+ *
+ * Options:
+ *
+ *  - `long` verbose formatting [false]
+ *
+ * @param {String|Number} val
+ * @param {Object} options
+ * @return {String|Number}
+ * @api public
+ */
+
+module.exports = function(val, options){
+  options = options || {};
+  if ('string' == typeof val) return parse(val);
+  return options.long
+    ? long(val)
+    : short(val);
+};
+
+/**
+ * Parse the given `str` and return milliseconds.
+ *
+ * @param {String} str
+ * @return {Number}
+ * @api private
+ */
+
+function parse(str) {
+  str = '' + str;
+  if (str.length > 10000) return;
+  var match = /^((?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|years?|yrs?|y)?$/i.exec(str);
+  if (!match) return;
+  var n = parseFloat(match[1]);
+  var type = (match[2] || 'ms').toLowerCase();
+  switch (type) {
+    case 'years':
+    case 'year':
+    case 'yrs':
+    case 'yr':
+    case 'y':
+      return n * y;
+    case 'days':
+    case 'day':
+    case 'd':
+      return n * d;
+    case 'hours':
+    case 'hour':
+    case 'hrs':
+    case 'hr':
+    case 'h':
+      return n * h;
+    case 'minutes':
+    case 'minute':
+    case 'mins':
+    case 'min':
+    case 'm':
+      return n * m;
+    case 'seconds':
+    case 'second':
+    case 'secs':
+    case 'sec':
+    case 's':
+      return n * s;
+    case 'milliseconds':
+    case 'millisecond':
+    case 'msecs':
+    case 'msec':
+    case 'ms':
+      return n;
+  }
+}
+
+/**
+ * Short format for `ms`.
+ *
+ * @param {Number} ms
+ * @return {String}
+ * @api private
+ */
+
+function short(ms) {
+  if (ms >= d) return Math.round(ms / d) + 'd';
+  if (ms >= h) return Math.round(ms / h) + 'h';
+  if (ms >= m) return Math.round(ms / m) + 'm';
+  if (ms >= s) return Math.round(ms / s) + 's';
+  return ms + 'ms';
+}
+
+/**
+ * Long format for `ms`.
+ *
+ * @param {Number} ms
+ * @return {String}
+ * @api private
+ */
+
+function long(ms) {
+  return plural(ms, d, 'day')
+    || plural(ms, h, 'hour')
+    || plural(ms, m, 'minute')
+    || plural(ms, s, 'second')
+    || ms + ' ms';
+}
+
+/**
+ * Pluralization helper.
+ */
+
+function plural(ms, n, name) {
+  if (ms < n) return;
+  if (ms < n * 1.5) return Math.floor(ms / n) + ' ' + name;
+  return Math.ceil(ms / n) + ' ' + name + 's';
+}
+
+},{}],4:[function(require,module,exports){
+(function (Buffer){
+/*!
+ * depd
+ * Copyright(c) 2014 Douglas Christopher Wilson
+ * MIT Licensed
+ */
+
+/**
+ * Module exports.
+ */
+
+module.exports = bufferConcat
+
+/**
+ * Concatenate an array of Buffers.
+ */
+
+function bufferConcat(bufs) {
+  var length = 0
+
+  for (var i = 0, len = bufs.length; i < len; i++) {
+    length += bufs[i].length
+  }
+
+  var buf = new Buffer(length)
+  var pos = 0
+
+  for (var i = 0, len = bufs.length; i < len; i++) {
+    bufs[i].copy(buf, pos)
+    pos += bufs[i].length
+  }
+
+  return buf
+}
+
+}).call(this,require("buffer").Buffer)
+},{"buffer":47}],5:[function(require,module,exports){
+/*!
+ * depd
+ * Copyright(c) 2014 Douglas Christopher Wilson
+ * MIT Licensed
+ */
+
+/**
+ * Module exports.
+ */
+
+module.exports = callSiteToString
+
+/**
+ * Format a CallSite file location to a string.
+ */
+
+function callSiteFileLocation(callSite) {
+  var fileName
+  var fileLocation = ''
+
+  if (callSite.isNative()) {
+    fileLocation = 'native'
+  } else if (callSite.isEval()) {
+    fileName = callSite.getScriptNameOrSourceURL()
+    if (!fileName) {
+      fileLocation = callSite.getEvalOrigin()
+    }
+  } else {
+    fileName = callSite.getFileName()
+  }
+
+  if (fileName) {
+    fileLocation += fileName
+
+    var lineNumber = callSite.getLineNumber()
+    if (lineNumber != null) {
+      fileLocation += ':' + lineNumber
+
+      var columnNumber = callSite.getColumnNumber()
+      if (columnNumber) {
+        fileLocation += ':' + columnNumber
+      }
+    }
+  }
+
+  return fileLocation || 'unknown source'
+}
+
+/**
+ * Format a CallSite to a string.
+ */
+
+function callSiteToString(callSite) {
+  var addSuffix = true
+  var fileLocation = callSiteFileLocation(callSite)
+  var functionName = callSite.getFunctionName()
+  var isConstructor = callSite.isConstructor()
+  var isMethodCall = !(callSite.isToplevel() || isConstructor)
+  var line = ''
+
+  if (isMethodCall) {
+    var methodName = callSite.getMethodName()
+    var typeName = getConstructorName(callSite)
+
+    if (functionName) {
+      if (typeName && functionName.indexOf(typeName) !== 0) {
+        line += typeName + '.'
+      }
+
+      line += functionName
+
+      if (methodName && functionName.lastIndexOf('.' + methodName) !== functionName.length - methodName.length - 1) {
+        line += ' [as ' + methodName + ']'
+      }
+    } else {
+      line += typeName + '.' + (methodName || '<anonymous>')
+    }
+  } else if (isConstructor) {
+    line += 'new ' + (functionName || '<anonymous>')
+  } else if (functionName) {
+    line += functionName
+  } else {
+    addSuffix = false
+    line += fileLocation
+  }
+
+  if (addSuffix) {
+    line += ' (' + fileLocation + ')'
+  }
+
+  return line
+}
+
+/**
+ * Get constructor name of reviver.
+ */
+
+function getConstructorName(obj) {
+  var receiver = obj.receiver
+  return (receiver.constructor && receiver.constructor.name) || null
+}
+
+},{}],6:[function(require,module,exports){
+(function (Buffer){
+/*!
+ * depd
+ * Copyright(c) 2014 Douglas Christopher Wilson
+ * MIT Licensed
+ */
+
+/**
+ * Module exports.
+ */
+
+lazyProperty(module.exports, 'bufferConcat', function bufferConcat() {
+  return Buffer.concat || require('./buffer-concat')
+})
+
+lazyProperty(module.exports, 'callSiteToString', function callSiteToString() {
+  var limit = Error.stackTraceLimit
+  var obj = {}
+  var prep = Error.prepareStackTrace
+
+  function prepareObjectStackTrace(obj, stack) {
+    return stack
+  }
+
+  Error.prepareStackTrace = prepareObjectStackTrace
+  Error.stackTraceLimit = 2
+
+  // capture the stack
+  Error.captureStackTrace(obj)
+
+  // slice the stack
+  var stack = obj.stack.slice()
+
+  Error.prepareStackTrace = prep
+  Error.stackTraceLimit = limit
+
+  return stack[0].toString ? toString : require('./callsite-tostring')
+})
+
+/**
+ * Define a lazy property.
+ */
+
+function lazyProperty(obj, prop, getter) {
+  function get() {
+    var val = getter()
+
+    Object.defineProperty(obj, prop, {
+      configurable: true,
+      enumerable: true,
+      value: val
+    })
+
+    return val
+  }
+
+  Object.defineProperty(obj, prop, {
+    configurable: true,
+    enumerable: true,
+    get: get
+  })
+}
+
+/**
+ * Call toString() on the obj
+ */
+
+function toString(obj) {
+  return obj.toString()
+}
+
+}).call(this,require("buffer").Buffer)
+},{"./buffer-concat":4,"./callsite-tostring":5,"buffer":47}],7:[function(require,module,exports){
+if (typeof Object.create === 'function') {
+  // implementation from standard node.js 'util' module
+  module.exports = function inherits(ctor, superCtor) {
+    ctor.super_ = superCtor
+    ctor.prototype = Object.create(superCtor.prototype, {
+      constructor: {
+        value: ctor,
+        enumerable: false,
+        writable: true,
+        configurable: true
+      }
+    });
+  };
+} else {
+  // old school shim for old browsers
+  module.exports = function inherits(ctor, superCtor) {
+    ctor.super_ = superCtor
+    var TempCtor = function () {}
+    TempCtor.prototype = superCtor.prototype
+    ctor.prototype = new TempCtor()
+    ctor.prototype.constructor = ctor
+  }
+}
+
+},{}],8:[function(require,module,exports){
+var dezalgo = require('dezalgo')
+
+module.exports = function (tasks, cb) {
+  var current = 0
+  var results = []
+  if (cb) cb = dezalgo(cb)
+
+  function done (err, result) {
+    results.push(result)
+    if (++current >= tasks.length || err) {
+      if (cb) cb(err, results)
+    } else {
+      tasks[current](done)
+    }
+  }
+
+  if (tasks.length) {
+    tasks[0](done)
+  } else {
+    if (cb) cb(null, results)
+  }
+}
+
+},{"dezalgo":9}],9:[function(require,module,exports){
+var wrappy = require('wrappy')
+module.exports = wrappy(dezalgo)
+
+var asap = require('asap')
+
+function dezalgo (cb) {
+  var sync = true
+  asap(function () {
+    sync = false
+  })
+
+  return function zalgoSafe() {
+    var args = arguments
+    var me = this
+    if (sync)
+      asap(function() {
+        cb.apply(me, args)
+      })
+    else
+      cb.apply(me, args)
+  }
+}
+
+},{"asap":10,"wrappy":12}],10:[function(require,module,exports){
+"use strict";
+
+// rawAsap provides everything we need except exception management.
+var rawAsap = require("./raw");
+// RawTasks are recycled to reduce GC churn.
+var freeTasks = [];
+// We queue errors to ensure they are thrown in right order (FIFO).
+// Array-as-queue is good enough here, since we are just dealing with exceptions.
+var pendingErrors = [];
+var requestErrorThrow = rawAsap.makeRequestCallFromTimer(throwFirstError);
+
+function throwFirstError() {
+    if (pendingErrors.length) {
+        throw pendingErrors.shift();
+    }
+}
+
+/**
+ * Calls a task as soon as possible after returning, in its own event, with priority
+ * over other events like animation, reflow, and repaint. An error thrown from an
+ * event will not interrupt, nor even substantially slow down the processing of
+ * other events, but will be rather postponed to a lower priority event.
+ * @param {{call}} task A callable object, typically a function that takes no
+ * arguments.
+ */
+module.exports = asap;
+function asap(task) {
+    var rawTask;
+    if (freeTasks.length) {
+        rawTask = freeTasks.pop();
+    } else {
+        rawTask = new RawTask();
+    }
+    rawTask.task = task;
+    rawAsap(rawTask);
+}
+
+// We wrap tasks with recyclable task objects.  A task object implements
+// `call`, just like a function.
+function RawTask() {
+    this.task = null;
+}
+
+// The sole purpose of wrapping the task is to catch the exception and recycle
+// the task object after its single use.
+RawTask.prototype.call = function () {
+    try {
+        this.task.call();
+    } catch (error) {
+        if (asap.onerror) {
+            // This hook exists purely for testing purposes.
+            // Its name will be periodically randomized to break any code that
+            // depends on its existence.
+            asap.onerror(error);
+        } else {
+            // In a web browser, exceptions are not fatal. However, to avoid
+            // slowing down the queue of pending tasks, we rethrow the error in a
+            // lower priority turn.
+            pendingErrors.push(error);
+            requestErrorThrow();
+        }
+    } finally {
+        this.task = null;
+        freeTasks[freeTasks.length] = this;
+    }
+};
+
+},{"./raw":11}],11:[function(require,module,exports){
+(function (global){
+"use strict";
+
+// Use the fastest means possible to execute a task in its own turn, with
+// priority over other events including IO, animation, reflow, and redraw
+// events in browsers.
+//
+// An exception thrown by a task will permanently interrupt the processing of
+// subsequent tasks. The higher level `asap` function ensures that if an
+// exception is thrown by a task, that the task queue will continue flushing as
+// soon as possible, but if you use `rawAsap` directly, you are responsible to
+// either ensure that no exceptions are thrown from your task, or to manually
+// call `rawAsap.requestFlush` if an exception is thrown.
+module.exports = rawAsap;
+function rawAsap(task) {
+    if (!queue.length) {
+        requestFlush();
+        flushing = true;
+    }
+    // Equivalent to push, but avoids a function call.
+    queue[queue.length] = task;
+}
+
+var queue = [];
+// Once a flush has been requested, no further calls to `requestFlush` are
+// necessary until the next `flush` completes.
+var flushing = false;
+// `requestFlush` is an implementation-specific method that attempts to kick
+// off a `flush` event as quickly as possible. `flush` will attempt to exhaust
+// the event queue before yielding to the browser's own event loop.
+var requestFlush;
+// The position of the next task to execute in the task queue. This is
+// preserved between calls to `flush` so that it can be resumed if
+// a task throws an exception.
+var index = 0;
+// If a task schedules additional tasks recursively, the task queue can grow
+// unbounded. To prevent memory exhaustion, the task queue will periodically
+// truncate already-completed tasks.
+var capacity = 1024;
+
+// The flush function processes all tasks that have been scheduled with
+// `rawAsap` unless and until one of those tasks throws an exception.
+// If a task throws an exception, `flush` ensures that its state will remain
+// consistent and will resume where it left off when called again.
+// However, `flush` does not make any arrangements to be called again if an
+// exception is thrown.
+function flush() {
+    while (index < queue.length) {
+        var currentIndex = index;
+        // Advance the index before calling the task. This ensures that we will
+        // begin flushing on the next task the task throws an error.
+        index = index + 1;
+        queue[currentIndex].call();
+        // Prevent leaking memory for long chains of recursive calls to `asap`.
+        // If we call `asap` within tasks scheduled by `asap`, the queue will
+        // grow, but to avoid an O(n) walk for every task we execute, we don't
+        // shift tasks off the queue after they have been executed.
+        // Instead, we periodically shift 1024 tasks off the queue.
+        if (index > capacity) {
+            // Manually shift all values starting at the index back to the
+            // beginning of the queue.
+            for (var scan = 0, newLength = queue.length - index; scan < newLength; scan++) {
+                queue[scan] = queue[scan + index];
+            }
+            queue.length -= index;
+            index = 0;
+        }
+    }
+    queue.length = 0;
+    index = 0;
+    flushing = false;
+}
+
+// `requestFlush` is implemented using a strategy based on data collected from
+// every available SauceLabs Selenium web driver worker at time of writing.
+// https://docs.google.com/spreadsheets/d/1mG-5UYGup5qxGdEMWkhP6BWCz053NUb2E1QoUTU16uA/edit#gid=783724593
+
+// Safari 6 and 6.1 for desktop, iPad, and iPhone are the only browsers that
+// have WebKitMutationObserver but not un-prefixed MutationObserver.
+// Must use `global` instead of `window` to work in both frames and web
+// workers. `global` is a provision of Browserify, Mr, Mrs, or Mop.
+var BrowserMutationObserver = global.MutationObserver || global.WebKitMutationObserver;
+
+// MutationObservers are desirable because they have high priority and work
+// reliably everywhere they are implemented.
+// They are implemented in all modern browsers.
+//
+// - Android 4-4.3
+// - Chrome 26-34
+// - Firefox 14-29
+// - Internet Explorer 11
+// - iPad Safari 6-7.1
+// - iPhone Safari 7-7.1
+// - Safari 6-7
+if (typeof BrowserMutationObserver === "function") {
+    requestFlush = makeRequestCallFromMutationObserver(flush);
+
+// MessageChannels are desirable because they give direct access to the HTML
+// task queue, are implemented in Internet Explorer 10, Safari 5.0-1, and Opera
+// 11-12, and in web workers in many engines.
+// Although message channels yield to any queued rendering and IO tasks, they
+// would be better than imposing the 4ms delay of timers.
+// However, they do not work reliably in Internet Explorer or Safari.
+
+// Internet Explorer 10 is the only browser that has setImmediate but does
+// not have MutationObservers.
+// Although setImmediate yields to the browser's renderer, it would be
+// preferrable to falling back to setTimeout since it does not have
+// the minimum 4ms penalty.
+// Unfortunately there appears to be a bug in Internet Explorer 10 Mobile (and
+// Desktop to a lesser extent) that renders both setImmediate and
+// MessageChannel useless for the purposes of ASAP.
+// https://github.com/kriskowal/q/issues/396
+
+// Timers are implemented universally.
+// We fall back to timers in workers in most engines, and in foreground
+// contexts in the following browsers.
+// However, note that even this simple case requires nuances to operate in a
+// broad spectrum of browsers.
+//
+// - Firefox 3-13
+// - Internet Explorer 6-9
+// - iPad Safari 4.3
+// - Lynx 2.8.7
+} else {
+    requestFlush = makeRequestCallFromTimer(flush);
+}
+
+// `requestFlush` requests that the high priority event queue be flushed as
+// soon as possible.
+// This is useful to prevent an error thrown in a task from stalling the event
+// queue if the exception handled by Node.js’s
+// `process.on("uncaughtException")` or by a domain.
+rawAsap.requestFlush = requestFlush;
+
+// To request a high priority event, we induce a mutation observer by toggling
+// the text of a text node between "1" and "-1".
+function makeRequestCallFromMutationObserver(callback) {
+    var toggle = 1;
+    var observer = new BrowserMutationObserver(callback);
+    var node = document.createTextNode("");
+    observer.observe(node, {characterData: true});
+    return function requestCall() {
+        toggle = -toggle;
+        node.data = toggle;
+    };
+}
+
+// The message channel technique was discovered by Malte Ubl and was the
+// original foundation for this library.
+// http://www.nonblocking.io/2011/06/windownexttick.html
+
+// Safari 6.0.5 (at least) intermittently fails to create message ports on a
+// page's first load. Thankfully, this version of Safari supports
+// MutationObservers, so we don't need to fall back in that case.
+
+// function makeRequestCallFromMessageChannel(callback) {
+//     var channel = new MessageChannel();
+//     channel.port1.onmessage = callback;
+//     return function requestCall() {
+//         channel.port2.postMessage(0);
+//     };
+// }
+
+// For reasons explained above, we are also unable to use `setImmediate`
+// under any circumstances.
+// Even if we were, there is another bug in Internet Explorer 10.
+// It is not sufficient to assign `setImmediate` to `requestFlush` because
+// `setImmediate` must be called *by name* and therefore must be wrapped in a
+// closure.
+// Never forget.
+
+// function makeRequestCallFromSetImmediate(callback) {
+//     return function requestCall() {
+//         setImmediate(callback);
+//     };
+// }
+
+// Safari 6.0 has a problem where timers will get lost while the user is
+// scrolling. This problem does not impact ASAP because Safari 6.0 supports
+// mutation observers, so that implementation is used instead.
+// However, if we ever elect to use timers in Safari, the prevalent work-around
+// is to add a scroll event listener that calls for a flush.
+
+// `setTimeout` does not call the passed callback if the delay is less than
+// approximately 7 in web workers in Firefox 8 through 18, and sometimes not
+// even then.
+
+function makeRequestCallFromTimer(callback) {
+    return function requestCall() {
+        // We dispatch a timeout with a specified delay of 0 for engines that
+        // can reliably accommodate that request. This will usually be snapped
+        // to a 4 milisecond delay, but once we're flushing, there's no delay
+        // between events.
+        var timeoutHandle = setTimeout(handleTimer, 0);
+        // However, since this timer gets frequently dropped in Firefox
+        // workers, we enlist an interval handle that will try to fire
+        // an event 20 times per second until it succeeds.
+        var intervalHandle = setInterval(handleTimer, 50);
+
+        function handleTimer() {
+            // Whichever timer succeeds will cancel both timers and
+            // execute the callback.
+            clearTimeout(timeoutHandle);
+            clearInterval(intervalHandle);
+            callback();
+        }
+    };
+}
+
+// This is for `asap.js` only.
+// Its name will be periodically randomized to break any code that depends on
+// its existence.
+rawAsap.makeRequestCallFromTimer = makeRequestCallFromTimer;
+
+// ASAP was originally a nextTick shim included in Q. This was factored out
+// into this ASAP package. It was later adapted to RSVP which made further
+// amendments. These decisions, particularly to marginalize MessageChannel and
+// to capture the MutationObserver implementation in a closure, were integrated
+// back into ASAP proper.
+// https://github.com/tildeio/rsvp.js/blob/cddf7232546a9cf858524b75cde6f9edf72620a7/lib/rsvp/asap.js
+
+}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{}],12:[function(require,module,exports){
+// Returns a wrapper function that returns a wrapped callback
+// The wrapper function should do some stuff, and return a
+// presumably different callback function.
+// This makes sure that own properties are retained, so that
+// decorations and such are not lost along the way.
+module.exports = wrappy
+function wrappy (fn, cb) {
+  if (fn && cb) return wrappy(fn)(cb)
+
+  if (typeof fn !== 'function')
+    throw new TypeError('need wrapper function')
+
+  Object.keys(fn).forEach(function (k) {
+    wrapper[k] = fn[k]
+  })
+
+  return wrapper
+
+  function wrapper() {
+    var args = new Array(arguments.length)
+    for (var i = 0; i < args.length; i++) {
+      args[i] = arguments[i]
+    }
+    var ret = fn.apply(this, args)
+    var cb = args[args.length-1]
+    if (typeof ret === 'function' && ret !== cb) {
+      Object.keys(cb).forEach(function (k) {
+        ret[k] = cb[k]
+      })
+    }
+    return ret
+  }
+}
+
+},{}],13:[function(require,module,exports){
+var ClientRequest = require('./lib/request')
+var extend = require('xtend')
+var statusCodes = require('builtin-status-codes')
+var url = require('url')
+
+var http = exports
+
+http.request = function (opts, cb) {
+	if (typeof opts === 'string')
+		opts = url.parse(opts)
+	else
+		opts = extend(opts)
+
+	// Split opts.host into its components
+	var hostHostname = opts.host ? opts.host.split(':')[0] : null
+	var hostPort = opts.host ? parseInt(opts.host.split(':')[1], 10) : null
+
+	opts.method = opts.method || 'GET'
+	opts.headers = opts.headers || {}
+	opts.path = opts.path || '/'
+	opts.protocol = opts.protocol || window.location.protocol
+	// If the hostname is provided, use the default port for the protocol. If
+	// the url is instead relative, use window.location.port
+	var defaultPort = (opts.hostname || hostHostname) ? (opts.protocol === 'https:' ? 443 : 80) : window.location.port
+	opts.hostname = opts.hostname || hostHostname || window.location.hostname
+	opts.port = opts.port || hostPort || defaultPort
+
+	// Also valid opts.auth, opts.mode
+
+	var req = new ClientRequest(opts)
+	if (cb)
+		req.on('response', cb)
+	return req
+}
+
+http.get = function get (opts, cb) {
+	var req = http.request(opts, cb)
+	req.end()
+	return req
+}
+
+http.Agent = function () {}
+http.Agent.defaultMaxSockets = 4
+
+http.STATUS_CODES = statusCodes
+
+http.METHODS = [
+	'GET',
+	'POST',
+	'PUT',
+	'DELETE' // TODO: include the methods from RFC 2616 and 2518?
+]
+},{"./lib/request":15,"builtin-status-codes":17,"url":75,"xtend":23}],14:[function(require,module,exports){
+exports.fetch = isFunction(window.fetch) && isFunction(window.ReadableByteStream)
+
+exports.blobConstructor = false
+try {
+	new Blob([new ArrayBuffer(1)])
+	exports.blobConstructor = true
+} catch (e) {}
+
+var xhr = new window.XMLHttpRequest()
+xhr.open('GET', '/')
+
+function checkTypeSupport (type) {
+	try {
+		xhr.responseType = type
+		return xhr.responseType === type
+	} catch (e) {}
+	return false
+}
+
+var haveArrayBuffer = isFunction(window.ArrayBuffer)
+var haveSlice = haveArrayBuffer && isFunction(window.ArrayBuffer.prototype.slice)
+
+exports.arraybuffer = haveArrayBuffer && checkTypeSupport('arraybuffer')
+exports.msstream = haveSlice && checkTypeSupport('ms-stream')
+exports.mozchunkedarraybuffer = haveArrayBuffer && checkTypeSupport('moz-chunked-arraybuffer')
+exports.overrideMimeType = isFunction(xhr.overrideMimeType)
+exports.vbArray = isFunction(window.VBArray)
+
+function isFunction (value) {
+  return typeof value === 'function'
+}
+
+xhr = null // Help gc
+},{}],15:[function(require,module,exports){
+(function (process,Buffer){
+var capability = require('./capability')
+var foreach = require('foreach')
+var indexOf = require('indexof')
+var inherits = require('inherits')
+var keys = require('object-keys')
+var response = require('./response')
+var stream = require('stream')
+
+var IncomingMessage = response.IncomingMessage
+var rStates = response.readyStates
+
+function decideMode (preferBinary) {
+	if (capability.fetch) {
+		return 'fetch'
+	} else if (capability.mozchunkedarraybuffer) {
+		return 'moz-chunked-arraybuffer'
+	} else if (capability.msstream) {
+		return 'ms-stream'
+	} else if (capability.arraybuffer && preferBinary) {
+		return 'arraybuffer'
+	} else if (capability.vbArray && preferBinary) {
+		return 'text:vbarray'
+	} else {
+		return 'text'
+	}
+}
+
+var ClientRequest = module.exports = function (opts) {
+	var self = this
+	stream.Writable.call(self)
+
+	self._opts = opts
+	self._url = opts.protocol + '//' + opts.hostname + ':' + opts.port + opts.path
+	self._body = []
+	self._headers = {}
+	if (opts.auth)
+		self.setHeader('Authorization', 'Basic ' + new Buffer(opts.auth).toString('base64'))
+	foreach(keys(opts.headers), function (name) {
+		self.setHeader(name, opts.headers[name])
+	})
+
+	var preferBinary
+	if (opts.mode === 'prefer-streaming') {
+		// If streaming is a high priority but binary compatibility isn't
+		preferBinary = false
+	} else if (opts.mode === 'prefer-fast') {
+		// If binary is preferred for speed
+		preferBinary = true
+	} else if (!opts.mode || opts.mode === 'default') {
+		// By default, use binary if text streaming may corrupt data
+		preferBinary = !capability.overrideMimeType
+	} else {
+		throw new Error('Invalid value for opts.mode')
+	}
+	self._mode = decideMode(preferBinary)
+
+	self.on('finish', function () {
+		self._onFinish()
+	})
+}
+
+inherits(ClientRequest, stream.Writable)
+
+ClientRequest.prototype.setHeader = function (name, value) {
+	var self = this
+	var lowerName = name.toLowerCase()
+	// This check is not necessary, but it prevents warnings from browsers about setting unsafe
+	// headers. To be honest I'm not entirely sure hiding these warnings is a good thing, but
+	// http-browserify did it, so I will too.
+	if (indexOf(unsafeHeaders, lowerName) !== -1)
+		return
+
+	self._headers[lowerName] = {
+		name: name,
+		value: value
+	}
+}
+
+ClientRequest.prototype.getHeader = function (name) {
+	var self = this
+	return self._headers[name.toLowerCase()].value
+}
+
+ClientRequest.prototype.removeHeader = function (name) {
+	var self = this
+	delete self._headers[name.toLowerCase()]
+}
+
+ClientRequest.prototype._onFinish = function () {
+	var self = this
+
+	if (self._destroyed)
+		return
+	var opts = self._opts
+
+	var headersObj = self._headers
+	var body
+	if (opts.method === 'POST' || opts.method === 'PUT') {
+		if (capability.blobConstructor) {
+			body = new window.Blob(self._body.map(function (buffer) {
+				return buffer.toArrayBuffer()
+			}), {
+				type: (headersObj['content-type'] || {}).value || ''
+			})
+		} else {
+			// get utf8 string
+			body = Buffer.concat(self._body).toString()
+		}
+	}
+
+	if (self._mode === 'fetch') {
+		var headers = keys(headersObj).map(function (name) {
+			return [headersObj[name].name, headersObj[name].value]
+		})
+
+		window.fetch(self._url, {
+			method: self._opts.method,
+			headers: headers,
+			body: body,
+			mode: 'cors',
+			credentials: opts.withCredentials ? 'include' : 'same-origin'
+		}).then(function (response) {
+			self._fetchResponse = response
+			self._connect()
+		}).then(undefined, function (reason) {
+			self.emit('error', reason)
+		})
+	} else {
+		var xhr = self._xhr = new window.XMLHttpRequest()
+		try {
+			xhr.open(self._opts.method, self._url, true)
+		} catch (err) {
+			process.nextTick(function () {
+				self.emit('error', err)
+			})
+			return
+		}
+
+		// Can't set responseType on really old browsers
+		if ('responseType' in xhr)
+			xhr.responseType = self._mode.split(':')[0]
+
+		if ('withCredentials' in xhr)
+			xhr.withCredentials = !!opts.withCredentials
+
+		if (self._mode === 'text' && 'overrideMimeType' in xhr)
+			xhr.overrideMimeType('text/plain; charset=x-user-defined')
+
+		foreach(keys(headersObj), function (name) {
+			xhr.setRequestHeader(headersObj[name].name, headersObj[name].value)
+		})
+
+		self._response = null
+		xhr.onreadystatechange = function () {
+			switch (xhr.readyState) {
+				case rStates.LOADING:
+				case rStates.DONE:
+					self._onXHRProgress()
+					break
+			}
+		}
+		// Necessary for streaming in Firefox, since xhr.response is ONLY defined
+		// in onprogress, not in onreadystatechange with xhr.readyState = 3
+		if (self._mode === 'moz-chunked-arraybuffer') {
+			xhr.onprogress = function () {
+				self._onXHRProgress()
+			}
+		}
+
+		xhr.onerror = function () {
+			if (self._destroyed)
+				return
+			self.emit('error', new Error('XHR error'))
+		}
+
+		try {
+			xhr.send(body)
+		} catch (err) {
+			process.nextTick(function () {
+				self.emit('error', err)
+			})
+			return
+		}
+	}
+}
+
+/**
+ * Checks if xhr.status is readable. Even though the spec says it should
+ * be available in readyState 3, accessing it throws an exception in IE8
+ */
+function statusValid (xhr) {
+	try {
+		return (xhr.status !== null)
+	} catch (e) {
+		return false
+	}
+}
+
+ClientRequest.prototype._onXHRProgress = function () {
+	var self = this
+
+	if (!statusValid(self._xhr) || self._destroyed)
+		return
+
+	if (!self._response)
+		self._connect()
+
+	self._response._onXHRProgress()
+}
+
+ClientRequest.prototype._connect = function () {
+	var self = this
+
+	if (self._destroyed)
+		return
+
+	self._response = new IncomingMessage(self._xhr, self._fetchResponse, self._mode)
+	self.emit('response', self._response)
+}
+
+ClientRequest.prototype._write = function (chunk, encoding, cb) {
+	var self = this
+
+	self._body.push(chunk)
+	cb()
+}
+
+ClientRequest.prototype.abort = ClientRequest.prototype.destroy = function () {
+	var self = this
+	self._destroyed = true
+	if (self._response)
+		self._response._destroyed = true
+	if (self._xhr)
+		self._xhr.abort()
+	// Currently, there isn't a way to truly abort a fetch.
+	// If you like bikeshedding, see https://github.com/whatwg/fetch/issues/27
+}
+
+ClientRequest.prototype.end = function (data, encoding, cb) {
+	var self = this
+	if (typeof data === 'function') {
+		cb = data
+		data = undefined
+	}
+
+	if (data)
+		stream.Writable.push.call(self, data, encoding)
+
+	stream.Writable.prototype.end.call(self, cb)
+}
+
+ClientRequest.prototype.flushHeaders = function () {}
+ClientRequest.prototype.setTimeout = function () {}
+ClientRequest.prototype.setNoDelay = function () {}
+ClientRequest.prototype.setSocketKeepAlive = function () {}
+
+// Taken from http://www.w3.org/TR/XMLHttpRequest/#the-setrequestheader%28%29-method
+var unsafeHeaders = [
+	'accept-charset',
+	'accept-encoding',
+	'access-control-request-headers',
+	'access-control-request-method',
+	'connection',
+	'content-length',
+	'cookie',
+	'cookie2',
+	'date',
+	'dnt',
+	'expect',
+	'host',
+	'keep-alive',
+	'origin',
+	'referer',
+	'te',
+	'trailer',
+	'transfer-encoding',
+	'upgrade',
+	'user-agent',
+	'via'
+]
+
+}).call(this,require('_process'),require("buffer").Buffer)
+},{"./capability":14,"./response":16,"_process":56,"buffer":47,"foreach":18,"indexof":19,"inherits":20,"object-keys":21,"stream":72}],16:[function(require,module,exports){
+(function (process,Buffer){
+var capability = require('./capability')
+var foreach = require('foreach')
+var inherits = require('inherits')
+var stream = require('stream')
+
+var rStates = exports.readyStates = {
+	UNSENT: 0,
+	OPENED: 1,
+	HEADERS_RECEIVED: 2,
+	LOADING: 3,
+	DONE: 4
+}
+
+var IncomingMessage = exports.IncomingMessage = function (xhr, response, mode) {
+	var self = this
+	stream.Readable.call(self)
+
+	self._mode = mode
+	self.headers = {}
+	self.rawHeaders = []
+	self.trailers = {}
+	self.rawTrailers = []
+
+	// Fake the 'close' event, but only once 'end' fires
+	self.on('end', function () {
+		// The nextTick is necessary to prevent the 'request' module from causing an infinite loop
+		process.nextTick(function () {
+			self.emit('close')
+		})
+	})
+
+	if (mode === 'fetch') {
+		self._fetchResponse = response
+
+		self.statusCode = response.status
+		self.statusMessage = response.statusText
+		// backwards compatible version of for (<item> of <iterable>):
+		// for (var <item>,_i,_it = <iterable>[Symbol.iterator](); <item> = (_i = _it.next()).value,!_i.done;)
+		for (var header, _i, _it = response.headers[Symbol.iterator](); header = (_i = _it.next()).value, !_i.done;) {
+			self.headers[header[0].toLowerCase()] = header[1]
+			self.rawHeaders.push(header[0], header[1])
+		}
+
+		// TODO: this doesn't respect backpressure. Once WritableStream is available, this can be fixed
+		var reader = response.body.getReader()
+		function read () {
+			reader.read().then(function (result) {
+				if (self._destroyed)
+					return
+				if (result.done) {
+					self.push(null)
+					return
+				}
+				self.push(new Buffer(result.value))
+				read()
+			})
+		}
+		read()
+
+	} else {
+		self._xhr = xhr
+		self._pos = 0
+
+		self.statusCode = xhr.status
+		self.statusMessage = xhr.statusText
+		var headers = xhr.getAllResponseHeaders().split(/\r?\n/)
+		foreach(headers, function (header) {
+			var matches = header.match(/^([^:]+):\s*(.*)/)
+			if (matches) {
+				var key = matches[1].toLowerCase()
+				if (self.headers[key] !== undefined)
+					self.headers[key] += ', ' + matches[2]
+				else
+					self.headers[key] = matches[2]
+				self.rawHeaders.push(matches[1], matches[2])
+			}
+		})
+
+		self._charset = 'x-user-defined'
+		if (!capability.overrideMimeType) {
+			var mimeType = self.rawHeaders['mime-type']
+			if (mimeType) {
+				var charsetMatch = mimeType.match(/;\s*charset=([^;])(;|$)/)
+				if (charsetMatch) {
+					self._charset = charsetMatch[1].toLowerCase()
+				}
+			}
+			if (!self._charset)
+				self._charset = 'utf-8' // best guess
+		}
+	}
+}
+
+inherits(IncomingMessage, stream.Readable)
+
+IncomingMessage.prototype._read = function () {}
+
+IncomingMessage.prototype._onXHRProgress = function () {
+	var self = this
+
+	var xhr = self._xhr
+
+	var response = null
+	switch (self._mode) {
+		case 'text:vbarray': // For IE9
+			if (xhr.readyState !== rStates.DONE)
+				break
+			try {
+				// This fails in IE8
+				response = new window.VBArray(xhr.responseBody).toArray()
+			} catch (e) {}
+			if (response !== null) {
+				self.push(new Buffer(response))
+				break
+			}
+			// Falls through in IE8	
+		case 'text':
+			try { // This will fail when readyState = 3 in IE9. Switch mode and wait for readyState = 4
+				response = xhr.responseText
+			} catch (e) {
+				self._mode = 'text:vbarray'
+				break
+			}
+			if (response.length > self._pos) {
+				var newData = response.substr(self._pos)
+				if (self._charset === 'x-user-defined') {
+					var buffer = new Buffer(newData.length)
+					for (var i = 0; i < newData.length; i++)
+						buffer[i] = newData.charCodeAt(i) & 0xff
+
+					self.push(buffer)
+				} else {
+					self.push(newData, self._charset)
+				}
+				self._pos = response.length
+			}
+			break
+		case 'arraybuffer':
+			if (xhr.readyState !== rStates.DONE)
+				break
+			response = xhr.response
+			self.push(new Buffer(new Uint8Array(response)))
+			break
+		case 'moz-chunked-arraybuffer': // take whole
+			response = xhr.response
+			if (xhr.readyState !== rStates.LOADING || !response)
+				break
+			self.push(new Buffer(new Uint8Array(response)))
+			break
+		case 'ms-stream':
+			response = xhr.response
+			if (xhr.readyState !== rStates.LOADING)
+				break
+			var reader = new window.MSStreamReader()
+			reader.onprogress = function () {
+				if (reader.result.byteLength > self._pos) {
+					self.push(new Buffer(new Uint8Array(reader.result.slice(self._pos))))
+					self._pos = reader.result.byteLength
+				}
+			}
+			reader.onload = function () {
+				self.push(null)
+			}
+			// reader.onerror = ??? // TODO: this
+			reader.readAsArrayBuffer(response)
+			break
+	}
+
+	// The ms-stream case handles end separately in reader.onload()
+	if (self._xhr.readyState === rStates.DONE && self._mode !== 'ms-stream') {
+		self.push(null)
+	}
+}
+
+}).call(this,require('_process'),require("buffer").Buffer)
+},{"./capability":14,"_process":56,"buffer":47,"foreach":18,"inherits":20,"stream":72}],17:[function(require,module,exports){
+module.exports = {
+  "100": "Continue",
+  "101": "Switching Protocols",
+  "102": "Processing",
+  "200": "OK",
+  "201": "Created",
+  "202": "Accepted",
+  "203": "Non-Authoritative Information",
+  "204": "No Content",
+  "205": "Reset Content",
+  "206": "Partial Content",
+  "207": "Multi-Status",
+  "300": "Multiple Choices",
+  "301": "Moved Permanently",
+  "302": "Moved Temporarily",
+  "303": "See Other",
+  "304": "Not Modified",
+  "305": "Use Proxy",
+  "307": "Temporary Redirect",
+  "308": "Permanent Redirect",
+  "400": "Bad Request",
+  "401": "Unauthorized",
+  "402": "Payment Required",
+  "403": "Forbidden",
+  "404": "Not Found",
+  "405": "Method Not Allowed",
+  "406": "Not Acceptable",
+  "407": "Proxy Authentication Required",
+  "408": "Request Time-out",
+  "409": "Conflict",
+  "410": "Gone",
+  "411": "Length Required",
+  "412": "Precondition Failed",
+  "413": "Request Entity Too Large",
+  "414": "Request-URI Too Large",
+  "415": "Unsupported Media Type",
+  "416": "Requested Range Not Satisfiable",
+  "417": "Expectation Failed",
+  "418": "I'm a teapot",
+  "422": "Unprocessable Entity",
+  "423": "Locked",
+  "424": "Failed Dependency",
+  "425": "Unordered Collection",
+  "426": "Upgrade Required",
+  "428": "Precondition Required",
+  "429": "Too Many Requests",
+  "431": "Request Header Fields Too Large",
+  "500": "Internal Server Error",
+  "501": "Not Implemented",
+  "502": "Bad Gateway",
+  "503": "Service Unavailable",
+  "504": "Gateway Time-out",
+  "505": "HTTP Version Not Supported",
+  "506": "Variant Also Negotiates",
+  "507": "Insufficient Storage",
+  "509": "Bandwidth Limit Exceeded",
+  "510": "Not Extended",
+  "511": "Network Authentication Required"
+}
+
+},{}],18:[function(require,module,exports){
+
+var hasOwn = Object.prototype.hasOwnProperty;
+var toString = Object.prototype.toString;
+
+module.exports = function forEach (obj, fn, ctx) {
+    if (toString.call(fn) !== '[object Function]') {
+        throw new TypeError('iterator must be a function');
+    }
+    var l = obj.length;
+    if (l === +l) {
+        for (var i = 0; i < l; i++) {
+            fn.call(ctx, obj[i], i, obj);
+        }
+    } else {
+        for (var k in obj) {
+            if (hasOwn.call(obj, k)) {
+                fn.call(ctx, obj[k], k, obj);
+            }
+        }
+    }
+};
+
+
+},{}],19:[function(require,module,exports){
+
+var indexOf = [].indexOf;
+
+module.exports = function(arr, obj){
+  if (indexOf) return arr.indexOf(obj);
+  for (var i = 0; i < arr.length; ++i) {
+    if (arr[i] === obj) return i;
+  }
+  return -1;
+};
+},{}],20:[function(require,module,exports){
+arguments[4][7][0].apply(exports,arguments)
+},{"dup":7}],21:[function(require,module,exports){
+'use strict';
+
+// modified from https://github.com/es-shims/es5-shim
+var has = Object.prototype.hasOwnProperty;
+var toStr = Object.prototype.toString;
+var slice = Array.prototype.slice;
+var isArgs = require('./isArguments');
+var hasDontEnumBug = !({ 'toString': null }).propertyIsEnumerable('toString');
+var hasProtoEnumBug = function () {}.propertyIsEnumerable('prototype');
+var dontEnums = [
+	'toString',
+	'toLocaleString',
+	'valueOf',
+	'hasOwnProperty',
+	'isPrototypeOf',
+	'propertyIsEnumerable',
+	'constructor'
+];
+
+var keysShim = function keys(object) {
+	var isObject = object !== null && typeof object === 'object';
+	var isFunction = toStr.call(object) === '[object Function]';
+	var isArguments = isArgs(object);
+	var isString = isObject && toStr.call(object) === '[object String]';
+	var theKeys = [];
+
+	if (!isObject && !isFunction && !isArguments) {
+		throw new TypeError('Object.keys called on a non-object');
+	}
+
+	var skipProto = hasProtoEnumBug && isFunction;
+	if (isString && object.length > 0 && !has.call(object, 0)) {
+		for (var i = 0; i < object.length; ++i) {
+			theKeys.push(String(i));
+		}
+	}
+
+	if (isArguments && object.length > 0) {
+		for (var j = 0; j < object.length; ++j) {
+			theKeys.push(String(j));
+		}
+	} else {
+		for (var name in object) {
+			if (!(skipProto && name === 'prototype') && has.call(object, name)) {
+				theKeys.push(String(name));
+			}
+		}
+	}
+
+	if (hasDontEnumBug) {
+		var ctor = object.constructor;
+		var skipConstructor = ctor && ctor.prototype === object;
+
+		for (var k = 0; k < dontEnums.length; ++k) {
+			if (!(skipConstructor && dontEnums[k] === 'constructor') && has.call(object, dontEnums[k])) {
+				theKeys.push(dontEnums[k]);
+			}
+		}
+	}
+	return theKeys;
+};
+
+keysShim.shim = function shimObjectKeys() {
+	if (!Object.keys) {
+		Object.keys = keysShim;
+	} else {
+		var keysWorksWithArguments = (function () {
+			// Safari 5.0 bug
+			return (Object.keys(arguments) || '').length === 2;
+		}(1, 2));
+		if (!keysWorksWithArguments) {
+			var originalKeys = Object.keys;
+			Object.keys = function keys(object) {
+				if (isArgs(object)) {
+					return originalKeys(slice.call(object));
+				} else {
+					return originalKeys(object);
+				}
+			};
+		}
+	}
+	return Object.keys || keysShim;
+};
+
+module.exports = keysShim;
+
+},{"./isArguments":22}],22:[function(require,module,exports){
+'use strict';
+
+var toStr = Object.prototype.toString;
+
+module.exports = function isArguments(value) {
+	var str = toStr.call(value);
+	var isArgs = str === '[object Arguments]';
+	if (!isArgs) {
+		isArgs = str !== '[object Array]' &&
+			value !== null &&
+			typeof value === 'object' &&
+			typeof value.length === 'number' &&
+			value.length >= 0 &&
+			toStr.call(value.callee) === '[object Function]';
+	}
+	return isArgs;
+};
+
+},{}],23:[function(require,module,exports){
+module.exports = extend
+
+function extend() {
+    var target = {}
+
+    for (var i = 0; i < arguments.length; i++) {
+        var source = arguments[i]
+
+        for (var key in source) {
+            if (source.hasOwnProperty(key)) {
+                target[key] = source[key]
+            }
+        }
+    }
+
+    return target
+}
+
+},{}],24:[function(require,module,exports){
+(function (Buffer){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+// NOTE: These type checking functions intentionally don't use `instanceof`
+// because it is fragile and can be easily faked with `Object.create()`.
+function isArray(ar) {
+  return Array.isArray(ar);
+}
+exports.isArray = isArray;
+
+function isBoolean(arg) {
+  return typeof arg === 'boolean';
+}
+exports.isBoolean = isBoolean;
+
+function isNull(arg) {
+  return arg === null;
+}
+exports.isNull = isNull;
+
+function isNullOrUndefined(arg) {
+  return arg == null;
+}
+exports.isNullOrUndefined = isNullOrUndefined;
+
+function isNumber(arg) {
+  return typeof arg === 'number';
+}
+exports.isNumber = isNumber;
+
+function isString(arg) {
+  return typeof arg === 'string';
+}
+exports.isString = isString;
+
+function isSymbol(arg) {
+  return typeof arg === 'symbol';
+}
+exports.isSymbol = isSymbol;
+
+function isUndefined(arg) {
+  return arg === void 0;
+}
+exports.isUndefined = isUndefined;
+
+function isRegExp(re) {
+  return isObject(re) && objectToString(re) === '[object RegExp]';
+}
+exports.isRegExp = isRegExp;
+
+function isObject(arg) {
+  return typeof arg === 'object' && arg !== null;
+}
+exports.isObject = isObject;
+
+function isDate(d) {
+  return isObject(d) && objectToString(d) === '[object Date]';
+}
+exports.isDate = isDate;
+
+function isError(e) {
+  return isObject(e) &&
+      (objectToString(e) === '[object Error]' || e instanceof Error);
+}
+exports.isError = isError;
+
+function isFunction(arg) {
+  return typeof arg === 'function';
+}
+exports.isFunction = isFunction;
+
+function isPrimitive(arg) {
+  return arg === null ||
+         typeof arg === 'boolean' ||
+         typeof arg === 'number' ||
+         typeof arg === 'string' ||
+         typeof arg === 'symbol' ||  // ES6 symbol
+         typeof arg === 'undefined';
+}
+exports.isPrimitive = isPrimitive;
+
+function isBuffer(arg) {
+  return Buffer.isBuffer(arg);
+}
+exports.isBuffer = isBuffer;
+
+function objectToString(o) {
+  return Object.prototype.toString.call(o);
+}
+}).call(this,require("buffer").Buffer)
+},{"buffer":47}],25:[function(require,module,exports){
+arguments[4][7][0].apply(exports,arguments)
+},{"dup":7}],26:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var net = require('net');
+var util = require('util');
+var EventEmitter = require('events').EventEmitter;
+var debug = util.debuglog('http');
+
+// New Agent code.
+
+// The largest departure from the previous implementation is that
+// an Agent instance holds connections for a variable number of host:ports.
+// Surprisingly, this is still API compatible as far as third parties are
+// concerned. The only code that really notices the difference is the
+// request object.
+
+// Another departure is that all code related to HTTP parsing is in
+// ClientRequest.onSocket(). The Agent is now *strictly*
+// concerned with managing a connection pool.
+
+function Agent(options) {
+  if (!(this instanceof Agent))
+    return new Agent(options);
+
+  EventEmitter.call(this);
+
+  var self = this;
+
+  self.defaultPort = 80;
+  self.protocol = 'http:';
+
+  self.options = util._extend({}, options);
+
+  // don't confuse net and make it think that we're connecting to a pipe
+  self.options.path = null;
+  self.requests = {};
+  self.sockets = {};
+  self.freeSockets = {};
+  self.keepAliveMsecs = self.options.keepAliveMsecs || 1000;
+  self.keepAlive = self.options.keepAlive || false;
+  self.maxSockets = self.options.maxSockets || Agent.defaultMaxSockets;
+  self.maxFreeSockets = self.options.maxFreeSockets || 256;
+
+  self.on('free', function(socket, options) {
+    var name = self.getName(options);
+    debug('agent.on(free)', name);
+
+    if (!socket.destroyed &&
+        self.requests[name] && self.requests[name].length) {
+      self.requests[name].shift().onSocket(socket);
+      if (self.requests[name].length === 0) {
+        // don't leak
+        delete self.requests[name];
+      }
+    } else {
+      // If there are no pending requests, then put it in
+      // the freeSockets pool, but only if we're allowed to do so.
+      var req = socket._httpMessage;
+      if (req &&
+          req.shouldKeepAlive &&
+          !socket.destroyed &&
+          self.options.keepAlive) {
+        var freeSockets = self.freeSockets[name];
+        var freeLen = freeSockets ? freeSockets.length : 0;
+        var count = freeLen;
+        if (self.sockets[name])
+          count += self.sockets[name].length;
+
+        if (count >= self.maxSockets || freeLen >= self.maxFreeSockets) {
+          self.removeSocket(socket, options);
+          socket.destroy();
+        } else {
+          freeSockets = freeSockets || [];
+          self.freeSockets[name] = freeSockets;
+          socket.setKeepAlive(true, self.keepAliveMsecs);
+          socket.unref();
+          socket._httpMessage = null;
+          self.removeSocket(socket, options);
+          freeSockets.push(socket);
+        }
+      } else {
+        self.removeSocket(socket, options);
+        socket.destroy();
+      }
+    }
+  });
+}
+
+util.inherits(Agent, EventEmitter);
+exports.Agent = Agent;
+
+Agent.defaultMaxSockets = Infinity;
+
+Agent.prototype.createConnection = net.createConnection;
+
+// Get the key for a given set of request options
+Agent.prototype.getName = function(options) {
+  var name = '';
+
+  if (options.host)
+    name += options.host;
+  else
+    name += 'localhost';
+
+  name += ':';
+  if (options.port)
+    name += options.port;
+  name += ':';
+  if (options.localAddress)
+    name += options.localAddress;
+  name += ':';
+  return name;
+};
+
+Agent.prototype.addRequest = function(req, options) {
+  // Legacy API: addRequest(req, host, port, path)
+  if (typeof options === 'string') {
+    options = {
+      host: options,
+      port: arguments[2],
+      path: arguments[3]
+    };
+  }
+
+  var name = this.getName(options);
+  if (!this.sockets[name]) {
+    this.sockets[name] = [];
+  }
+
+  var freeLen = this.freeSockets[name] ? this.freeSockets[name].length : 0;
+  var sockLen = freeLen + this.sockets[name].length;
+
+  if (freeLen) {
+    // we have a free socket, so use that.
+    var socket = this.freeSockets[name].shift();
+    debug('have free socket');
+
+    // don't leak
+    if (!this.freeSockets[name].length)
+      delete this.freeSockets[name];
+
+    socket.ref();
+    req.onSocket(socket);
+    this.sockets[name].push(socket);
+  } else if (sockLen < this.maxSockets) {
+    debug('call onSocket', sockLen, freeLen);
+    // If we are under maxSockets create a new one.
+    req.onSocket(this.createSocket(req, options));
+  } else {
+    debug('wait for socket');
+    // We are over limit so we'll add it to the queue.
+    if (!this.requests[name]) {
+      this.requests[name] = [];
+    }
+    this.requests[name].push(req);
+  }
+};
+
+Agent.prototype.createSocket = function(req, options) {
+  var self = this;
+  options = util._extend({}, options);
+  options = util._extend(options, self.options);
+
+  options.servername = options.host;
+  if (req) {
+    var hostHeader = req.getHeader('host');
+    if (hostHeader) {
+      options.servername = hostHeader.replace(/:.*$/, '');
+    }
+  }
+
+  var name = self.getName(options);
+
+  debug('createConnection', name, options);
+  options.encoding = null;
+  var s = self.createConnection(options);
+  if (!self.sockets[name]) {
+    self.sockets[name] = [];
+  }
+  this.sockets[name].push(s);
+  debug('sockets', name, this.sockets[name].length);
+
+  function onFree() {
+    self.emit('free', s, options);
+  }
+  s.on('free', onFree);
+
+  function onClose(err) {
+    debug('CLIENT socket onClose');
+    // This is the only place where sockets get removed from the Agent.
+    // If you want to remove a socket from the pool, just close it.
+    // All socket errors end in a close event anyway.
+    self.removeSocket(s, options);
+  }
+  s.on('close', onClose);
+
+  function onRemove() {
+    // We need this function for cases like HTTP 'upgrade'
+    // (defined by WebSockets) where we need to remove a socket from the
+    // pool because it'll be locked up indefinitely
+    debug('CLIENT socket onRemove');
+    self.removeSocket(s, options);
+    s.removeListener('close', onClose);
+    s.removeListener('free', onFree);
+    s.removeListener('agentRemove', onRemove);
+  }
+  s.on('agentRemove', onRemove);
+  return s;
+};
+
+Agent.prototype.removeSocket = function(s, options) {
+  var name = this.getName(options);
+  debug('removeSocket', name, 'destroyed:', s.destroyed);
+  var sets = [this.sockets];
+
+  // If the socket was destroyed, remove it from the free buffers too.
+  if (s.destroyed)
+    sets.push(this.freeSockets);
+
+  for (var sk = 0; sk < sets.length; sk++) {
+    var sockets = sets[sk];
+
+    if (sockets[name]) {
+      var index = sockets[name].indexOf(s);
+      if (index !== -1) {
+        sockets[name].splice(index, 1);
+        // Don't leak
+        if (sockets[name].length === 0)
+          delete sockets[name];
+      }
+    }
+  }
+
+  if (this.requests[name] && this.requests[name].length) {
+    debug('removeSocket, have a request, make a socket');
+    var req = this.requests[name][0];
+    // If we have pending requests and a socket gets closed make a new one
+    this.createSocket(req, options).emit('free');
+  }
+};
+
+Agent.prototype.destroy = function() {
+  var sets = [this.freeSockets, this.sockets];
+  for (var s = 0; s < sets.length; s++) {
+    var set = sets[s];
+    var keys = Object.keys(set);
+    for (var v = 0; v < keys.length; v++) {
+      var setName = set[keys[v]];
+      for (var n = 0; n < setName.length; n++) {
+        setName[n].destroy();
+      }
+    }
+  }
+};
+
+exports.globalAgent = new Agent();
+
+},{"events":52,"net":"net","util":77}],27:[function(require,module,exports){
+(function (process){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var util = require('util');
+var net = require('net');
+var url = require('url');
+var EventEmitter = require('events').EventEmitter;
+var HTTPParser = require('http-parser-js').HTTPParser;
+var assert = require('assert').ok;
+var Buffer = require('buffer').Buffer;
+
+var common = require('./_http_common');
+
+var httpSocketSetup = common.httpSocketSetup;
+var parsers = common.parsers;
+var freeParser = common.freeParser;
+var debug = common.debug;
+
+var OutgoingMessage = require('./_http_outgoing').OutgoingMessage;
+
+var Agent = require('./_http_agent');
+
+
+function ClientRequest(options, cb) {
+  var self = this;
+  OutgoingMessage.call(self);
+
+  if (util.isString(options)) {
+    options = url.parse(options);
+  } else {
+    options = util._extend({}, options);
+  }
+
+  var agent = options.agent;
+  var defaultAgent = options._defaultAgent || Agent.globalAgent;
+  if (agent === false) {
+    agent = new defaultAgent.constructor();
+  } else if (util.isNullOrUndefined(agent) && !options.createConnection) {
+    agent = defaultAgent;
+  }
+  self.agent = agent;
+
+  var protocol = options.protocol || defaultAgent.protocol;
+  var expectedProtocol = defaultAgent.protocol;
+  if (self.agent && self.agent.protocol)
+    expectedProtocol = self.agent.protocol;
+
+  if (options.path && / /.test(options.path)) {
+    // The actual regex is more like /[^A-Za-z0-9\-._~!$&'()*+,;=/:@]/
+    // with an additional rule for ignoring percentage-escaped characters
+    // but that's a) hard to capture in a regular expression that performs
+    // well, and b) possibly too restrictive for real-world usage. That's
+    // why it only scans for spaces because those are guaranteed to create
+    // an invalid request.
+    throw new TypeError('Request path contains unescaped characters.');
+  } else if (protocol !== expectedProtocol) {
+    throw new Error('Protocol "' + protocol + '" not supported. ' +
+                    'Expected "' + expectedProtocol + '".');
+  }
+
+  var defaultPort = options.defaultPort || self.agent && self.agent.defaultPort;
+
+  var port = options.port = options.port || defaultPort || 80;
+  var host = options.host = options.hostname || options.host || 'localhost';
+
+  if (util.isUndefined(options.setHost)) {
+    var setHost = true;
+  }
+
+  self.socketPath = options.socketPath;
+
+  var method = self.method = (options.method || 'GET').toUpperCase();
+  self.path = options.path || '/';
+  if (cb) {
+    self.once('response', cb);
+  }
+
+  if (!util.isArray(options.headers)) {
+    if (options.headers) {
+      var keys = Object.keys(options.headers);
+      for (var i = 0, l = keys.length; i < l; i++) {
+        var key = keys[i];
+        self.setHeader(key, options.headers[key]);
+      }
+    }
+    if (host && !this.getHeader('host') && setHost) {
+      var hostHeader = host;
+      if (port && +port !== defaultPort) {
+        hostHeader += ':' + port;
+      }
+      this.setHeader('Host', hostHeader);
+    }
+  }
+
+  if (options.auth && !this.getHeader('Authorization')) {
+    //basic auth
+    this.setHeader('Authorization', 'Basic ' +
+                   new Buffer(options.auth).toString('base64'));
+  }
+
+  if (method === 'GET' ||
+      method === 'HEAD' ||
+      method === 'DELETE' ||
+      method === 'OPTIONS' ||
+      method === 'CONNECT') {
+    self.useChunkedEncodingByDefault = false;
+  } else {
+    self.useChunkedEncodingByDefault = true;
+  }
+
+  if (util.isArray(options.headers)) {
+    self._storeHeader(self.method + ' ' + self.path + ' HTTP/1.1\r\n',
+                      options.headers);
+  } else if (self.getHeader('expect')) {
+    self._storeHeader(self.method + ' ' + self.path + ' HTTP/1.1\r\n',
+                      self._renderHeaders());
+  }
+
+  if (self.socketPath) {
+    self._last = true;
+    self.shouldKeepAlive = false;
+    var conn = self.agent.createConnection({ path: self.socketPath });
+    self.onSocket(conn);
+  } else if (self.agent) {
+    // If there is an agent we should default to Connection:keep-alive,
+    // but only if the Agent will actually reuse the connection!
+    // If it's not a keepAlive agent, and the maxSockets==Infinity, then
+    // there's never a case where this socket will actually be reused
+    if (!self.agent.keepAlive && !Number.isFinite(self.agent.maxSockets)) {
+      self._last = true;
+      self.shouldKeepAlive = false;
+    } else {
+      self._last = false;
+      self.shouldKeepAlive = true;
+    }
+    self.agent.addRequest(self, options);
+  } else {
+    // No agent, default to Connection:close.
+    self._last = true;
+    self.shouldKeepAlive = false;
+    if (options.createConnection) {
+      var conn = options.createConnection(options);
+    } else {
+      debug('CLIENT use net.createConnection', options);
+      var conn = net.createConnection(options);
+    }
+    self.onSocket(conn);
+  }
+
+  self._deferToConnect(null, null, function() {
+    self._flush();
+    self = null;
+  });
+}
+
+util.inherits(ClientRequest, OutgoingMessage);
+
+exports.ClientRequest = ClientRequest;
+
+ClientRequest.prototype.aborted = undefined;
+
+ClientRequest.prototype._finish = function() {
+  // DTRACE_HTTP_CLIENT_REQUEST(this, this.connection);
+  // COUNTER_HTTP_CLIENT_REQUEST();
+  OutgoingMessage.prototype._finish.call(this);
+};
+
+ClientRequest.prototype._implicitHeader = function() {
+  this._storeHeader(this.method + ' ' + this.path + ' HTTP/1.1\r\n',
+                    this._renderHeaders());
+};
+
+ClientRequest.prototype.abort = function() {
+  // Mark as aborting so we can avoid sending queued request data
+  // This is used as a truthy flag elsewhere. The use of Date.now is for
+  // debugging purposes only.
+  this.aborted = Date.now();
+
+  // If we're aborting, we don't care about any more response data.
+  if (this.res)
+    this.res._dump();
+  else
+    this.once('response', function(res) {
+      res._dump();
+    });
+
+  // In the event that we don't have a socket, we will pop out of
+  // the request queue through handling in onSocket.
+  if (this.socket) {
+    // in-progress
+    this.socket.destroy();
+  }
+};
+
+
+function createHangUpError() {
+  var error = new Error('socket hang up');
+  error.code = 'ECONNRESET';
+  return error;
+}
+
+
+function socketCloseListener() {
+  var socket = this;
+  var req = socket._httpMessage;
+  debug('HTTP socket close');
+
+  // Pull through final chunk, if anything is buffered.
+  // the ondata function will handle it properly, and this
+  // is a no-op if no final chunk remains.
+  socket.read();
+
+  // NOTE: Its important to get parser here, because it could be freed by
+  // the `socketOnData`.
+  var parser = socket.parser;
+  req.emit('close');
+  if (req.res && req.res.readable) {
+    // Socket closed before we emitted 'end' below.
+    req.res.emit('aborted');
+    var res = req.res;
+    res.on('end', function() {
+      res.emit('close');
+    });
+    res.push(null);
+  } else if (!req.res && !req.socket._hadError) {
+    // This socket error fired before we started to
+    // receive a response. The error needs to
+    // fire on the request.
+    req.emit('error', createHangUpError());
+    req.socket._hadError = true;
+  }
+
+  // Too bad.  That output wasn't getting written.
+  // This is pretty terrible that it doesn't raise an error.
+  // Fixed better in v0.10
+  if (req.output)
+    req.output.length = 0;
+  if (req.outputEncodings)
+    req.outputEncodings.length = 0;
+
+  if (parser) {
+    parser.finish();
+    freeParser(parser, req, socket);
+  }
+}
+
+function socketErrorListener(err) {
+  var socket = this;
+  var req = socket._httpMessage;
+  debug('SOCKET ERROR:', err.message, err.stack);
+
+  if (req) {
+    req.emit('error', err);
+    // For Safety. Some additional errors might fire later on
+    // and we need to make sure we don't double-fire the error event.
+    req.socket._hadError = true;
+  }
+
+  // Handle any pending data
+  socket.read();
+
+  var parser = socket.parser;
+  if (parser) {
+    parser.finish();
+    freeParser(parser, req, socket);
+  }
+
+  // Ensure that no further data will come out of the socket
+  socket.removeListener('data', socketOnData);
+  socket.removeListener('end', socketOnEnd);
+  socket.destroy();
+}
+
+function socketOnEnd() {
+  var socket = this;
+  var req = this._httpMessage;
+  var parser = this.parser;
+
+  if (!req.res && !req.socket._hadError) {
+    // If we don't have a response then we know that the socket
+    // ended prematurely and we need to emit an error on the request.
+    req.emit('error', createHangUpError());
+    req.socket._hadError = true;
+  }
+  if (parser) {
+    parser.finish();
+    freeParser(parser, req, socket);
+  }
+  socket.destroy();
+}
+
+function socketOnData(d) {
+  var socket = this;
+  var req = this._httpMessage;
+  var parser = this.parser;
+
+  assert(parser && parser.socket === socket);
+
+  var ret = parser.execute(d);
+  if (ret instanceof Error) {
+    debug('parse error');
+    freeParser(parser, req, socket);
+    socket.destroy();
+    req.emit('error', ret);
+    req.socket._hadError = true;
+  } else if (parser.incoming && parser.incoming.upgrade) {
+    // Upgrade or CONNECT
+    var bytesParsed = ret;
+    var res = parser.incoming;
+    req.res = res;
+
+    socket.removeListener('data', socketOnData);
+    socket.removeListener('end', socketOnEnd);
+    parser.finish();
+
+    var bodyHead = d.slice(bytesParsed, d.length);
+
+    var eventName = req.method === 'CONNECT' ? 'connect' : 'upgrade';
+    if (EventEmitter.listenerCount(req, eventName) > 0) {
+      req.upgradeOrConnect = true;
+
+      // detach the socket
+      socket.emit('agentRemove');
+      socket.removeListener('close', socketCloseListener);
+      socket.removeListener('error', socketErrorListener);
+
+      // TODO(isaacs): Need a way to reset a stream to fresh state
+      // IE, not flowing, and not explicitly paused.
+      socket._readableState.flowing = null;
+
+      req.emit(eventName, res, socket, bodyHead);
+      req.emit('close');
+    } else {
+      // Got Upgrade header or CONNECT method, but have no handler.
+      socket.destroy();
+    }
+    freeParser(parser, req, socket);
+  } else if (parser.incoming && parser.incoming.complete &&
+             // When the status code is 100 (Continue), the server will
+             // send a final response after this client sends a request
+             // body. So, we must not free the parser.
+             parser.incoming.statusCode !== 100) {
+    socket.removeListener('data', socketOnData);
+    socket.removeListener('end', socketOnEnd);
+    freeParser(parser, req, socket);
+  }
+}
+
+
+// client
+function parserOnIncomingClient(res, shouldKeepAlive) {
+  var socket = this.socket;
+  var req = socket._httpMessage;
+
+
+  // propogate "domain" setting...
+  if (req.domain && !res.domain) {
+    debug('setting "res.domain"');
+    res.domain = req.domain;
+  }
+
+  debug('AGENT incoming response!');
+
+  if (req.res) {
+    // We already have a response object, this means the server
+    // sent a double response.
+    socket.destroy();
+    return;
+  }
+  req.res = res;
+
+  // Responses to CONNECT request is handled as Upgrade.
+  if (req.method === 'CONNECT') {
+    res.upgrade = true;
+    return true; // skip body
+  }
+
+  // Responses to HEAD requests are crazy.
+  // HEAD responses aren't allowed to have an entity-body
+  // but *can* have a content-length which actually corresponds
+  // to the content-length of the entity-body had the request
+  // been a GET.
+  var isHeadResponse = req.method === 'HEAD';
+  debug('AGENT isHeadResponse', isHeadResponse);
+
+  if (res.statusCode === 100) {
+    // restart the parser, as this is a continue message.
+    delete req.res; // Clear res so that we don't hit double-responses.
+    req.emit('continue');
+    return true;
+  }
+
+  if (req.shouldKeepAlive && !shouldKeepAlive && !req.upgradeOrConnect) {
+    // Server MUST respond with Connection:keep-alive for us to enable it.
+    // If we've been upgraded (via WebSockets) we also shouldn't try to
+    // keep the connection open.
+    req.shouldKeepAlive = false;
+  }
+
+
+  // DTRACE_HTTP_CLIENT_RESPONSE(socket, req);
+  // COUNTER_HTTP_CLIENT_RESPONSE();
+  req.res = res;
+  res.req = req;
+
+  // add our listener first, so that we guarantee socket cleanup
+  res.on('end', responseOnEnd);
+  var handled = req.emit('response', res);
+
+  // If the user did not listen for the 'response' event, then they
+  // can't possibly read the data, so we ._dump() it into the void
+  // so that the socket doesn't hang there in a paused state.
+  if (!handled)
+    res._dump();
+
+  return isHeadResponse;
+}
+
+// client
+function responseOnEnd() {
+  var res = this;
+  var req = res.req;
+  var socket = req.socket;
+
+  if (!req.shouldKeepAlive) {
+    if (socket.writable) {
+      debug('AGENT socket.destroySoon()');
+      socket.destroySoon();
+    }
+    assert(!socket.writable);
+  } else {
+    debug('AGENT socket keep-alive');
+    if (req.timeoutCb) {
+      socket.setTimeout(0, req.timeoutCb);
+      req.timeoutCb = null;
+    }
+    socket.removeListener('close', socketCloseListener);
+    socket.removeListener('error', socketErrorListener);
+    // Mark this socket as available, AFTER user-added end
+    // handlers have a chance to run.
+    process.nextTick(function() {
+      socket.emit('free');
+    });
+  }
+}
+
+function tickOnSocket(req, socket) {
+  var parser = parsers.alloc();
+  req.socket = socket;
+  req.connection = socket;
+  parser.reinitialize(HTTPParser.RESPONSE);
+  parser.socket = socket;
+  parser.incoming = null;
+  req.parser = parser;
+
+  socket.parser = parser;
+  socket._httpMessage = req;
+
+  // Setup "drain" propogation.
+  httpSocketSetup(socket);
+
+  // Propagate headers limit from request object to parser
+  if (util.isNumber(req.maxHeadersCount)) {
+    parser.maxHeaderPairs = req.maxHeadersCount << 1;
+  } else {
+    // Set default value because parser may be reused from FreeList
+    parser.maxHeaderPairs = 2000;
+  }
+
+  parser.onIncoming = parserOnIncomingClient;
+  socket.on('error', socketErrorListener);
+  socket.on('data', socketOnData);
+  socket.on('end', socketOnEnd);
+  socket.on('close', socketCloseListener);
+  req.emit('socket', socket);
+}
+
+ClientRequest.prototype.onSocket = function(socket) {
+  var req = this;
+
+  process.nextTick(function() {
+    if (req.aborted) {
+      // If we were aborted while waiting for a socket, skip the whole thing.
+      socket.emit('free');
+    } else {
+      tickOnSocket(req, socket);
+    }
+  });
+};
+
+ClientRequest.prototype._deferToConnect = function(method, arguments_, cb) {
+  // This function is for calls that need to happen once the socket is
+  // connected and writable. It's an important promisy thing for all the socket
+  // calls that happen either now (when a socket is assigned) or
+  // in the future (when a socket gets assigned out of the pool and is
+  // eventually writable).
+  var self = this;
+  var onSocket = function() {
+    if (self.socket.writable) {
+      if (method) {
+        self.socket[method].apply(self.socket, arguments_);
+      }
+      if (cb) { cb(); }
+    } else {
+      self.socket.once('connect', function() {
+        if (method) {
+          self.socket[method].apply(self.socket, arguments_);
+        }
+        if (cb) { cb(); }
+      });
+    }
+  }
+  if (!self.socket) {
+    self.once('socket', onSocket);
+  } else {
+    onSocket();
+  }
+};
+
+ClientRequest.prototype.setTimeout = function(msecs, callback) {
+  if (callback) this.once('timeout', callback);
+
+  var self = this;
+  function emitTimeout() {
+    self.emit('timeout');
+  }
+
+  if (this.socket && this.socket.writable) {
+    if (this.timeoutCb)
+      this.socket.setTimeout(0, this.timeoutCb);
+    this.timeoutCb = emitTimeout;
+    this.socket.setTimeout(msecs, emitTimeout);
+    return;
+  }
+
+  // Set timeoutCb so that it'll get cleaned up on request end
+  this.timeoutCb = emitTimeout;
+  if (this.socket) {
+    var sock = this.socket;
+    this.socket.once('connect', function() {
+      sock.setTimeout(msecs, emitTimeout);
+    });
+    return;
+  }
+
+  this.once('socket', function(sock) {
+    sock.setTimeout(msecs, emitTimeout);
+  });
+};
+
+ClientRequest.prototype.setNoDelay = function() {
+  this._deferToConnect('setNoDelay', arguments);
+};
+ClientRequest.prototype.setSocketKeepAlive = function() {
+  this._deferToConnect('setKeepAlive', arguments);
+};
+
+ClientRequest.prototype.clearTimeout = function(cb) {
+  this.setTimeout(0, cb);
+};
+
+}).call(this,require('_process'))
+},{"./_http_agent":26,"./_http_common":28,"./_http_outgoing":30,"_process":56,"assert":45,"buffer":47,"events":52,"http-parser-js":33,"net":"net","url":75,"util":77}],28:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var FreeList = require('freelist').FreeList;
+var HTTPParser = require('http-parser-js').HTTPParser;
+
+var incoming = require('./_http_incoming');
+var IncomingMessage = incoming.IncomingMessage;
+var readStart = incoming.readStart;
+var readStop = incoming.readStop;
+
+var isNumber = require('util').isNumber;
+var debug = require('util').debuglog('http');
+exports.debug = debug;
+
+exports.CRLF = '\r\n';
+exports.chunkExpression = /chunk/i;
+exports.continueExpression = /100-continue/i;
+exports.methods = HTTPParser.methods;
+
+var kOnHeaders = HTTPParser.kOnHeaders | 0;
+var kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
+var kOnBody = HTTPParser.kOnBody | 0;
+var kOnMessageComplete = HTTPParser.kOnMessageComplete | 0;
+
+// Only called in the slow case where slow means
+// that the request headers were either fragmented
+// across multiple TCP packets or too large to be
+// processed in a single run. This method is also
+// called to process trailing HTTP headers.
+function parserOnHeaders(headers, url) {
+  // Once we exceeded headers limit - stop collecting them
+  if (this.maxHeaderPairs <= 0 ||
+      this._headers.length < this.maxHeaderPairs) {
+    this._headers = this._headers.concat(headers);
+  }
+  this._url += url;
+}
+
+// info.headers and info.url are set only if .onHeaders()
+// has not been called for this request.
+//
+// info.url is not set for response parsers but that's not
+// applicable here since all our parsers are request parsers.
+function parserOnHeadersComplete(info) {
+  debug('parserOnHeadersComplete', info);
+  var parser = this;
+  var headers = info.headers;
+  var url = info.url;
+
+  if (!headers) {
+    headers = parser._headers;
+    parser._headers = [];
+  }
+
+  if (!url) {
+    url = parser._url;
+    parser._url = '';
+  }
+
+  parser.incoming = new IncomingMessage(parser.socket);
+  parser.incoming.httpVersionMajor = info.versionMajor;
+  parser.incoming.httpVersionMinor = info.versionMinor;
+  parser.incoming.httpVersion = info.versionMajor + '.' + info.versionMinor;
+  parser.incoming.url = url;
+
+  var n = headers.length;
+
+  // If parser.maxHeaderPairs <= 0 - assume that there're no limit
+  if (parser.maxHeaderPairs > 0) {
+    n = Math.min(n, parser.maxHeaderPairs);
+  }
+
+  parser.incoming._addHeaderLines(headers, n);
+
+  if (isNumber(info.method)) {
+    // server only
+    parser.incoming.method = HTTPParser.methods[info.method];
+  } else {
+    // client only
+    parser.incoming.statusCode = info.statusCode;
+    parser.incoming.statusMessage = info.statusMessage;
+  }
+
+  parser.incoming.upgrade = info.upgrade;
+
+  var skipBody = false; // response to HEAD or CONNECT
+
+  if (!info.upgrade) {
+    // For upgraded connections and CONNECT method request,
+    // we'll emit this after parser.execute
+    // so that we can capture the first part of the new protocol
+    skipBody = parser.onIncoming(parser.incoming, info.shouldKeepAlive);
+  }
+
+  return skipBody;
+}
+
+// XXX This is a mess.
+// TODO: http.Parser should be a Writable emits request/response events.
+function parserOnBody(b, start, len) {
+  var parser = this;
+  var stream = parser.incoming;
+
+  // if the stream has already been removed, then drop it.
+  if (!stream)
+    return;
+
+  var socket = stream.socket;
+
+  // pretend this was the result of a stream._read call.
+  if (len > 0 && !stream._dumped) {
+    var slice = b.slice(start, start + len);
+    var ret = stream.push(slice);
+    if (!ret)
+      readStop(socket);
+  }
+}
+
+function parserOnMessageComplete() {
+  var parser = this;
+  var stream = parser.incoming;
+
+  if (stream) {
+    stream.complete = true;
+    // Emit any trailing headers.
+    var headers = parser._headers;
+    if (headers) {
+      parser.incoming._addHeaderLines(headers, headers.length);
+      parser._headers = [];
+      parser._url = '';
+    }
+
+    if (!stream.upgrade)
+      // For upgraded connections, also emit this after parser.execute
+      stream.push(null);
+  }
+
+  if (stream && !parser.incoming._pendings.length) {
+    // For emit end event
+    stream.push(null);
+  }
+
+  // force to read the next incoming message
+  readStart(parser.socket);
+}
+
+
+var parsers = new FreeList('parsers', 1000, function() {
+  var parser = new HTTPParser(HTTPParser.REQUEST);
+
+  parser._headers = [];
+  parser._url = '';
+
+  // Only called in the slow case where slow means
+  // that the request headers were either fragmented
+  // across multiple TCP packets or too large to be
+  // processed in a single run. This method is also
+  // called to process trailing HTTP headers.
+  parser[kOnHeaders] = parserOnHeaders;
+  parser[kOnHeadersComplete] = parserOnHeadersComplete;
+  parser[kOnBody] = parserOnBody;
+  parser[kOnMessageComplete] = parserOnMessageComplete;
+
+  return parser;
+});
+exports.parsers = parsers;
+
+
+// Free the parser and also break any links that it
+// might have to any other things.
+// TODO: All parser data should be attached to a
+// single object, so that it can be easily cleaned
+// up by doing `parser.data = {}`, which should
+// be done in FreeList.free.  `parsers.free(parser)`
+// should be all that is needed.
+function freeParser(parser, req, socket) {
+  if (parser) {
+    parser._headers = [];
+    parser.onIncoming = null;
+    if (parser.socket)
+      parser.socket.parser = null;
+    parser.socket = null;
+    parser.incoming = null;
+    if (parsers.free(parser) === false)
+      parser.close();
+    parser = null;
+  }
+  if (req) {
+    req.parser = null;
+  }
+  if (socket) {
+    socket.parser = null;
+  }
+}
+exports.freeParser = freeParser;
+
+
+function ondrain() {
+  if (this._httpMessage) this._httpMessage.emit('drain');
+}
+
+
+function httpSocketSetup(socket) {
+  socket.removeListener('drain', ondrain);
+  socket.on('drain', ondrain);
+}
+exports.httpSocketSetup = httpSocketSetup;
+
+},{"./_http_incoming":29,"freelist":32,"http-parser-js":33,"util":77}],29:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var util = require('util');
+var Stream = require('stream');
+
+function readStart(socket) {
+  if (socket && !socket._paused && socket.readable)
+    socket.resume();
+}
+exports.readStart = readStart;
+
+function readStop(socket) {
+  if (socket)
+    socket.pause();
+}
+exports.readStop = readStop;
+
+
+/* Abstract base class for ServerRequest and ClientResponse. */
+function IncomingMessage(socket) {
+  Stream.Readable.call(this);
+
+  // XXX This implementation is kind of all over the place
+  // When the parser emits body chunks, they go in this list.
+  // _read() pulls them out, and when it finds EOF, it ends.
+
+  this.socket = socket;
+  this.connection = socket;
+
+  this.httpVersionMajor = null;
+  this.httpVersionMinor = null;
+  this.httpVersion = null;
+  this.complete = false;
+  this.headers = {};
+  this.rawHeaders = [];
+  this.trailers = {};
+  this.rawTrailers = [];
+
+  this.readable = true;
+
+  this._pendings = [];
+  this._pendingIndex = 0;
+  this.upgrade = null;
+
+  // request (server) only
+  this.url = '';
+  this.method = null;
+
+  // response (client) only
+  this.statusCode = null;
+  this.statusMessage = null;
+  this.client = this.socket;
+
+  // flag for backwards compatibility grossness.
+  this._consuming = false;
+
+  // flag for when we decide that this message cannot possibly be
+  // read by the user, so there's no point continuing to handle it.
+  this._dumped = false;
+}
+util.inherits(IncomingMessage, Stream.Readable);
+
+
+exports.IncomingMessage = IncomingMessage;
+
+
+IncomingMessage.prototype.setTimeout = function(msecs, callback) {
+  if (callback)
+    this.on('timeout', callback);
+  this.socket.setTimeout(msecs);
+};
+
+
+IncomingMessage.prototype.read = function(n) {
+  this._consuming = true;
+  this.read = Stream.Readable.prototype.read;
+  return this.read(n);
+};
+
+
+IncomingMessage.prototype._read = function(n) {
+  // We actually do almost nothing here, because the parserOnBody
+  // function fills up our internal buffer directly.  However, we
+  // do need to unpause the underlying socket so that it flows.
+  if (this.socket.readable)
+    readStart(this.socket);
+};
+
+
+// It's possible that the socket will be destroyed, and removed from
+// any messages, before ever calling this.  In that case, just skip
+// it, since something else is destroying this connection anyway.
+IncomingMessage.prototype.destroy = function(error) {
+  if (this.socket)
+    this.socket.destroy(error);
+};
+
+
+IncomingMessage.prototype._addHeaderLines = function(headers, n) {
+  if (headers && headers.length) {
+    var raw, dest;
+    if (this.complete) {
+      raw = this.rawTrailers;
+      dest = this.trailers;
+    } else {
+      raw = this.rawHeaders;
+      dest = this.headers;
+    }
+
+    for (var i = 0; i < n; i += 2) {
+      var k = headers[i];
+      var v = headers[i + 1];
+      raw.push(k);
+      raw.push(v);
+      this._addHeaderLine(k, v, dest);
+    }
+  }
+};
+
+
+// Add the given (field, value) pair to the message
+//
+// Per RFC2616, section 4.2 it is acceptable to join multiple instances of the
+// same header with a ', ' if the header in question supports specification of
+// multiple values this way. If not, we declare the first instance the winner
+// and drop the second. Extended header fields (those beginning with 'x-') are
+// always joined.
+IncomingMessage.prototype._addHeaderLine = function(field, value, dest) {
+  field = field.toLowerCase();
+  switch (field) {
+    // Array headers:
+    case 'set-cookie':
+      if (!util.isUndefined(dest[field])) {
+        dest[field].push(value);
+      } else {
+        dest[field] = [value];
+      }
+      break;
+
+    // list is taken from:
+    // https://mxr.mozilla.org/mozilla/source/netwerk/protocol/http/src/nsHttpHeaderArray.cpp
+    case 'content-type':
+    case 'content-length':
+    case 'user-agent':
+    case 'referer':
+    case 'host':
+    case 'authorization':
+    case 'proxy-authorization':
+    case 'if-modified-since':
+    case 'if-unmodified-since':
+    case 'from':
+    case 'location':
+    case 'max-forwards':
+      // drop duplicates
+      if (util.isUndefined(dest[field]))
+        dest[field] = value;
+      break;
+
+    default:
+      // make comma-separated list
+      if (!util.isUndefined(dest[field]))
+        dest[field] += ', ' + value;
+      else {
+        dest[field] = value;
+      }
+  }
+};
+
+
+// Call this instead of resume() if we want to just
+// dump all the data to /dev/null
+IncomingMessage.prototype._dump = function() {
+  if (!this._dumped) {
+    this._dumped = true;
+    this.resume();
+  }
+};
+
+},{"stream":72,"util":77}],30:[function(require,module,exports){
+(function (process){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var assert = require('assert').ok;
+var Stream = require('stream');
+var timers = require('timers');
+var util = require('util');
+var Buffer = require('buffer').Buffer;
+var common = require('./_http_common');
+
+// fix if cork methods aren't available
+if (!Stream.Writable.prototype.cork) {
+  Stream.Writable.prototype.cork = Stream.Writable.prototype.uncork = function() {};
+}
+if (!Stream.Duplex.prototype.cork) {
+  Stream.Duplex.prototype.cork = Stream.Duplex.prototype.uncork = function() {};
+}
+
+var CRLF = common.CRLF;
+var chunkExpression = common.chunkExpression;
+var debug = common.debug;
+
+
+var connectionExpression = /Connection/i;
+var transferEncodingExpression = /Transfer-Encoding/i;
+var closeExpression = /close/i;
+var contentLengthExpression = /Content-Length/i;
+var dateExpression = /Date/i;
+var expectExpression = /Expect/i;
+
+var automaticHeaders = {
+  connection: true,
+  'content-length': true,
+  'transfer-encoding': true,
+  date: true
+};
+
+
+var dateCache;
+function utcDate() {
+  if (!dateCache) {
+    var d = new Date();
+    dateCache = d.toUTCString();
+    timers.enroll(utcDate, 1000 - d.getMilliseconds());
+    timers._unrefActive(utcDate);
+  }
+  return dateCache;
+}
+utcDate._onTimeout = function() {
+  dateCache = undefined;
+};
+
+
+function OutgoingMessage() {
+  Stream.call(this);
+
+  this.output = [];
+  this.outputEncodings = [];
+  this.outputCallbacks = [];
+
+  this.writable = true;
+
+  this._last = false;
+  this.chunkedEncoding = false;
+  this.shouldKeepAlive = true;
+  this.useChunkedEncodingByDefault = true;
+  this.sendDate = false;
+  this._removedHeader = {};
+
+  this._hasBody = true;
+  this._trailer = '';
+
+  this.finished = false;
+  this._hangupClose = false;
+  this._headerSent = false;
+
+  this.socket = null;
+  this.connection = null;
+  this._header = null;
+  this._headers = null;
+  this._headerNames = {};
+}
+util.inherits(OutgoingMessage, Stream);
+
+
+exports.OutgoingMessage = OutgoingMessage;
+
+
+OutgoingMessage.prototype.setTimeout = function(msecs, callback) {
+  if (callback)
+    this.on('timeout', callback);
+  if (!this.socket) {
+    this.once('socket', function(socket) {
+      socket.setTimeout(msecs);
+    });
+  } else
+    this.socket.setTimeout(msecs);
+};
+
+
+// It's possible that the socket will be destroyed, and removed from
+// any messages, before ever calling this.  In that case, just skip
+// it, since something else is destroying this connection anyway.
+OutgoingMessage.prototype.destroy = function(error) {
+  if (this.socket)
+    this.socket.destroy(error);
+  else
+    this.once('socket', function(socket) {
+      socket.destroy(error);
+    });
+};
+
+
+// This abstract either writing directly to the socket or buffering it.
+OutgoingMessage.prototype._send = function(data, encoding, callback) {
+  // This is a shameful hack to get the headers and first body chunk onto
+  // the same packet. Future versions of Node are going to take care of
+  // this at a lower level and in a more general way.
+  if (!this._headerSent) {
+    if (util.isString(data) &&
+        encoding !== 'hex' &&
+        encoding !== 'base64') {
+      data = this._header + data;
+    } else {
+      this.output.unshift(this._header);
+      this.outputEncodings.unshift('binary');
+      this.outputCallbacks.unshift(null);
+    }
+    this._headerSent = true;
+  }
+  return this._writeRaw(data, encoding, callback);
+};
+
+
+OutgoingMessage.prototype._writeRaw = function(data, encoding, callback) {
+  if (util.isFunction(encoding)) {
+    callback = encoding;
+    encoding = null;
+  }
+
+  if (data.length === 0) {
+    if (util.isFunction(callback))
+      process.nextTick(callback);
+    return true;
+  }
+
+  if (this.connection &&
+      this.connection._httpMessage === this &&
+      this.connection.writable &&
+      !this.connection.destroyed) {
+    // There might be pending data in the this.output buffer.
+    while (this.output.length) {
+      if (!this.connection.writable) {
+        this._buffer(data, encoding, callback);
+        return false;
+      }
+      var c = this.output.shift();
+      var e = this.outputEncodings.shift();
+      var cb = this.outputCallbacks.shift();
+      this.connection.write(c, e, cb);
+    }
+
+    // Directly write to socket.
+    return this.connection.write(data, encoding, callback);
+  } else if (this.connection && this.connection.destroyed) {
+    // The socket was destroyed.  If we're still trying to write to it,
+    // then we haven't gotten the 'close' event yet.
+    return false;
+  } else {
+    // buffer, as long as we're not destroyed.
+    this._buffer(data, encoding, callback);
+    return false;
+  }
+};
+
+
+OutgoingMessage.prototype._buffer = function(data, encoding, callback) {
+  this.output.push(data);
+  this.outputEncodings.push(encoding);
+  this.outputCallbacks.push(callback);
+  return false;
+};
+
+
+OutgoingMessage.prototype._storeHeader = function(firstLine, headers) {
+  // firstLine in the case of request is: 'GET /index.html HTTP/1.1\r\n'
+  // in the case of response it is: 'HTTP/1.1 200 OK\r\n'
+  var state = {
+    sentConnectionHeader: false,
+    sentContentLengthHeader: false,
+    sentTransferEncodingHeader: false,
+    sentDateHeader: false,
+    sentExpect: false,
+    messageHeader: firstLine
+  };
+
+  var field, value;
+
+  if (headers) {
+    var keys = Object.keys(headers);
+    var isArray = util.isArray(headers);
+    var field, value;
+
+    for (var i = 0, l = keys.length; i < l; i++) {
+      var key = keys[i];
+      if (isArray) {
+        field = headers[key][0];
+        value = headers[key][1];
+      } else {
+        field = key;
+        value = headers[key];
+      }
+
+      if (util.isArray(value)) {
+        for (var j = 0; j < value.length; j++) {
+          storeHeader(this, state, field, value[j]);
+        }
+      } else {
+        storeHeader(this, state, field, value);
+      }
+    }
+  }
+
+  // Date header
+  if (this.sendDate === true && state.sentDateHeader === false) {
+    state.messageHeader += 'Date: ' + utcDate() + CRLF;
+  }
+
+  // Force the connection to close when the response is a 204 No Content or
+  // a 304 Not Modified and the user has set a "Transfer-Encoding: chunked"
+  // header.
+  //
+  // RFC 2616 mandates that 204 and 304 responses MUST NOT have a body but
+  // node.js used to send out a zero chunk anyway to accommodate clients
+  // that don't have special handling for those responses.
+  //
+  // It was pointed out that this might confuse reverse proxies to the point
+  // of creating security liabilities, so suppress the zero chunk and force
+  // the connection to close.
+  var statusCode = this.statusCode;
+  if ((statusCode === 204 || statusCode === 304) &&
+      this.chunkedEncoding === true) {
+    debug(statusCode + ' response should not use chunked encoding,' +
+          ' closing connection.');
+    this.chunkedEncoding = false;
+    this.shouldKeepAlive = false;
+  }
+
+  // keep-alive logic
+  if (this._removedHeader.connection) {
+    this._last = true;
+    this.shouldKeepAlive = false;
+  } else if (state.sentConnectionHeader === false) {
+    var shouldSendKeepAlive = this.shouldKeepAlive &&
+        (state.sentContentLengthHeader ||
+         this.useChunkedEncodingByDefault ||
+         this.agent);
+    if (shouldSendKeepAlive) {
+      state.messageHeader += 'Connection: keep-alive\r\n';
+    } else {
+      this._last = true;
+      state.messageHeader += 'Connection: close\r\n';
+    }
+  }
+
+  if (state.sentContentLengthHeader === false &&
+      state.sentTransferEncodingHeader === false) {
+    if (this._hasBody && !this._removedHeader['transfer-encoding']) {
+      if (this.useChunkedEncodingByDefault) {
+        state.messageHeader += 'Transfer-Encoding: chunked\r\n';
+        this.chunkedEncoding = true;
+      } else {
+        this._last = true;
+      }
+    } else {
+      // Make sure we don't end the 0\r\n\r\n at the end of the message.
+      this.chunkedEncoding = false;
+    }
+  }
+
+  this._header = state.messageHeader + CRLF;
+  this._headerSent = false;
+
+  // wait until the first body chunk, or close(), is sent to flush,
+  // UNLESS we're sending Expect: 100-continue.
+  if (state.sentExpect) this._send('');
+};
+
+function storeHeader(self, state, field, value) {
+  // Protect against response splitting. The if statement is there to
+  // minimize the performance impact in the common case.
+  if (/[\r\n]/.test(value))
+    value = value.replace(/[\r\n]+[ \t]*/g, '');
+
+  state.messageHeader += field + ': ' + value + CRLF;
+
+  if (connectionExpression.test(field)) {
+    state.sentConnectionHeader = true;
+    if (closeExpression.test(value)) {
+      self._last = true;
+    } else {
+      self.shouldKeepAlive = true;
+    }
+
+  } else if (transferEncodingExpression.test(field)) {
+    state.sentTransferEncodingHeader = true;
+    if (chunkExpression.test(value)) self.chunkedEncoding = true;
+
+  } else if (contentLengthExpression.test(field)) {
+    state.sentContentLengthHeader = true;
+  } else if (dateExpression.test(field)) {
+    state.sentDateHeader = true;
+  } else if (expectExpression.test(field)) {
+    state.sentExpect = true;
+  }
+}
+
+
+OutgoingMessage.prototype.setHeader = function(name, value) {
+  if (typeof name !== 'string')
+    throw new TypeError('"name" should be a string');
+  if (value === undefined)
+    throw new Error('"name" and "value" are required for setHeader().');
+  if (this._header)
+    throw new Error('Can\'t set headers after they are sent.');
+
+  if (this._headers === null)
+    this._headers = {};
+
+  var key = name.toLowerCase();
+  this._headers[key] = value;
+  this._headerNames[key] = name;
+
+  if (automaticHeaders[key])
+    this._removedHeader[key] = false;
+};
+
+
+OutgoingMessage.prototype.getHeader = function(name) {
+  if (arguments.length < 1) {
+    throw new Error('`name` is required for getHeader().');
+  }
+
+  if (!this._headers) return;
+
+  var key = name.toLowerCase();
+  return this._headers[key];
+};
+
+
+OutgoingMessage.prototype.removeHeader = function(name) {
+  if (arguments.length < 1) {
+    throw new Error('`name` is required for removeHeader().');
+  }
+
+  if (this._header) {
+    throw new Error('Can\'t remove headers after they are sent.');
+  }
+
+  var key = name.toLowerCase();
+
+  if (key === 'date')
+    this.sendDate = false;
+  else if (automaticHeaders[key])
+    this._removedHeader[key] = true;
+
+  if (this._headers) {
+    delete this._headers[key];
+    delete this._headerNames[key];
+  }
+};
+
+
+OutgoingMessage.prototype._renderHeaders = function() {
+  if (this._header) {
+    throw new Error('Can\'t render headers after they are sent to the client.');
+  }
+
+  if (!this._headers) return {};
+
+  var headers = {};
+  var keys = Object.keys(this._headers);
+
+  for (var i = 0, l = keys.length; i < l; i++) {
+    var key = keys[i];
+    headers[this._headerNames[key]] = this._headers[key];
+  }
+  return headers;
+};
+
+
+Object.defineProperty(OutgoingMessage.prototype, 'headersSent', {
+  configurable: true,
+  enumerable: true,
+  get: function() { return !!this._header; }
+});
+
+
+OutgoingMessage.prototype.write = function(chunk, encoding, callback) {
+  var self = this;
+
+  if (this.finished) {
+    var err = new Error('write after end');
+    process.nextTick(function() {
+      self.emit('error', err);
+      if (callback) callback(err);
+    });
+
+    return true;
+  }
+
+  if (!this._header) {
+    this._implicitHeader();
+  }
+
+  if (!this._hasBody) {
+    debug('This type of response MUST NOT have a body. ' +
+          'Ignoring write() calls.');
+    return true;
+  }
+
+  if (!util.isString(chunk) && !util.isBuffer(chunk)) {
+    throw new TypeError('first argument must be a string or Buffer');
+  }
+
+
+  // If we get an empty string or buffer, then just do nothing, and
+  // signal the user to keep writing.
+  if (chunk.length === 0) return true;
+
+  var len, ret;
+  if (this.chunkedEncoding) {
+    if (util.isString(chunk) &&
+        encoding !== 'hex' &&
+        encoding !== 'base64' &&
+        encoding !== 'binary') {
+      len = Buffer.byteLength(chunk, encoding);
+      chunk = len.toString(16) + CRLF + chunk + CRLF;
+      ret = this._send(chunk, encoding, callback);
+    } else {
+      // buffer, or a non-toString-friendly encoding
+      if (util.isString(chunk))
+        len = Buffer.byteLength(chunk, encoding);
+      else
+        len = chunk.length;
+
+      if (this.connection && !this.connection.corked) {
+        this.connection.cork();
+        var conn = this.connection;
+        process.nextTick(function connectionCork() {
+          if (conn)
+            conn.uncork();
+        });
+      }
+      this._send(len.toString(16), 'binary', null);
+      this._send(crlf_buf, null, null);
+      this._send(chunk, encoding, null);
+      ret = this._send(crlf_buf, null, callback);
+    }
+  } else {
+    ret = this._send(chunk, encoding, callback);
+  }
+
+  debug('write ret = ' + ret);
+  return ret;
+};
+
+
+OutgoingMessage.prototype.addTrailers = function(headers) {
+  this._trailer = '';
+  var keys = Object.keys(headers);
+  var isArray = util.isArray(headers);
+  var field, value;
+  for (var i = 0, l = keys.length; i < l; i++) {
+    var key = keys[i];
+    if (isArray) {
+      field = headers[key][0];
+      value = headers[key][1];
+    } else {
+      field = key;
+      value = headers[key];
+    }
+
+    this._trailer += field + ': ' + value + CRLF;
+  }
+};
+
+
+var crlf_buf = new Buffer('\r\n');
+
+
+OutgoingMessage.prototype.end = function(data, encoding, callback) {
+  if (util.isFunction(data)) {
+    callback = data;
+    data = null;
+  } else if (util.isFunction(encoding)) {
+    callback = encoding;
+    encoding = null;
+  }
+
+  if (data && !util.isString(data) && !util.isBuffer(data)) {
+    throw new TypeError('first argument must be a string or Buffer');
+  }
+
+  if (this.finished) {
+    return false;
+  }
+
+  var self = this;
+  function finish() {
+    self.emit('finish');
+  }
+
+  if (util.isFunction(callback))
+    this.once('finish', callback);
+
+
+  if (!this._header) {
+    this._implicitHeader();
+  }
+
+  if (data && !this._hasBody) {
+    debug('This type of response MUST NOT have a body. ' +
+          'Ignoring data passed to end().');
+    data = null;
+  }
+
+  if (this.connection && data)
+    this.connection.cork();
+
+  var ret;
+  if (data) {
+    // Normal body write.
+    ret = this.write(data, encoding);
+  }
+
+  if (this._hasBody && this.chunkedEncoding) {
+    ret = this._send('0\r\n' + this._trailer + '\r\n', 'binary', finish);
+  } else {
+    // Force a flush, HACK.
+    ret = this._send('', 'binary', finish);
+  }
+
+  if (this.connection && data)
+    this.connection.uncork();
+
+  this.finished = true;
+
+  // There is the first message on the outgoing queue, and we've sent
+  // everything to the socket.
+  debug('outgoing message end.');
+  if (this.output.length === 0 && this.connection._httpMessage === this) {
+    this._finish();
+  }
+
+  return ret;
+};
+
+
+OutgoingMessage.prototype._finish = function() {
+  assert(this.connection);
+  this.emit('prefinish');
+};
+
+
+// This logic is probably a bit confusing. Let me explain a bit:
+//
+// In both HTTP servers and clients it is possible to queue up several
+// outgoing messages. This is easiest to imagine in the case of a client.
+// Take the following situation:
+//
+//    req1 = client.request('GET', '/');
+//    req2 = client.request('POST', '/');
+//
+// When the user does
+//
+//   req2.write('hello world\n');
+//
+// it's possible that the first request has not been completely flushed to
+// the socket yet. Thus the outgoing messages need to be prepared to queue
+// up data internally before sending it on further to the socket's queue.
+//
+// This function, outgoingFlush(), is called by both the Server and Client
+// to attempt to flush any pending messages out to the socket.
+OutgoingMessage.prototype._flush = function() {
+  if (this.socket && this.socket.writable) {
+    var ret;
+    while (this.output.length) {
+      var data = this.output.shift();
+      var encoding = this.outputEncodings.shift();
+      var cb = this.outputCallbacks.shift();
+      ret = this.socket.write(data, encoding, cb);
+    }
+
+    if (this.finished) {
+      // This is a queue to the server or client to bring in the next this.
+      this._finish();
+    } else if (ret) {
+      // This is necessary to prevent https from breaking
+      this.emit('drain');
+    }
+  }
+};
+
+
+OutgoingMessage.prototype.flushHeaders = function outgoingFlushHeaders() {
+  if (!this._header) {
+    // Force-flush the headers.
+    this._implicitHeader();
+    this._send('');
+  }
+};
+
+}).call(this,require('_process'))
+},{"./_http_common":28,"_process":56,"assert":45,"buffer":47,"stream":72,"timers":74,"util":77}],31:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var util = require('util');
+var net = require('net');
+var EventEmitter = require('events').EventEmitter;
+var HTTPParser = require('http-parser-js').HTTPParser;
+var assert = require('assert').ok;
+
+var common = require('./_http_common');
+var parsers = common.parsers;
+var freeParser = common.freeParser;
+var debug = common.debug;
+var CRLF = common.CRLF;
+var continueExpression = common.continueExpression;
+var chunkExpression = common.chunkExpression;
+var httpSocketSetup = common.httpSocketSetup;
+
+var OutgoingMessage = require('./_http_outgoing').OutgoingMessage;
+
+
+var STATUS_CODES = exports.STATUS_CODES = {
+  100 : 'Continue',
+  101 : 'Switching Protocols',
+  102 : 'Processing',                 // RFC 2518, obsoleted by RFC 4918
+  200 : 'OK',
+  201 : 'Created',
+  202 : 'Accepted',
+  203 : 'Non-Authoritative Information',
+  204 : 'No Content',
+  205 : 'Reset Content',
+  206 : 'Partial Content',
+  207 : 'Multi-Status',               // RFC 4918
+  300 : 'Multiple Choices',
+  301 : 'Moved Permanently',
+  302 : 'Moved Temporarily',
+  303 : 'See Other',
+  304 : 'Not Modified',
+  305 : 'Use Proxy',
+  307 : 'Temporary Redirect',
+  308 : 'Permanent Redirect',         // RFC 7238
+  400 : 'Bad Request',
+  401 : 'Unauthorized',
+  402 : 'Payment Required',
+  403 : 'Forbidden',
+  404 : 'Not Found',
+  405 : 'Method Not Allowed',
+  406 : 'Not Acceptable',
+  407 : 'Proxy Authentication Required',
+  408 : 'Request Time-out',
+  409 : 'Conflict',
+  410 : 'Gone',
+  411 : 'Length Required',
+  412 : 'Precondition Failed',
+  413 : 'Request Entity Too Large',
+  414 : 'Request-URI Too Large',
+  415 : 'Unsupported Media Type',
+  416 : 'Requested Range Not Satisfiable',
+  417 : 'Expectation Failed',
+  418 : 'I\'m a teapot',              // RFC 2324
+  422 : 'Unprocessable Entity',       // RFC 4918
+  423 : 'Locked',                     // RFC 4918
+  424 : 'Failed Dependency',          // RFC 4918
+  425 : 'Unordered Collection',       // RFC 4918
+  426 : 'Upgrade Required',           // RFC 2817
+  428 : 'Precondition Required',      // RFC 6585
+  429 : 'Too Many Requests',          // RFC 6585
+  431 : 'Request Header Fields Too Large',// RFC 6585
+  500 : 'Internal Server Error',
+  501 : 'Not Implemented',
+  502 : 'Bad Gateway',
+  503 : 'Service Unavailable',
+  504 : 'Gateway Time-out',
+  505 : 'HTTP Version Not Supported',
+  506 : 'Variant Also Negotiates',    // RFC 2295
+  507 : 'Insufficient Storage',       // RFC 4918
+  509 : 'Bandwidth Limit Exceeded',
+  510 : 'Not Extended',               // RFC 2774
+  511 : 'Network Authentication Required' // RFC 6585
+};
+
+
+function ServerResponse(req) {
+  OutgoingMessage.call(this);
+
+  if (req.method === 'HEAD') this._hasBody = false;
+
+  this.sendDate = true;
+
+  if (req.httpVersionMajor < 1 || req.httpVersionMinor < 1) {
+    this.useChunkedEncodingByDefault = chunkExpression.test(req.headers.te);
+    this.shouldKeepAlive = false;
+  }
+}
+util.inherits(ServerResponse, OutgoingMessage);
+
+ServerResponse.prototype._finish = function() {
+  // DTRACE_HTTP_SERVER_RESPONSE(this.connection);
+  // COUNTER_HTTP_SERVER_RESPONSE();
+  OutgoingMessage.prototype._finish.call(this);
+};
+
+
+
+exports.ServerResponse = ServerResponse;
+
+ServerResponse.prototype.statusCode = 200;
+ServerResponse.prototype.statusMessage = undefined;
+
+function onServerResponseClose() {
+  // EventEmitter.emit makes a copy of the 'close' listeners array before
+  // calling the listeners. detachSocket() unregisters onServerResponseClose
+  // but if detachSocket() is called, directly or indirectly, by a 'close'
+  // listener, onServerResponseClose is still in that copy of the listeners
+  // array. That is, in the example below, b still gets called even though
+  // it's been removed by a:
+  //
+  //   var obj = new events.EventEmitter;
+  //   obj.on('event', a);
+  //   obj.on('event', b);
+  //   function a() { obj.removeListener('event', b) }
+  //   function b() { throw "BAM!" }
+  //   obj.emit('event');  // throws
+  //
+  // Ergo, we need to deal with stale 'close' events and handle the case
+  // where the ServerResponse object has already been deconstructed.
+  // Fortunately, that requires only a single if check. :-)
+  if (this._httpMessage) this._httpMessage.emit('close');
+}
+
+ServerResponse.prototype.assignSocket = function(socket) {
+  assert(!socket._httpMessage);
+  socket._httpMessage = this;
+  socket.on('close', onServerResponseClose);
+  this.socket = socket;
+  this.connection = socket;
+  this.emit('socket', socket);
+  this._flush();
+};
+
+ServerResponse.prototype.detachSocket = function(socket) {
+  assert(socket._httpMessage === this);
+  socket.removeListener('close', onServerResponseClose);
+  socket._httpMessage = null;
+  this.socket = this.connection = null;
+};
+
+ServerResponse.prototype.writeContinue = function(cb) {
+  this._writeRaw('HTTP/1.1 100 Continue' + CRLF + CRLF, 'ascii', cb);
+  this._sent100 = true;
+};
+
+ServerResponse.prototype._implicitHeader = function() {
+  this.writeHead(this.statusCode);
+};
+
+ServerResponse.prototype.writeHead = function(statusCode, reason, obj) {
+  var headers;
+
+  if (util.isString(reason)) {
+    // writeHead(statusCode, reasonPhrase[, headers])
+    this.statusMessage = reason;
+  } else {
+    // writeHead(statusCode[, headers])
+    this.statusMessage =
+        this.statusMessage || STATUS_CODES[statusCode] || 'unknown';
+    obj = reason;
+  }
+  this.statusCode = statusCode;
+
+  if (this._headers) {
+    // Slow-case: when progressive API and header fields are passed.
+    if (obj) {
+      var keys = Object.keys(obj);
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        if (k) this.setHeader(k, obj[k]);
+      }
+    }
+    // only progressive api is used
+    headers = this._renderHeaders();
+  } else {
+    // only writeHead() called
+    headers = obj;
+  }
+
+  var statusLine = 'HTTP/1.1 ' + statusCode.toString() + ' ' +
+                   this.statusMessage + CRLF;
+
+  if (statusCode === 204 || statusCode === 304 ||
+      (100 <= statusCode && statusCode <= 199)) {
+    // RFC 2616, 10.2.5:
+    // The 204 response MUST NOT include a message-body, and thus is always
+    // terminated by the first empty line after the header fields.
+    // RFC 2616, 10.3.5:
+    // The 304 response MUST NOT contain a message-body, and thus is always
+    // terminated by the first empty line after the header fields.
+    // RFC 2616, 10.1 Informational 1xx:
+    // This class of status code indicates a provisional response,
+    // consisting only of the Status-Line and optional headers, and is
+    // terminated by an empty line.
+    this._hasBody = false;
+  }
+
+  // don't keep alive connections where the client expects 100 Continue
+  // but we sent a final status; they may put extra bytes on the wire.
+  if (this._expect_continue && !this._sent100) {
+    this.shouldKeepAlive = false;
+  }
+
+  this._storeHeader(statusLine, headers);
+};
+
+ServerResponse.prototype.writeHeader = function() {
+  this.writeHead.apply(this, arguments);
+};
+
+
+function Server(requestListener) {
+  if (!(this instanceof Server)) return new Server(requestListener);
+  net.Server.call(this, { allowHalfOpen: true });
+
+  if (requestListener) {
+    this.addListener('request', requestListener);
+  }
+
+  // Similar option to this. Too lazy to write my own docs.
+  // http://www.squid-cache.org/Doc/config/half_closed_clients/
+  // http://wiki.squid-cache.org/SquidFaq/InnerWorkings#What_is_a_half-closed_filedescriptor.3F
+  this.httpAllowHalfOpen = false;
+
+  this.addListener('connection', connectionListener);
+
+  this.addListener('clientError', function(err, conn) {
+    conn.destroy(err);
+  });
+
+  this.timeout = 2 * 60 * 1000;
+}
+util.inherits(Server, net.Server);
+
+
+Server.prototype.setTimeout = function(msecs, callback) {
+  this.timeout = msecs;
+  if (callback)
+    this.on('timeout', callback);
+};
+
+
+exports.Server = Server;
+
+
+function connectionListener(socket) {
+  var self = this;
+  var outgoing = [];
+  var incoming = [];
+
+  function abortIncoming() {
+    while (incoming.length) {
+      var req = incoming.shift();
+      req.emit('aborted');
+      req.emit('close');
+    }
+    // abort socket._httpMessage ?
+  }
+
+  function serverSocketCloseListener() {
+    debug('server socket close');
+    // mark this parser as reusable
+    if (this.parser) {
+      freeParser(this.parser, null, this);
+    }
+
+    abortIncoming();
+  }
+
+  debug('SERVER new http connection');
+
+  httpSocketSetup(socket);
+
+  // If the user has added a listener to the server,
+  // request, or response, then it's their responsibility.
+  // otherwise, destroy on timeout by default
+  if (self.timeout)
+    socket.setTimeout(self.timeout);
+  socket.on('timeout', function() {
+    var req = socket.parser && socket.parser.incoming;
+    var reqTimeout = req && !req.complete && req.emit('timeout', socket);
+    var res = socket._httpMessage;
+    var resTimeout = res && res.emit('timeout', socket);
+    var serverTimeout = self.emit('timeout', socket);
+
+    if (!reqTimeout && !resTimeout && !serverTimeout)
+      socket.destroy();
+  });
+
+  var parser = parsers.alloc();
+  parser.reinitialize(HTTPParser.REQUEST);
+  parser.socket = socket;
+  socket.parser = parser;
+  parser.incoming = null;
+
+  // Propagate headers limit from server instance to parser
+  if (util.isNumber(this.maxHeadersCount)) {
+    parser.maxHeaderPairs = this.maxHeadersCount << 1;
+  } else {
+    // Set default value because parser may be reused from FreeList
+    parser.maxHeaderPairs = 2000;
+  }
+
+  socket.addListener('error', socketOnError);
+  socket.addListener('close', serverSocketCloseListener);
+  parser.onIncoming = parserOnIncoming;
+  socket.on('end', socketOnEnd);
+  socket.on('data', socketOnData);
+
+  // TODO(isaacs): Move all these functions out of here
+  function socketOnError(e) {
+    self.emit('clientError', e, this);
+  }
+
+  function socketOnData(d) {
+    assert(!socket._paused);
+    debug('SERVER socketOnData %d', d.length);
+    var ret = parser.execute(d);
+    if (ret instanceof Error) {
+      debug('parse error');
+      socket.destroy(ret);
+    } else if (parser.incoming && parser.incoming.upgrade) {
+      // Upgrade or CONNECT
+      var bytesParsed = ret;
+      var req = parser.incoming;
+      debug('SERVER upgrade or connect', req.method);
+
+      socket.removeListener('data', socketOnData);
+      socket.removeListener('end', socketOnEnd);
+      socket.removeListener('close', serverSocketCloseListener);
+      parser.finish();
+      freeParser(parser, req, null);
+      parser = null;
+
+      var eventName = req.method === 'CONNECT' ? 'connect' : 'upgrade';
+      if (EventEmitter.listenerCount(self, eventName) > 0) {
+        debug('SERVER have listener for %s', eventName);
+        var bodyHead = d.slice(bytesParsed, d.length);
+
+        // TODO(isaacs): Need a way to reset a stream to fresh state
+        // IE, not flowing, and not explicitly paused.
+        socket._readableState.flowing = null;
+        self.emit(eventName, req, socket, bodyHead);
+      } else {
+        // Got upgrade header or CONNECT method, but have no handler.
+        socket.destroy();
+      }
+    }
+
+    if (socket._paused) {
+      // onIncoming paused the socket, we should pause the parser as well
+      debug('pause parser');
+      socket.parser.pause();
+    }
+  }
+
+  function socketOnEnd() {
+    var socket = this;
+    var ret = parser.finish();
+
+    if (ret instanceof Error) {
+      debug('parse error');
+      socket.destroy(ret);
+      return;
+    }
+
+    if (!self.httpAllowHalfOpen) {
+      abortIncoming();
+      if (socket.writable) socket.end();
+    } else if (outgoing.length) {
+      outgoing[outgoing.length - 1]._last = true;
+    } else if (socket._httpMessage) {
+      socket._httpMessage._last = true;
+    } else {
+      if (socket.writable) socket.end();
+    }
+  }
+
+
+  // The following callback is issued after the headers have been read on a
+  // new message. In this callback we setup the response object and pass it
+  // to the user.
+
+  socket._paused = false;
+  function socketOnDrain() {
+    // If we previously paused, then start reading again.
+    if (socket._paused) {
+      socket._paused = false;
+      socket.parser.resume();
+      socket.resume();
+    }
+  }
+  socket.on('drain', socketOnDrain);
+
+  function parserOnIncoming(req, shouldKeepAlive) {
+    incoming.push(req);
+
+    // If the writable end isn't consuming, then stop reading
+    // so that we don't become overwhelmed by a flood of
+    // pipelined requests that may never be resolved.
+    if (!socket._paused) {
+      var needPause = socket._writableState.needDrain;
+      if (needPause) {
+        socket._paused = true;
+        // We also need to pause the parser, but don't do that until after
+        // the call to execute, because we may still be processing the last
+        // chunk.
+        socket.pause();
+      }
+    }
+
+    var res = new ServerResponse(req);
+
+    res.shouldKeepAlive = shouldKeepAlive;
+    // DTRACE_HTTP_SERVER_REQUEST(req, socket);
+    // COUNTER_HTTP_SERVER_REQUEST();
+
+    if (socket._httpMessage) {
+      // There are already pending outgoing res, append.
+      outgoing.push(res);
+    } else {
+      res.assignSocket(socket);
+    }
+
+    // When we're finished writing the response, check if this is the last
+    // respose, if so destroy the socket.
+    res.on('prefinish', resOnFinish);
+    function resOnFinish() {
+      // Usually the first incoming element should be our request.  it may
+      // be that in the case abortIncoming() was called that the incoming
+      // array will be empty.
+      assert(incoming.length === 0 || incoming[0] === req);
+
+      incoming.shift();
+
+      // if the user never called req.read(), and didn't pipe() or
+      // .resume() or .on('data'), then we call req._dump() so that the
+      // bytes will be pulled off the wire.
+      if (!req._consuming && !req._readableState.resumeScheduled)
+        req._dump();
+
+      res.detachSocket(socket);
+
+      if (res._last) {
+        socket.destroySoon();
+      } else {
+        // start sending the next message
+        var m = outgoing.shift();
+        if (m) {
+          m.assignSocket(socket);
+        }
+      }
+    }
+
+    if (!util.isUndefined(req.headers.expect) &&
+        (req.httpVersionMajor == 1 && req.httpVersionMinor == 1) &&
+        continueExpression.test(req.headers['expect'])) {
+      res._expect_continue = true;
+      if (EventEmitter.listenerCount(self, 'checkContinue') > 0) {
+        self.emit('checkContinue', req, res);
+      } else {
+        res.writeContinue();
+        self.emit('request', req, res);
+      }
+    } else {
+      self.emit('request', req, res);
+    }
+    return false; // Not a HEAD response. (Not even a response!)
+  }
+}
+exports._connectionListener = connectionListener;
+
+},{"./_http_common":28,"./_http_outgoing":30,"assert":45,"events":52,"http-parser-js":33,"net":"net","util":77}],32:[function(require,module,exports){
+var FreeList = (function() {
+	function FreeList(name, max, constructor) {
+		this.name = name;
+		this.max = max;
+		this.constructor = constructor != null ? constructor : function() {};
+		this.list = [];
+	}
+
+	FreeList.prototype.alloc = function() {
+		if (this.list.length) {
+			return this.list.shift();
+		} else {
+			return this.constructor.apply(this, arguments);
+		}
+	};
+
+	FreeList.prototype.free = function(obj) {
+		if (this.list.length < this.max) {
+			this.list.push(obj);
+			return true;
+		} else {
+			return false;
+		}
+	};
+
+	return FreeList;
+})();
+
+// remain backward compatible
+FreeList.FreeList = FreeList;
+
+module.exports = FreeList;
+
+},{}],33:[function(require,module,exports){
+/*jshint node:true */
+
+var assert = require('assert');
+
+exports.HTTPParser = HTTPParser;
+function HTTPParser(type) {
+  assert.ok(type === HTTPParser.REQUEST || type === HTTPParser.RESPONSE);
+  this.type = type;
+  this.state = type + '_LINE';
+  this.info = {
+    headers: [],
+    upgrade: false
+  };
+  this.trailers = [];
+  this.line = '';
+  this.isChunked = false;
+  this.connection = '';
+  this.headerSize = 0; // for preventing too big headers
+  this.body_bytes = null;
+  this.isUserCall = false;
+}
+HTTPParser.REQUEST = 'REQUEST';
+HTTPParser.RESPONSE = 'RESPONSE';
+var kOnHeaders = HTTPParser.kOnHeaders = 0;
+var kOnHeadersComplete = HTTPParser.kOnHeadersComplete = 1;
+var kOnBody = HTTPParser.kOnBody = 2;
+var kOnMessageComplete = HTTPParser.kOnMessageComplete = 3;
+var methods = HTTPParser.methods = [
+  'DELETE',
+  'GET',
+  'HEAD',
+  'POST',
+  'PUT',
+  'CONNECT',
+  'OPTIONS',
+  'TRACE',
+  'COPY',
+  'LOCK',
+  'MKCOL',
+  'MOVE',
+  'PROPFIND',
+  'PROPPATCH',
+  'SEARCH',
+  'UNLOCK',
+  'REPORT',
+  'MKACTIVITY',
+  'CHECKOUT',
+  'MERGE',
+  'M-SEARCH',
+  'NOTIFY',
+  'SUBSCRIBE',
+  'UNSUBSCRIBE',
+  'PATCH',
+  'PURGE'
+];
+HTTPParser.prototype.reinitialize = HTTPParser;
+HTTPParser.prototype.close =
+HTTPParser.prototype.pause =
+HTTPParser.prototype.resume = function () {};
+HTTPParser.prototype._compatMode = false;
+
+var maxHeaderSize = 80 * 1024;
+var headerState = {
+  REQUEST_LINE: true,
+  RESPONSE_LINE: true,
+  HEADER: true
+};
+HTTPParser.prototype.execute = function (chunk, start, length) {
+  if (!(this instanceof HTTPParser)) {
+    throw new TypeError('not a HTTPParser');
+  }
+  
+  // backward compat to node < 0.11.4
+  // Note: the start and length params were removed in newer version
+  start = start || 0;
+  length = typeof length === 'number' ? length : chunk.length;
+
+  this.chunk = chunk;
+  this.offset = start;
+  var end = this.end = start + length;
+  try {
+    while (this.offset < end) {
+      if (this[this.state]()) {
+        break;
+      }
+    }
+  } catch (err) {
+    if (this.isUserCall) {
+      throw err;
+    }
+    return err;
+  }
+  this.chunk = null;
+  var length = this.offset - start
+  if (headerState[this.state]) {
+    this.headerSize += length;
+    if (this.headerSize > maxHeaderSize) {
+      return new Error('max header size exceeded');
+    }
+  }
+  return length;
+};
+
+var stateFinishAllowed = {
+  REQUEST_LINE: true,
+  RESPONSE_LINE: true,
+  BODY_RAW: true
+};
+HTTPParser.prototype.finish = function () {
+  if (!stateFinishAllowed[this.state]) {
+    return new Error('invalid state for EOF');
+  }
+  if (this.state === 'BODY_RAW') {
+    this.userCall()(this[kOnMessageComplete]());
+  }
+};
+
+//For correct error handling - see HTTPParser#execute
+//Usage: this.userCall()(userFunction('arg'));
+HTTPParser.prototype.userCall = function () {
+  this.isUserCall = true;
+  var self = this;
+  return function (ret) {
+    self.isUserCall = false;
+    return ret;
+  };
+};
+
+HTTPParser.prototype.nextRequest = function () {
+  this.userCall()(this[kOnMessageComplete]());
+  this.reinitialize(this.type);
+};
+
+HTTPParser.prototype.consumeLine = function () {
+  var end = this.end,
+      chunk = this.chunk;
+  for (var i = this.offset; i < end; i++) {
+    if (chunk[i] === 0x0a) { // \n
+      var line = this.line + chunk.toString('ascii', this.offset, i);
+      if (line.charAt(line.length - 1) === '\r') {
+        line = line.substr(0, line.length - 1);
+      }
+      this.line = '';
+      this.offset = i + 1;
+      return line;
+    }
+  }
+  //line split over multiple chunks
+  this.line += chunk.toString('ascii', this.offset, this.end);
+  this.offset = this.end;
+};
+
+var headerExp = /^([^: \t]+):[ \t]*((?:.*[^ \t])|)/;
+var headerContinueExp = /^[ \t]+(.*[^ \t])/;
+HTTPParser.prototype.parseHeader = function (line, headers) {
+  var match = headerExp.exec(line);
+  var k = match && match[1];
+  if (k) { // skip empty string (malformed header)
+    headers.push(k);
+    headers.push(match[2]);
+  } else {
+    var matchContinue = headerContinueExp.exec(line);
+    if (matchContinue && headers.length) {
+      if (headers[headers.length - 1]) {
+        headers[headers.length - 1] += ' ';
+      }
+      headers[headers.length - 1] += matchContinue[1];
+    }
+  }
+};
+
+var requestExp = /^([A-Z-]+) ([^ ]+) HTTP\/(\d)\.(\d)$/;
+HTTPParser.prototype.REQUEST_LINE = function () {
+  var line = this.consumeLine();
+  if (!line) {
+    return;
+  }
+  var match = requestExp.exec(line);
+  if (match === null) {
+    var err = new Error('Parse Error');
+    err.code = 'HPE_INVALID_CONSTANT';
+    throw err;
+  }
+  this.info.method = this._compatMode ? match[1] : methods.indexOf(match[1]);
+  if (this.info.method === -1) {
+    throw new Error('invalid request method');
+  }
+  if (match[1] === 'CONNECT') {
+    this.info.upgrade = true;
+  }
+  this.info.url = match[2];
+  this.info.versionMajor = +match[3];
+  this.info.versionMinor = +match[4];
+  this.body_bytes = 0;
+  this.state = 'HEADER';
+};
+
+var responseExp = /^HTTP\/(\d)\.(\d) (\d{3}) ?(.*)$/;
+HTTPParser.prototype.RESPONSE_LINE = function () {
+  var line = this.consumeLine();
+  if (!line) {
+    return;
+  }
+  var match = responseExp.exec(line);
+  if (match === null) {
+    var err = new Error('Parse Error');
+    err.code = 'HPE_INVALID_CONSTANT';
+    throw err;
+  }
+  this.info.versionMajor = +match[1];
+  this.info.versionMinor = +match[2];
+  var statusCode = this.info.statusCode = +match[3];
+  this.info.statusMessage = match[4];
+  // Implied zero length.
+  if ((statusCode / 100 | 0) === 1 || statusCode === 204 || statusCode === 304) {
+    this.body_bytes = 0;
+  }
+  this.state = 'HEADER';
+};
+
+HTTPParser.prototype.shouldKeepAlive = function () {
+  if (this.info.versionMajor > 0 && this.info.versionMinor > 0) {
+    if (this.connection.indexOf('close') !== -1) {
+      return false;
+    }
+  } else if (this.connection.indexOf('keep-alive') === -1) {
+    return false;
+  }
+  if (this.body_bytes !== null || this.isChunked) { // || skipBody
+    return true;
+  }
+  return false;
+};
+
+HTTPParser.prototype.HEADER = function () {
+  var line = this.consumeLine();
+  if (line === undefined) {
+    return;
+  }
+  if (line) {
+    this.parseHeader(line, this.info.headers);
+  } else {
+    var headers = this.info.headers;
+    for (var i = 0; i < headers.length; i += 2) {
+      switch (headers[i].toLowerCase()) {
+        case 'transfer-encoding':
+          this.isChunked = headers[i + 1].toLowerCase() === 'chunked';
+          break;
+        case 'content-length':
+          this.body_bytes = +headers[i + 1];
+          break;
+        case 'connection':
+          this.connection += headers[i + 1].toLowerCase();
+          break;
+        case 'upgrade':
+          this.info.upgrade = true;
+          break;
+      }
+    }
+    
+    this.info.shouldKeepAlive = this.shouldKeepAlive();
+    //problem which also exists in original node: we should know skipBody before calling onHeadersComplete
+    var skipBody = this.userCall()(this[kOnHeadersComplete](this.info));
+    
+    if (this.info.upgrade) {
+      this.nextRequest();
+      return true;
+    } else if (this.isChunked && !skipBody) {
+      this.state = 'BODY_CHUNKHEAD';
+    } else if (skipBody || this.body_bytes === 0) {
+      this.nextRequest();
+    } else if (this.body_bytes === null) {
+      this.state = 'BODY_RAW';
+    } else {
+      this.state = 'BODY_SIZED';
+    }
+  }
+};
+
+HTTPParser.prototype.BODY_CHUNKHEAD = function () {
+  var line = this.consumeLine();
+  if (line === undefined) {
+    return;
+  }
+  this.body_bytes = parseInt(line, 16);
+  if (!this.body_bytes) {
+    this.state = 'BODY_CHUNKTRAILERS';
+  } else {
+    this.state = 'BODY_CHUNK';
+  }
+};
+
+HTTPParser.prototype.BODY_CHUNK = function () {
+  var length = Math.min(this.end - this.offset, this.body_bytes);
+  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
+  this.offset += length;
+  this.body_bytes -= length;
+  if (!this.body_bytes) {
+    this.state = 'BODY_CHUNKEMPTYLINE';
+  }
+};
+
+HTTPParser.prototype.BODY_CHUNKEMPTYLINE = function () {
+  var line = this.consumeLine();
+  if (line === undefined) {
+    return;
+  }
+  assert.equal(line, '');
+  this.state = 'BODY_CHUNKHEAD';
+};
+
+HTTPParser.prototype.BODY_CHUNKTRAILERS = function () {
+  var line = this.consumeLine();
+  if (line === undefined) {
+    return;
+  }
+  if (line) {
+    this.parseHeader(line, this.trailers);
+  } else {
+    if (this.trailers.length) {
+      this.userCall()(this[kOnHeaders](this.trailers, this.info.url));
+    }
+    this.nextRequest();
+  }
+};
+
+HTTPParser.prototype.BODY_RAW = function () {
+  var length = this.end - this.offset;
+  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
+  this.offset = this.end;
+};
+
+HTTPParser.prototype.BODY_SIZED = function () {
+  var length = Math.min(this.end - this.offset, this.body_bytes);
+  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
+  this.offset += length;
+  this.body_bytes -= length;
+  if (!this.body_bytes) {
+    this.nextRequest();
+  }
+};
+
+// backward compat to node < 0.11.6
+['Headers', 'HeadersComplete', 'Body', 'MessageComplete'].forEach(function (name) {
+  var k = HTTPParser['kOn' + name];
+  Object.defineProperty(HTTPParser.prototype, 'on' + name, {
+    get: function () {
+      return this[k];
+    },
+    set: function (to) {
+      // hack for backward compatibility
+      this._compatMode = true;
+      return (this[k] = to);
+    }
+  });
+});
+
+},{"assert":45}],34:[function(require,module,exports){
+module.exports = {
+  Server: require('./lib/server'),
+  Client: require('./lib/client'),
+  Base: require('./lib/index')
+}
+
+},{"./lib/client":35,"./lib/index":36,"./lib/server":38}],35:[function(require,module,exports){
+(function (Buffer){
+var SSDP = require('./')
+  , util = require('util')
+
+
+/**
+ *
+ * @param opts
+ * @param [sock]
+ * @constructor
+ */
+function SsdpClient(opts, sock) {
+  this._subclass = 'ssdp-client'
+  SSDP.call(this, opts, sock)
+}
+
+
+
+util.inherits(SsdpClient, SSDP)
+
+
+/**
+ *
+ * @param [cb]
+ */
+SsdpClient.prototype.start = function (cb) {
+  this._start(0, this._unicastHost, cb)
+}
+
+
+/**
+ *
+ * @param {String} serviceType
+ * @returns {*}
+ */
+SsdpClient.prototype.search = function search(serviceType) {
+  var self = this
+
+  if (!this._started) {
+    return this.start(function () {
+      self.search(serviceType)
+    })
+  }
+
+  var pkt = self._getSSDPHeader(
+    'M-SEARCH',
+    {
+      'HOST': self._ssdpServerHost,
+      'ST': serviceType,
+      'MAN': '"ssdp:discover"',
+      'MX': 3
+    }
+  )
+
+  self._logger.trace('Sending an M-SEARCH request')
+
+  var message = new Buffer(pkt)
+
+  self._send(message, function (err, bytes) {
+    self._logger.trace({'message': pkt}, 'Sent M-SEARCH request')
+  })
+}
+
+
+
+module.exports = SsdpClient
+
+}).call(this,require("buffer").Buffer)
+},{"./":36,"buffer":47,"util":77}],36:[function(require,module,exports){
+(function (process,Buffer){
+'use strict'
+
+var dgram = require('dgram')
+  , EE = require('events').EventEmitter
+  , util = require('util')
+  , ip = require('ip')
+  , Logger = require('./logger')
+
+var httpHeader = /HTTP\/\d{1}\.\d{1} \d+ .*/
+  , ssdpHeader = /^([^:]+):\s*(.*)$/
+
+var nodeVersion = process.version.substr(1)
+  , moduleVersion = require('../package.json').version
+  , moduleName = require('../package.json').name
+
+
+
+/**
+ * Options:
+ *
+ * @param {Object} opts
+ * @param {String} opts.ssdpSig SSDP signature
+ * @param {String} opts.ssdpIp SSDP multicast group
+ * @param {String} opts.ssdpPort SSDP port
+ * @param {Number} opts.ssdpTtl Multicast TTL
+ * @param {Number} opts.adInterval Interval at which to send out advertisement (ms)
+ * @param {String} opts.description Path to SSDP description file
+ * @param {String} opts.udn SSDP Unique Device Name
+ *
+ * @param {Number} opts.ttl Packet TTL
+ * @param {Boolean} opts.log Disable/enable logging
+ * @param {String} opts.logLevel Log level
+ * @param {Boolean} opts.allowWildcards Allow wildcards in M-SEARCH packets (non-standard)
+ *
+ * @returns {SSDP}
+ * @constructor
+ */
+function SSDP(opts, sock) {
+  var self = this
+
+  if (!(this instanceof SSDP)) return new SSDP(opts)
+
+  this._subclass = this._subclass || 'ssdp-base'
+
+  // we didn't get options, only socket
+  if (!sock) {
+    if (opts && /^udp\d$/.test(opts.type) && typeof opts.addMembership == 'function') {
+      sock = opts
+      opts = null
+    }
+  }
+
+  opts = opts || {}
+
+  if (sock) {
+    this.sock = sock
+  } else {
+    this.sock = this._createSocket()
+  }
+
+  EE.call(self)
+
+  this._init(opts)
+}
+
+
+util.inherits(SSDP, EE)
+
+
+/**
+ * Initializes instance properties.
+ * @param opts
+ * @private
+ */
+SSDP.prototype._init = function (opts) {
+  opts.logger_name = this._subclass
+
+  if (opts.logJSON === undefined) {
+    opts.logJSON = true
+  }
+
+  this._logger = Logger(opts)
+
+  this._ssdpSig = opts.ssdpSig || getSsdpSignature()
+
+  // User shouldn't need to set these
+  this._ssdpIp = opts.ssdpIp || '239.255.255.250'
+  this._ssdpPort = opts.ssdpPort || 1900
+  this._ssdpTtl = opts.ssdpTtl || 1
+
+  this._adInterval = opts.adInterval || 10000
+
+  this._ttl = opts.ttl || 1800
+
+  if (typeof opts.location === 'function') {
+    Object.defineProperty(this, '_location', {
+      enumerable: true,
+      get: opts.location
+    })
+  } else {
+    // Probably should specify these
+    this._location = opts.location || 'http://' + ip.address() + ':' + 10293 + '/upnp/desc.html'
+  }
+
+  this._unicastHost = opts.unicastHost || '0.0.0.0'
+  this._ssdpServerHost = this._ssdpIp + ':' + this._ssdpPort
+
+  this._usns = {}
+  this._udn = opts.udn || 'uuid:f40c2981-7329-40b7-8b04-27f187aecfb5'
+
+  this._allowWildcards = opts.allowWildcards
+}
+
+
+
+/**
+ * Creates and returns UDP4 socket.
+ * Prior to node v0.12.x `dgram.createSocket` did not accept
+ * an object and socket reuse was not available; this method
+ * contains a crappy workaround to make version of node before 0.12
+ * to work correctly. See https://github.com/diversario/node-ssdp/pull/38
+ *
+ * @returns {Socket}
+ * @private
+ */
+SSDP.prototype._createSocket = function () {
+  if (/^v0\.1[2-8]\.\d+/.test(process.version)) {
+    return dgram.createSocket({type: 'udp4', reuseAddr: true})
+  }
+
+  return dgram.createSocket('udp4')
+}
+
+
+/**
+ * Advertise shutdown and close UDP socket.
+ */
+SSDP.prototype._stop = function () {
+  if (!this.sock) {
+    this._logger.warn('Already stopped.')
+    return
+  }
+
+  this.sock.close()
+  this.sock = null
+
+  this._socketBound = this._started = false
+}
+
+
+/**
+ * Configures UDP socket `socket`.
+ * Binds event listeners.
+ */
+SSDP.prototype._start = function (port, host, cb) {
+  var self = this
+
+  if (self._started) {
+    self._logger.warn('Already started.')
+    return
+  }
+
+  self._started = true
+
+  this.sock.on('error', function onSocketError(err) {
+    self._logger.error(err, 'Socker error')
+  })
+
+  this.sock.on('message', function onSocketMessage(msg, rinfo) {
+    self._parseMessage(msg, rinfo)
+  })
+
+  this.sock.on('listening', function onSocketListening() {
+    var addr = self.sock.address()
+
+    self._logger.info({address: 'http://' + addr.address + ':' + addr.port}, 'SSDP listening')
+
+    addMembership()
+
+    function addMembership() {
+      try {
+        self.sock.addMembership(self._ssdpIp)
+        /// self.sock.setMulticastTTL(self._ssdpTtl)
+      } catch (e) {
+        if (e.code === 'ENODEV') {
+          self._logger.warn(e, 'No interface present to add multicast group membership. Scheduling a retry.')
+          setTimeout(addMembership, 5000)
+        } else {
+          throw e
+        }
+      }
+    }
+  })
+
+  this.sock.bind(port, host, cb)
+}
+
+
+
+/**
+ * Routes a network message to the appropriate handler.
+ *
+ * @param msg
+ * @param rinfo
+ */
+SSDP.prototype._parseMessage = function (msg, rinfo) {
+  msg = msg.toString()
+
+  //this._logger.trace({message: msg}, 'Multicast message')
+
+  var type = msg.split('\r\n').shift()
+
+  // HTTP/#.# ### Response to M-SEARCH
+  if (httpHeader.test(type)) {
+    this._parseResponse(msg, rinfo)
+  } else {
+    this._parseCommand(msg, rinfo)
+  }
+}
+
+
+/**
+ * Parses SSDP command.
+ *
+ * @param msg
+ * @param rinfo
+ */
+SSDP.prototype._parseCommand = function parseCommand(msg, rinfo) {
+  var method = this._getMethod(msg)
+    , headers = this._getHeaders(msg)
+
+  switch (method) {
+    case 'NOTIFY':
+      this._notify(headers, msg, rinfo)
+      break
+    case 'M-SEARCH':
+      this._msearch(headers, msg, rinfo)
+      break
+    default:
+      this._logger.warn({'message': msg, 'rinfo': rinfo}, 'Unhandled command')
+  }
+}
+
+
+
+/**
+ * Handles NOTIFY command
+ * Emits `advertise-alive`, `advertise-bye` events.
+ *
+ * @param headers
+ * @param _msg
+ * @param _rinfo
+ */
+SSDP.prototype._notify = function (headers, _msg, _rinfo) {
+  if (!headers.NTS) this._logger.trace(headers, 'Missing NTS header')
+
+  switch (headers.NTS.toLowerCase()) {
+    // Device coming to life.
+    case 'ssdp:alive':
+      this.emit('advertise-alive', headers)
+      break
+
+    // Device shutting down.
+    case 'ssdp:byebye':
+      this.emit('advertise-bye', headers)
+      break
+
+    default:
+      this._logger.trace({'message': _msg, 'rinfo': _rinfo}, 'Unhandled NOTIFY event')
+  }
+}
+
+
+
+/**
+ * Handles M-SEARCH command.
+ *
+ * @param headers
+ * @param msg
+ * @param rinfo
+ */
+SSDP.prototype._msearch = function (headers, msg, rinfo) {
+  this._logger.trace({'ST': headers.ST, 'address': rinfo.address, 'port': rinfo.port}, 'SSDP M-SEARCH event')
+
+  if (!headers.MAN || !headers.MX || !headers.ST) return
+
+  this._respondToSearch(headers.ST, rinfo)
+}
+
+
+
+/**
+ * Sends out a response to M-SEARCH commands.
+ *
+ * @param {String} serviceType Service type requested by a client
+ * @param {Object} rinfo Remote client's address
+ * @private
+ */
+SSDP.prototype._respondToSearch = function (serviceType, rinfo) {
+  var self = this
+    , peer = rinfo.address
+    , port = rinfo.port
+    , stRegex
+    , acceptor
+
+  // unwrap quoted string
+  if (serviceType[0] == '"' && serviceType[serviceType.length-1] == '"') {
+    serviceType = serviceType.slice(1, -1)
+  }
+
+  if (self._allowWildcards) {
+      stRegex = new RegExp(serviceType.replace(/\*/g, '.*') + '$')
+      acceptor = function(usn, serviceType) {
+          return serviceType === 'ssdp:all' || stRegex.test(usn)
+      }
+  } else {
+      acceptor = function(usn, serviceType) {
+          return serviceType === 'ssdp:all' || usn === serviceType
+      }
+  }
+
+  Object.keys(self._usns).forEach(function (usn) {
+    var udn = self._usns[usn]
+
+    if (self._allowWildcards) {
+        udn = udn.replace(stRegex, serviceType)
+    }
+
+    if (acceptor(usn, serviceType)) {
+      var pkt = self._getSSDPHeader(
+        '200 OK',
+        {
+          'ST': serviceType === 'ssdp:all' ? usn : serviceType,
+          'USN': udn,
+          'LOCATION': self._location,
+          'CACHE-CONTROL': 'max-age=' + self._ttl,
+          'DATE': new Date().toUTCString(),
+          'SERVER': self._ssdpSig,
+          'EXT': ''
+        },
+        true
+      )
+
+      self._logger.trace({'peer': peer, 'port': port}, 'Sending a 200 OK for an M-SEARCH')
+
+      var message = new Buffer(pkt)
+
+      self._send(message, peer, port, function (err, bytes) {
+        self._logger.trace({'message': pkt}, 'Sent M-SEARCH response')
+      })
+    }
+  })
+}
+
+
+
+/**
+ * Parses SSDP response message.
+ *
+ * @param msg
+ * @param rinfo
+ */
+SSDP.prototype._parseResponse = function parseResponse(msg, rinfo) {
+  this._logger.info({'message': msg}, 'SSDP response')
+
+  var headers = this._getHeaders(msg)
+    , statusCode = this._getStatusCode(msg)
+
+  this.emit('response', headers, statusCode, rinfo)
+}
+
+
+
+SSDP.prototype.addUSN = function (device) {
+  this._usns[device] = this._udn + '::' + device
+}
+
+
+
+SSDP.prototype._getSSDPHeader = function (method, headers, isResponse) {
+  var message = []
+
+  if (isResponse) {
+    message.push('HTTP/1.1 ' + method)
+  } else {
+    message.push(method + ' * HTTP/1.1')
+  }
+
+  Object.keys(headers).forEach(function (header) {
+    message.push(header + ': ' + headers[header])
+  })
+
+  message.push('\r\n')
+
+  return message.join('\r\n')
+}
+
+
+
+SSDP.prototype._getMethod = function _getMethod(msg) {
+  var lines = msg.split("\r\n")
+    , type = lines.shift().split(' ')// command, such as "NOTIFY * HTTP/1.1"
+    , method = type[0]
+
+  return method
+}
+
+
+
+SSDP.prototype._getStatusCode = function _getStatusCode(msg) {
+  var lines = msg.split("\r\n")
+    , type = lines.shift().split(' ')// command, such as "NOTIFY * HTTP/1.1"
+    , code = parseInt(type[1], 10)
+
+  return code
+}
+
+
+
+SSDP.prototype._getHeaders = function _getHeaders(msg) {
+  var lines = msg.split("\r\n")
+
+  var headers = {}
+
+  lines.forEach(function (line) {
+    if (line.length) {
+      var pairs = line.match(ssdpHeader)
+      if (pairs) headers[pairs[1].toUpperCase()] = pairs[2] // e.g. {'HOST': 239.255.255.250:1900}
+    }
+  })
+
+  return headers
+}
+
+
+
+SSDP.prototype._send = function (message, host, port, cb) {
+  var self = this
+
+  if (typeof host === 'function') {
+    cb = host
+    host = this._ssdpIp
+    port = this._ssdpPort
+  }
+
+  self.sock.send(message, 0, message.length, port, host, cb)
+}
+
+
+
+function getSsdpSignature() {
+  return 'node.js/' + nodeVersion + ' UPnP/1.1 ' + moduleName + '/' + moduleVersion
+}
+
+
+
+module.exports = SSDP
+
+}).call(this,require('_process'),require("buffer").Buffer)
+},{"../package.json":43,"./logger":37,"_process":56,"buffer":47,"dgram":"dgram","events":52,"ip":42,"util":77}],37:[function(require,module,exports){
+(function (process){
+/**
+ * Use logging facilities when available
+ * and stub it out when not.
+ */
+
+try {
+  var bunyan = require('bunyan')
+  var PrettyStream = require('bunyan-prettystream')
+
+  process.stdout.setMaxListeners(100)
+} catch(e) {
+  module.exports = function () {
+    var stubs = {};
+
+    ['trace', 'debug', 'info', 'warn', 'error', 'fatal'].forEach(function (level) {
+      stubs[level] = function () {}
+    })
+
+    return stubs
+  }
+
+  return
+}
+
+module.exports = function(config) {
+  if (!config) config = {}
+  
+  var loggerConfig = {
+    name: config.logger_name,
+    streams: [],
+    src: false
+  }
+  
+  if (config.logLevel) {
+    if (config.logJSON) {
+      loggerConfig.streams.push({
+        level: 'error',
+        stream: process.stdout
+      })
+    } else {
+      var prettyStdOut = new PrettyStream()
+      prettyStdOut.pipe(process.stdout)
+
+      loggerConfig.streams.push({
+        level: 'error',
+          stream: prettyStdOut,
+          type: 'raw'
+      })
+    }
+  }
+
+  var logger = bunyan.createLogger(loggerConfig)
+
+  if (process.env.LOG_LEVEL) {
+    logger.level(process.env.LOG_LEVEL)
+  } else {
+  config.logLevel && logger.level(config.logLevel)
+  }
+
+  // enable call source location in the log
+  if (logger.level() <= 20) {
+    logger.src = true
+  }
+
+  return logger
+}
+
+}).call(this,require('_process'))
+},{"_process":56,"bunyan":40,"bunyan-prettystream":39}],38:[function(require,module,exports){
+(function (Buffer){
+var SSDP = require('./')
+  , util = require('util')
+  , assert = require('assert')
+
+function SsdpServer(opts, sock) {
+  this._subclass = 'ssdp-server'
+  SSDP.call(this, opts, sock)
+}
+
+util.inherits(SsdpServer, SSDP)
+
+
+/**
+ * Binds UDP socket to an interface/port
+ * and starts advertising.
+ *
+ * @param ipAddress
+ */
+SsdpServer.prototype.start = function () {
+  var self = this
+
+  if (self._socketBound) {
+    self._logger.warn('Server already running.')
+    return
+  }
+
+  self._socketBound = true
+
+  this._usns[this._udn] = this._udn
+
+  this._logger.trace('Will try to bind to ' + this._unicastHost + ':' + this._ssdpPort)
+
+  self._start(this._ssdpPort, this._unicastHost, this._initAdLoop.bind(this))
+}
+
+
+/**
+ * Binds UDP socket
+ *
+ * @param ipAddress
+ * @private
+ */
+SsdpServer.prototype._initAdLoop = function () {
+  var self = this
+
+  self._logger.info('UDP socket bound', {host: this._unicastHost, port: self._ssdpPort})
+
+  // FIXME: what's the point in advertising we're dead
+  // if the cache is going to be busted anyway?
+  self.advertise(false)
+
+  setTimeout(function () {
+    self.advertise(false)
+  }, 1000)
+
+  // Wake up.
+  setTimeout(self.advertise.bind(self), 2000)
+  setTimeout(self.advertise.bind(self), 3000)
+
+  self._startAdLoop()
+}
+
+
+
+
+/**
+ * Advertise shutdown and close UDP socket.
+ */
+SsdpServer.prototype.stop = function () {
+  if (!this.sock) {
+    this._logger.warn('Already stopped.')
+    return
+  }
+
+  this.advertise(false)
+  this.advertise(false)
+
+  this._stopAdLoop()
+
+  this._stop()
+}
+
+
+
+SsdpServer.prototype._startAdLoop = function () {
+  assert.equal(this._adLoopInterval, null, 'Attempting to start a parallel ad loop')
+
+  this._adLoopInterval = setInterval(this.advertise.bind(this), this._adInterval)
+}
+
+
+
+SsdpServer.prototype._stopAdLoop = function () {
+  assert.notEqual(this._adLoopInterval, null, 'Attempting to clear a non-existing interval')
+
+  clearInterval(this._adLoopInterval)
+  this._adLoopInterval = null
+}
+
+
+
+/**
+ *
+ * @param alive
+ */
+SsdpServer.prototype.advertise = function (alive) {
+  var self = this
+
+  if (!this.sock) return
+  if (alive === undefined) alive = true
+
+  Object.keys(self._usns).forEach(function (usn) {
+    var udn = self._usns[usn]
+      , nts = alive ? 'ssdp:alive' : 'ssdp:byebye' // notification sub-type
+
+    var heads = {
+      'HOST': self._ssdpServerHost,
+      'NT': usn, // notification type, in this case same as ST
+      'NTS': nts,
+      'USN': udn
+    }
+
+    if (alive) {
+      heads['LOCATION'] = self._location
+      heads['CACHE-CONTROL'] = 'max-age=1800'
+      heads['SERVER'] = self._ssdpSig // why not include this?
+    }
+
+    self._logger.trace('Sending an advertisement event')
+
+    var message = self._getSSDPHeader('NOTIFY', heads)
+
+    self._send(new Buffer(message), function (err, bytes) {
+      self._logger.trace({'message': message}, 'Outgoing server message')
+    })
+  })
+}
+
+module.exports = SsdpServer
+
+}).call(this,require("buffer").Buffer)
+},{"./":36,"assert":45,"buffer":47,"util":77}],39:[function(require,module,exports){
+"use strict";
+
+var Stream = require('stream').Stream;
+var util = require('util');
+var format = util.format;
+var http = require('http');
+
+var colors = {
+  'bold' : [1, 22],
+  'italic' : [3, 23],
+  'underline' : [4, 24],
+  'inverse' : [7, 27],
+  'white' : [37, 39],
+  'grey' : [90, 39],
+  'black' : [30, 39],
+  'blue' : [34, 39],
+  'cyan' : [36, 39],
+  'green' : [32, 39],
+  'magenta' : [35, 39],
+  'red' : [31, 39],
+  'yellow' : [33, 39]
+};
+
+var defaultOptions = {
+  mode: 'long', //short, long, dev
+  useColor: true
+};
+
+var levelFromName = {
+  'trace': 10,
+  'debug': 20,
+  'info': 30,
+  'warn': 40,
+  'error': 50,
+  'fatal': 60
+};
+
+var colorFromLevel = {
+  10: 'grey',     // TRACE
+  20: 'grey',     // DEBUG
+  30: 'cyan',     // INFO
+  40: 'magenta',  // WARN
+  50: 'red',      // ERROR
+  60: 'inverse'  // FATAL
+};
+
+var nameFromLevel = {};
+var upperNameFromLevel = {};
+var upperPaddedNameFromLevel = {};
+Object.keys(levelFromName).forEach(function (name) {
+  var lvl = levelFromName[name];
+  nameFromLevel[lvl] = name;
+  upperNameFromLevel[lvl] = name.toUpperCase();
+  upperPaddedNameFromLevel[lvl] = (name.length === 4 ? ' ' : '') + name.toUpperCase();
+});
+
+function PrettyStream(opts){
+  var options = {};
+
+  if (opts){
+    Object.keys(opts).forEach(function(key){
+      options[key] = {
+        value: opts[key],
+        enumerable: true,
+        writable: true,
+        configurable: true
+      };
+    });
+  }
+
+  var config = Object.create(defaultOptions, options);
+
+  this.readable = true;
+  this.writable = true;
+
+  Stream.call(this);
+
+  function stylize(str, color) {
+    if (!str){
+      return '';
+    }
+
+    if (!config.useColor){
+      return str;
+    }
+
+    if (!color){
+      color = 'white';
+    }
+
+    var codes = colors[color];
+    if (codes) {
+      return '\x1B[' + codes[0] + 'm' + str +
+             '\x1B[' + codes[1] + 'm';
+    }
+    return str;
+  }
+
+  function indent(s) {
+    return '    ' + s.split(/\r?\n/).join('\n    ');
+  }
+
+  function extractTime(rec){
+    var time = (typeof rec.time === 'object') ? rec.time.toISOString() : rec.time;
+
+    if ((config.mode === 'short' || config.mode === 'dev') && time[10] == 'T') {
+      return stylize(time.substr(11));
+    }
+    return stylize(time);
+  }
+
+  function extractName(rec){
+    var name =  rec.name;
+
+    if (rec.component) {
+      name += '/' + rec.component;
+    }
+
+    if (config.mode !== 'short' && config.mode !== 'dev'){
+      name += '/' + rec.pid;
+    }
+
+    return name;
+  }
+
+  function extractLevel(rec){
+    var level = (upperPaddedNameFromLevel[rec.level] || 'LVL' + rec.level);
+    return stylize(level, colorFromLevel[rec.level]);
+  }
+
+  function extractSrc(rec){
+    var src = '';
+    if (rec.src && rec.src.file) {
+      if (rec.src.func) {
+        src = format('(%s:%d in %s)', rec.src.file, rec.src.line, rec.src.func);
+      } else {
+        src = format('(%s:%d)', rec.src.file, rec.src.line);
+      }
+    }
+    return stylize(src, 'green');
+  }
+
+  function extractHost(rec){
+    return rec.hostname || '<no-hostname>';
+  }
+
+  function isSingleLineMsg(rec){
+    return rec.msg.indexOf('\n') === -1;
+  }
+
+  function extractMsg(rec){
+    return stylize(rec.msg, 'cyan');
+  }
+
+  function extractReqDetail(rec){
+    if (rec.req && typeof (rec.req) === 'object') {
+      var req = rec.req;
+      var headers = req.headers;
+
+      var str = format('%s %s HTTP/%s%s%s',
+        req.method,
+        req.url,
+        req.httpVersion || '1.1',
+        (req.remoteAddress ? "\nremote: " + req.remoteAddress + ":" + req.remotePort : ""),
+        (headers ?
+         '\n' + Object.keys(headers).map(function (h) {
+           return h + ': ' + headers[h];
+         }).join('\n') :
+         '')
+      );
+
+      if (req.body) {
+        str += '\n\n' + (typeof (req.body) === 'object' ? JSON.stringify(req.body, null, 2) : req.body);
+      }
+      if (req.trailers && Object.keys(req.trailers) > 0) {
+        str += '\n' + Object.keys(req.trailers).map(function (t) {
+          return t + ': ' + req.trailers[t];
+        }).join('\n');
+      }
+
+      var skip = ['headers', 'url', 'httpVersion', 'body', 'trailers', 'method', 'remoteAddress', 'remotePort'];
+
+      var extras = {};
+
+      Object.keys(req).forEach(function (k) {
+        if (skip.indexOf(k) === -1){
+          extras['req.' + k] = req[k];
+        }
+      });
+
+      return {
+        details: [str],
+        extras: extras
+      };
+    }
+  }
+
+  function genericRes(res) {
+    var s = '';
+
+    if (res.statusCode) {
+      s += format('HTTP/1.1 %s %s\n', res.statusCode, http.STATUS_CODES[res.statusCode]);
+    }
+
+    if (res.header) {
+      s += res.header.trimRight();
+    } else if (res.headers) {
+      var headers = res.headers;
+      s += Object.keys(headers).map(
+        function (h) { return h + ': ' + headers[h]; }).join('\n');
+    }
+
+    if (res.body) {
+      s += '\n\n' + (typeof (res.body) === 'object' ? JSON.stringify(res.body, null, 2) : res.body);
+    }
+    if (res.trailer) {
+      s += '\n' + res.trailer;
+    }
+
+    var skip = ['header', 'statusCode', 'headers', 'body', 'trailer'];
+
+    var extras = {};
+
+    Object.keys(res).forEach(function (k) {
+      if (skip.indexOf(k) === -1){
+        extras['res.' + k] = res[k];
+      }
+    });
+
+    return {
+      details: [s],
+      extras: extras
+    };
+  }
+
+  function extractResDetail(rec){
+    if (rec.res && typeof (rec.res) === 'object') {
+      return genericRes(rec.res);
+    }
+  }
+
+  function extractClientReqDetail(rec){
+    if (rec.client_req && typeof (rec.client_req) === 'object') {
+      var client_req = rec.client_req;
+
+      var headers = client_req.headers;
+      var hostHeaderLine = '';
+      var s = '';
+
+      if (client_req.address) {
+        hostHeaderLine = 'Host: ' + client_req.address;
+
+        if (client_req.port) {
+          hostHeaderLine += ':' + client_req.port;
+        }
+
+        hostHeaderLine += '\n';
+      }
+
+      s += format('%s %s HTTP/%s\n%s%s', client_req.method,
+        client_req.url,
+        client_req.httpVersion || '1.1',
+        hostHeaderLine,
+        (headers ?
+         Object.keys(headers).map(
+           function (h) {
+             return h + ': ' + headers[h];
+           }).join('\n') :
+         ''));
+
+      if (client_req.body) {
+        s += '\n\n' + (typeof (client_req.body) === 'object' ?
+                       JSON.stringify(client_req.body, null, 2) :
+                       client_req.body);
+      }
+
+      var skip = ['headers', 'url', 'httpVersion', 'body', 'trailers', 'method', 'remoteAddress', 'remotePort'];
+
+      var extras = {};
+
+      Object.keys(client_req).forEach(function (k) {
+        if (skip.indexOf(k) === -1){
+          extras['client_req.' + k] = client_req[k];
+        }
+      });
+
+      return {
+        details: [s],
+        extras: extras
+      };
+    }
+  }
+
+  function extractClientResDetail(rec){
+    if (rec.client_res && typeof (rec.client_res) === 'object') {
+      return genericRes(rec.client_res);
+    }
+  }
+
+  function extractError(rec){
+    if (rec.err && rec.err.stack) {
+      return rec.err.stack;
+    }
+  }
+
+  function extractCustomDetails(rec){
+    var skip = ['name', 'hostname', 'pid', 'level', 'component', 'msg', 'time', 'v', 'src', 'err', 'client_req', 'client_res', 'req', 'res'];
+
+    var details = [];
+    var extras = {};
+
+    Object.keys(rec).forEach(function(key) {
+      if (skip.indexOf(key) === -1){
+        var value = rec[key];
+        if (typeof value === 'undefined') value = '';
+        var stringified = false;
+        if (typeof value !== 'string') {
+          value = JSON.stringify(value, null, 2);
+          stringified = true;
+        }
+        if (value.indexOf('\n') !== -1 || value.length > 50) {
+          details.push(key + ': ' + value);
+        } else if (!stringified && (value.indexOf(' ') != -1 ||  value.length === 0)){
+          extras[key] = JSON.stringify(value);
+        } else {
+          extras[key] = value;
+        }
+      }
+    });
+
+    return {
+      details: details,
+      extras: extras
+    };
+  }
+
+  function applyDetails(results, details, extras){
+    if (results){
+      results.details.forEach(function(d){
+        details.push(indent(d));
+      });
+      Object.keys(results.extras).forEach(function(k){
+        extras.push(k + '=' + results.extras[k]);
+      });
+    }
+  }
+
+  this.formatRecord = function formatRecord(rec){
+    var details = [];
+    var extras = [];
+
+    var time = extractTime(rec);
+    var level = extractLevel(rec);
+    var name = extractName(rec);
+    var host = extractHost(rec);
+    var src = extractSrc(rec);
+
+    var msg = isSingleLineMsg(rec) ? extractMsg(rec) : '';
+    if (!msg){
+      details.push(indent(extractMsg(rec)));
+    }
+
+    var error = extractError(rec);
+    if (error){
+      details.push(indent(error));
+    }
+
+    if (rec.req){ applyDetails(extractReqDetail(rec), details, extras); }
+    if (rec.res){ applyDetails(extractResDetail(rec), details, extras); }
+    if (rec.client_req){ applyDetails(extractClientReqDetail(rec), details, extras); }
+    if (rec.client_res){ applyDetails(extractClientResDetail(rec), details, extras); }
+
+    applyDetails(extractCustomDetails(rec), details, extras);
+
+    extras = stylize(
+      (extras.length ? ' (' + extras.join(', ') + ')' : ''), 'grey');
+    details = stylize(
+      (details.length ? details.join('\n    --\n') + '\n' : ''), 'grey');
+
+
+    if (config.mode === 'long'){
+      return format('[%s] %s: %s on %s%s: %s%s\n%s',
+        time,
+        level,
+        name,
+        host,
+        src,
+        msg,
+        extras,
+        details);
+    }
+    if (config.mode === 'short'){
+      return format('[%s] %s %s: %s%s\n%s',
+        time,
+        level,
+        name,
+        msg,
+        extras,
+        details);
+    }
+    if (config.mode === 'dev'){
+      return format('%s %s %s %s: %s%s\n%s',
+        time,
+        level,
+        name,
+        src,
+        msg,
+        extras,
+        details);
+    }
+  };
+}
+
+util.inherits(PrettyStream, Stream);
+
+PrettyStream.prototype.write = function write(data){
+  if (typeof data === 'string') {
+    this.emit('data', this.formatRecord(JSON.parse(data)));
+  }else if(typeof data === 'object'){
+    this.emit('data', this.formatRecord(data));
+  }
+  return true;
+};
+
+PrettyStream.prototype.end = function end(){
+  this.emit('end');
+  return true;
+};
+
+module.exports = PrettyStream;
+
+},{"http":"http","stream":72,"util":77}],40:[function(require,module,exports){
+(function (process,Buffer){
+/**
+ * Copyright (c) 2014 Trent Mick. All rights reserved.
+ * Copyright (c) 2014 Joyent Inc. All rights reserved.
+ *
+ * The bunyan logging library for node.js.
+ *
+ * -*- mode: js -*-
+ * vim: expandtab:ts=4:sw=4
+ */
+
+var VERSION = '1.4.0';
+
+// Bunyan log format version. This becomes the 'v' field on all log records.
+// `0` is until I release a version '1.0.0' of node-bunyan. Thereafter,
+// starting with `1`, this will be incremented if there is any backward
+// incompatible change to the log record format. Details will be in
+// 'CHANGES.md' (the change log).
+var LOG_VERSION = 0;
+
+
+var xxx = function xxx(s) {     // internal dev/debug logging
+    var args = ['XX' + 'X: '+s].concat(
+        Array.prototype.slice.call(arguments, 1));
+    console.error.apply(this, args);
+};
+var xxx = function xxx() {};  // comment out to turn on debug logging
+
+
+var os = require('os');
+var fs = require('fs');
+var util = require('util');
+var assert = require('assert');
+try {
+    /* Use `+ ''` to hide this import from browserify. */
+    var dtrace = require('dtrace-provider' + '');
+} catch (e) {
+    dtrace = null;
+}
+var EventEmitter = require('events').EventEmitter;
+
+try {
+    var safeJsonStringify = require('safe-json-stringify');
+} catch (e) {
+    safeJsonStringify = null;
+}
+if (process.env.BUNYAN_TEST_NO_SAFE_JSON_STRINGIFY) {
+    safeJsonStringify = null;
+}
+
+// The 'mv' module is required for rotating-file stream support.
+try {
+    /* Use `+ ''` to hide this import from browserify. */
+    var mv = require('mv' + '');
+} catch (e) {
+    mv = null;
+}
+
+// Are we in the browser (e.g. running via browserify)?
+var isBrowser = function () {
+        return typeof (window) !== 'undefined' && this === window; }();
+
+try {
+    /* Use `+ ''` to hide this import from browserify. */
+    var sourceMapSupport = require('source-map-support' + '');
+} catch (_) {
+    sourceMapSupport = null;
+}
+
+
+
+//---- Internal support stuff
+
+/**
+ * A shallow copy of an object. Bunyan logging attempts to never cause
+ * exceptions, so this function attempts to handle non-objects gracefully.
+ */
+function objCopy(obj) {
+    if (obj == null) {  // null or undefined
+        return obj;
+    } else if (Array.isArray(obj)) {
+        return obj.slice();
+    } else if (typeof (obj) === 'object') {
+        var copy = {};
+        Object.keys(obj).forEach(function (k) {
+            copy[k] = obj[k];
+        });
+        return copy;
+    } else {
+        return obj;
+    }
+}
+
+var format = util.format;
+if (!format) {
+    // If node < 0.6, then use its `util.format`:
+    // <https://github.com/joyent/node/blob/master/lib/util.js#L22>:
+    var inspect = util.inspect;
+    var formatRegExp = /%[sdj%]/g;
+    format = function format(f) {
+        if (typeof (f) !== 'string') {
+            var objects = [];
+            for (var i = 0; i < arguments.length; i++) {
+                objects.push(inspect(arguments[i]));
+            }
+            return objects.join(' ');
+        }
+
+        var i = 1;
+        var args = arguments;
+        var len = args.length;
+        var str = String(f).replace(formatRegExp, function (x) {
+            if (i >= len)
+                return x;
+            switch (x) {
+                case '%s': return String(args[i++]);
+                case '%d': return Number(args[i++]);
+                case '%j': return JSON.stringify(args[i++], safeCycles());
+                case '%%': return '%';
+                default:
+                    return x;
+            }
+        });
+        for (var x = args[i]; i < len; x = args[++i]) {
+            if (x === null || typeof (x) !== 'object') {
+                str += ' ' + x;
+            } else {
+                str += ' ' + inspect(x);
+            }
+        }
+        return str;
+    };
+}
+
+
+/**
+ * Gather some caller info 3 stack levels up.
+ * See <http://code.google.com/p/v8/wiki/JavaScriptStackTraceApi>.
+ */
+function getCaller3Info() {
+    var obj = {};
+    var saveLimit = Error.stackTraceLimit;
+    var savePrepare = Error.prepareStackTrace;
+    Error.stackTraceLimit = 3;
+    Error.captureStackTrace(this, getCaller3Info);
+
+    Error.prepareStackTrace = function (_, stack) {
+        var caller = stack[2];
+        if (sourceMapSupport) {
+            caller = sourceMapSupport.wrapCallSite(caller);
+        }
+        obj.file = caller.getFileName();
+        obj.line = caller.getLineNumber();
+        var func = caller.getFunctionName();
+        if (func)
+            obj.func = func;
+    };
+    this.stack;
+    Error.stackTraceLimit = saveLimit;
+    Error.prepareStackTrace = savePrepare;
+    return obj;
+}
+
+
+function _indent(s, indent) {
+    if (!indent) indent = '    ';
+    var lines = s.split(/\r?\n/g);
+    return indent + lines.join('\n' + indent);
+}
+
+
+/**
+ * Warn about an bunyan processing error.
+ *
+ * @param msg {String} Message with which to warn.
+ * @param dedupKey {String} Optional. A short string key for this warning to
+ *      have its warning only printed once.
+ */
+function _warn(msg, dedupKey) {
+    assert.ok(msg);
+    if (dedupKey) {
+        if (_warned[dedupKey]) {
+            return;
+        }
+        _warned[dedupKey] = true;
+    }
+    process.stderr.write(msg + '\n');
+}
+function _haveWarned(dedupKey) {
+    return _warned[dedupKey];
+}
+var _warned = {};
+
+
+function ConsoleRawStream() {}
+ConsoleRawStream.prototype.write = function (rec) {
+    if (rec.level < INFO) {
+        console.log(rec);
+    } else if (rec.level < WARN) {
+        console.info(rec);
+    } else if (rec.level < ERROR) {
+        console.warn(rec);
+    } else {
+        console.error(rec);
+    }
+};
+
+
+//---- Levels
+
+var TRACE = 10;
+var DEBUG = 20;
+var INFO = 30;
+var WARN = 40;
+var ERROR = 50;
+var FATAL = 60;
+
+var levelFromName = {
+    'trace': TRACE,
+    'debug': DEBUG,
+    'info': INFO,
+    'warn': WARN,
+    'error': ERROR,
+    'fatal': FATAL
+};
+var nameFromLevel = {};
+Object.keys(levelFromName).forEach(function (name) {
+    nameFromLevel[levelFromName[name]] = name;
+});
+
+// Dtrace probes.
+var dtp = undefined;
+var probes = dtrace && {};
+
+/**
+ * Resolve a level number, name (upper or lowercase) to a level number value.
+ *
+ * @api public
+ */
+function resolveLevel(nameOrNum) {
+    var level = (typeof (nameOrNum) === 'string'
+            ? levelFromName[nameOrNum.toLowerCase()]
+            : nameOrNum);
+    return level;
+}
+
+
+
+//---- Logger class
+
+/**
+ * Create a Logger instance.
+ *
+ * @param options {Object} See documentation for full details. At minimum
+ *    this must include a 'name' string key. Configuration keys:
+ *      - `streams`: specify the logger output streams. This is an array of
+ *        objects with these fields:
+ *          - `type`: The stream type. See README.md for full details.
+ *            Often this is implied by the other fields. Examples are
+ *            'file', 'stream' and "raw".
+ *          - `level`: Defaults to 'info'.
+ *          - `path` or `stream`: The specify the file path or writeable
+ *            stream to which log records are written. E.g.
+ *            `stream: process.stdout`.
+ *          - `closeOnExit` (boolean): Optional. Default is true for a
+ *            'file' stream when `path` is given, false otherwise.
+ *        See README.md for full details.
+ *      - `level`: set the level for a single output stream (cannot be used
+ *        with `streams`)
+ *      - `stream`: the output stream for a logger with just one, e.g.
+ *        `process.stdout` (cannot be used with `streams`)
+ *      - `serializers`: object mapping log record field names to
+ *        serializing functions. See README.md for details.
+ *      - `src`: Boolean (default false). Set true to enable 'src' automatic
+ *        field with log call source info.
+ *    All other keys are log record fields.
+ *
+ * An alternative *internal* call signature is used for creating a child:
+ *    new Logger(<parent logger>, <child options>[, <child opts are simple>]);
+ *
+ * @param _childSimple (Boolean) An assertion that the given `_childOptions`
+ *    (a) only add fields (no config) and (b) no serialization handling is
+ *    required for them. IOW, this is a fast path for frequent child
+ *    creation.
+ */
+function Logger(options, _childOptions, _childSimple) {
+    xxx('Logger start:', options)
+    if (!(this instanceof Logger)) {
+        return new Logger(options, _childOptions);
+    }
+
+    // Input arg validation.
+    var parent;
+    if (_childOptions !== undefined) {
+        parent = options;
+        options = _childOptions;
+        if (!(parent instanceof Logger)) {
+            throw new TypeError(
+                'invalid Logger creation: do not pass a second arg');
+        }
+    }
+    if (!options) {
+        throw new TypeError('options (object) is required');
+    }
+    if (!parent) {
+        if (!options.name) {
+            throw new TypeError('options.name (string) is required');
+        }
+    } else {
+        if (options.name) {
+            throw new TypeError(
+                'invalid options.name: child cannot set logger name');
+        }
+    }
+    if (options.stream && options.streams) {
+        throw new TypeError('cannot mix "streams" and "stream" options');
+    }
+    if (options.streams && !Array.isArray(options.streams)) {
+        throw new TypeError('invalid options.streams: must be an array')
+    }
+    if (options.serializers && (typeof (options.serializers) !== 'object' ||
+            Array.isArray(options.serializers))) {
+        throw new TypeError('invalid options.serializers: must be an object')
+    }
+
+    EventEmitter.call(this);
+
+    // Fast path for simple child creation.
+    if (parent && _childSimple) {
+        // `_isSimpleChild` is a signal to stream close handling that this child
+        // owns none of its streams.
+        this._isSimpleChild = true;
+
+        this._level = parent._level;
+        this.streams = parent.streams;
+        this.serializers = parent.serializers;
+        this.src = parent.src;
+        var fields = this.fields = {};
+        var parentFieldNames = Object.keys(parent.fields);
+        for (var i = 0; i < parentFieldNames.length; i++) {
+            var name = parentFieldNames[i];
+            fields[name] = parent.fields[name];
+        }
+        var names = Object.keys(options);
+        for (var i = 0; i < names.length; i++) {
+            var name = names[i];
+            fields[name] = options[name];
+        }
+        return;
+    }
+
+    // Null values.
+    var self = this;
+    if (parent) {
+        this._level = parent._level;
+        this.streams = [];
+        for (var i = 0; i < parent.streams.length; i++) {
+            var s = objCopy(parent.streams[i]);
+            s.closeOnExit = false; // Don't own parent stream.
+            this.streams.push(s);
+        }
+        this.serializers = objCopy(parent.serializers);
+        this.src = parent.src;
+        this.fields = objCopy(parent.fields);
+        if (options.level) {
+            this.level(options.level);
+        }
+    } else {
+        this._level = Number.POSITIVE_INFINITY;
+        this.streams = [];
+        this.serializers = null;
+        this.src = false;
+        this.fields = {};
+    }
+
+    if (!dtp && dtrace) {
+        dtp = dtrace.createDTraceProvider('bunyan');
+
+        for (var level in levelFromName) {
+            var probe;
+
+            probes[levelFromName[level]] = probe =
+                dtp.addProbe('log-' + level, 'char *');
+
+            // Explicitly add a reference to dtp to prevent it from being GC'd
+            probe.dtp = dtp;
+        }
+
+        dtp.enable();
+    }
+
+    // Handle *config* options (i.e. options that are not just plain data
+    // for log records).
+    if (options.stream) {
+        self.addStream({
+            type: 'stream',
+            stream: options.stream,
+            closeOnExit: false,
+            level: options.level
+        });
+    } else if (options.streams) {
+        options.streams.forEach(function (s) {
+            self.addStream(s, options.level);
+        });
+    } else if (parent && options.level) {
+        this.level(options.level);
+    } else if (!parent) {
+        if (isBrowser) {
+            /*
+             * In the browser we'll be emitting to console.log by default.
+             * Any console.log worth its salt these days can nicely render
+             * and introspect objects (e.g. the Firefox and Chrome console)
+             * so let's emit the raw log record. Are there browsers for which
+             * that breaks things?
+             */
+            self.addStream({
+                type: 'raw',
+                stream: new ConsoleRawStream(),
+                closeOnExit: false,
+                level: options.level
+            });
+        } else {
+            self.addStream({
+                type: 'stream',
+                stream: process.stdout,
+                closeOnExit: false,
+                level: options.level
+            });
+        }
+    }
+    if (options.serializers) {
+        self.addSerializers(options.serializers);
+    }
+    if (options.src) {
+        this.src = true;
+    }
+    xxx('Logger: ', self)
+
+    // Fields.
+    // These are the default fields for log records (minus the attributes
+    // removed in this constructor). To allow storing raw log records
+    // (unrendered), `this.fields` must never be mutated. Create a copy for
+    // any changes.
+    var fields = objCopy(options);
+    delete fields.stream;
+    delete fields.level;
+    delete fields.streams;
+    delete fields.serializers;
+    delete fields.src;
+    if (this.serializers) {
+        this._applySerializers(fields);
+    }
+    if (!fields.hostname) {
+        fields.hostname = os.hostname();
+    }
+    if (!fields.pid) {
+        fields.pid = process.pid;
+    }
+    Object.keys(fields).forEach(function (k) {
+        self.fields[k] = fields[k];
+    });
+}
+
+util.inherits(Logger, EventEmitter);
+
+
+/**
+ * Add a stream
+ *
+ * @param stream {Object}. Object with these fields:
+ *    - `type`: The stream type. See README.md for full details.
+ *      Often this is implied by the other fields. Examples are
+ *      'file', 'stream' and "raw".
+ *    - `path` or `stream`: The specify the file path or writeable
+ *      stream to which log records are written. E.g.
+ *      `stream: process.stdout`.
+ *    - `level`: Optional. Falls back to `defaultLevel`.
+ *    - `closeOnExit` (boolean): Optional. Default is true for a
+ *      'file' stream when `path` is given, false otherwise.
+ *    See README.md for full details.
+ * @param defaultLevel {Number|String} Optional. A level to use if
+ *      `stream.level` is not set. If neither is given, this defaults to INFO.
+ */
+Logger.prototype.addStream = function addStream(s, defaultLevel) {
+    var self = this;
+    if (defaultLevel === null || defaultLevel === undefined) {
+        defaultLevel = INFO;
+    }
+
+    s = objCopy(s);
+
+    // Implicit 'type' from other args.
+    var type = s.type;
+    if (!s.type) {
+        if (s.stream) {
+            s.type = 'stream';
+        } else if (s.path) {
+            s.type = 'file'
+        }
+    }
+    s.raw = (s.type === 'raw');  // PERF: Allow for faster check in `_emit`.
+
+    if (s.level) {
+        s.level = resolveLevel(s.level);
+    } else {
+        s.level = resolveLevel(defaultLevel);
+    }
+    if (s.level < self._level) {
+        self._level = s.level;
+    }
+
+    switch (s.type) {
+    case 'stream':
+        if (!s.closeOnExit) {
+            s.closeOnExit = false;
+        }
+        break;
+    case 'file':
+        if (!s.stream) {
+            s.stream = fs.createWriteStream(s.path,
+                                            {flags: 'a', encoding: 'utf8'});
+            s.stream.on('error', function (err) {
+                self.emit('error', err, s);
+            });
+            if (!s.closeOnExit) {
+                s.closeOnExit = true;
+            }
+        } else {
+            if (!s.closeOnExit) {
+                s.closeOnExit = false;
+            }
+        }
+        break;
+    case 'rotating-file':
+        assert.ok(!s.stream,
+                  '"rotating-file" stream should not give a "stream"');
+        assert.ok(s.path);
+        assert.ok(mv, '"rotating-file" stream type is not supported: '
+                      + 'missing "mv" module');
+        s.stream = new RotatingFileStream(s);
+        if (!s.closeOnExit) {
+            s.closeOnExit = true;
+        }
+        break;
+    case 'raw':
+        if (!s.closeOnExit) {
+            s.closeOnExit = false;
+        }
+        break;
+    default:
+        throw new TypeError('unknown stream type "' + s.type + '"');
+    }
+
+    self.streams.push(s);
+    delete self.haveNonRawStreams;  // reset
+}
+
+
+/**
+ * Add serializers
+ *
+ * @param serializers {Object} Optional. Object mapping log record field names
+ *    to serializing functions. See README.md for details.
+ */
+Logger.prototype.addSerializers = function addSerializers(serializers) {
+    var self = this;
+
+    if (!self.serializers) {
+        self.serializers = {};
+    }
+    Object.keys(serializers).forEach(function (field) {
+        var serializer = serializers[field];
+        if (typeof (serializer) !== 'function') {
+            throw new TypeError(format(
+                'invalid serializer for "%s" field: must be a function',
+                field));
+        } else {
+            self.serializers[field] = serializer;
+        }
+    });
+}
+
+
+
+/**
+ * Create a child logger, typically to add a few log record fields.
+ *
+ * This can be useful when passing a logger to a sub-component, e.g. a
+ * 'wuzzle' component of your service:
+ *
+ *    var wuzzleLog = log.child({component: 'wuzzle'})
+ *    var wuzzle = new Wuzzle({..., log: wuzzleLog})
+ *
+ * Then log records from the wuzzle code will have the same structure as
+ * the app log, *plus the component='wuzzle' field*.
+ *
+ * @param options {Object} Optional. Set of options to apply to the child.
+ *    All of the same options for a new Logger apply here. Notes:
+ *      - The parent's streams are inherited and cannot be removed in this
+ *        call. Any given `streams` are *added* to the set inherited from
+ *        the parent.
+ *      - The parent's serializers are inherited, though can effectively be
+ *        overwritten by using duplicate keys.
+ *      - Can use `level` to set the level of the streams inherited from
+ *        the parent. The level for the parent is NOT affected.
+ * @param simple {Boolean} Optional. Set to true to assert that `options`
+ *    (a) only add fields (no config) and (b) no serialization handling is
+ *    required for them. IOW, this is a fast path for frequent child
+ *    creation. See 'tools/timechild.js' for numbers.
+ */
+Logger.prototype.child = function (options, simple) {
+    return new (this.constructor)(this, options || {}, simple);
+}
+
+
+/**
+ * A convenience method to reopen 'file' streams on a logger. This can be
+ * useful with external log rotation utilities that move and re-open log files
+ * (e.g. logrotate on Linux, logadm on SmartOS/Illumos). Those utilities
+ * typically have rotation options to copy-and-truncate the log file, but
+ * you may not want to use that. An alternative is to do this in your
+ * application:
+ *
+ *      var log = bunyan.createLogger(...);
+ *      ...
+ *      process.on('SIGUSR2', function () {
+ *          log.reopenFileStreams();
+ *      });
+ *      ...
+ *
+ * See <https://github.com/trentm/node-bunyan/issues/104>.
+ */
+Logger.prototype.reopenFileStreams = function () {
+    var self = this;
+    self.streams.forEach(function (s) {
+        if (s.type === 'file') {
+            if (s.stream) {
+                // Not sure if typically would want this, or more immediate
+                // `s.stream.destroy()`.
+                s.stream.end();
+                s.stream.destroySoon();
+                delete s.stream;
+            }
+            s.stream = fs.createWriteStream(s.path,
+                {flags: 'a', encoding: 'utf8'});
+            s.stream.on('error', function (err) {
+                self.emit('error', err, s);
+            });
+        }
+    });
+};
+
+
+/* BEGIN JSSTYLED */
+/**
+ * Close this logger.
+ *
+ * This closes streams (that it owns, as per 'endOnClose' attributes on
+ * streams), etc. Typically you **don't** need to bother calling this.
+Logger.prototype.close = function () {
+    if (this._closed) {
+        return;
+    }
+    if (!this._isSimpleChild) {
+        self.streams.forEach(function (s) {
+            if (s.endOnClose) {
+                xxx('closing stream s:', s);
+                s.stream.end();
+                s.endOnClose = false;
+            }
+        });
+    }
+    this._closed = true;
+}
+ */
+/* END JSSTYLED */
+
+
+/**
+ * Get/set the level of all streams on this logger.
+ *
+ * Get Usage:
+ *    // Returns the current log level (lowest level of all its streams).
+ *    log.level() -> INFO
+ *
+ * Set Usage:
+ *    log.level(INFO)       // set all streams to level INFO
+ *    log.level('info')     // can use 'info' et al aliases
+ */
+Logger.prototype.level = function level(value) {
+    if (value === undefined) {
+        return this._level;
+    }
+    var newLevel = resolveLevel(value);
+    var len = this.streams.length;
+    for (var i = 0; i < len; i++) {
+        this.streams[i].level = newLevel;
+    }
+    this._level = newLevel;
+}
+
+
+/**
+ * Get/set the level of a particular stream on this logger.
+ *
+ * Get Usage:
+ *    // Returns an array of the levels of each stream.
+ *    log.levels() -> [TRACE, INFO]
+ *
+ *    // Returns a level of the identified stream.
+ *    log.levels(0) -> TRACE      // level of stream at index 0
+ *    log.levels('foo')           // level of stream with name 'foo'
+ *
+ * Set Usage:
+ *    log.levels(0, INFO)         // set level of stream 0 to INFO
+ *    log.levels(0, 'info')       // can use 'info' et al aliases
+ *    log.levels('foo', WARN)     // set stream named 'foo' to WARN
+ *
+ * Stream names: When streams are defined, they can optionally be given
+ * a name. For example,
+ *       log = new Logger({
+ *         streams: [
+ *           {
+ *             name: 'foo',
+ *             path: '/var/log/my-service/foo.log'
+ *             level: 'trace'
+ *           },
+ *         ...
+ *
+ * @param name {String|Number} The stream index or name.
+ * @param value {Number|String} The level value (INFO) or alias ('info').
+ *    If not given, this is a 'get' operation.
+ * @throws {Error} If there is no stream with the given name.
+ */
+Logger.prototype.levels = function levels(name, value) {
+    if (name === undefined) {
+        assert.equal(value, undefined);
+        return this.streams.map(
+            function (s) { return s.level });
+    }
+    var stream;
+    if (typeof (name) === 'number') {
+        stream = this.streams[name];
+        if (stream === undefined) {
+            throw new Error('invalid stream index: ' + name);
+        }
+    } else {
+        var len = this.streams.length;
+        for (var i = 0; i < len; i++) {
+            var s = this.streams[i];
+            if (s.name === name) {
+                stream = s;
+                break;
+            }
+        }
+        if (!stream) {
+            throw new Error(format('no stream with name "%s"', name));
+        }
+    }
+    if (value === undefined) {
+        return stream.level;
+    } else {
+        var newLevel = resolveLevel(value);
+        stream.level = newLevel;
+        if (newLevel < this._level) {
+            this._level = newLevel;
+        }
+    }
+}
+
+
+/**
+ * Apply registered serializers to the appropriate keys in the given fields.
+ *
+ * Pre-condition: This is only called if there is at least one serializer.
+ *
+ * @param fields (Object) The log record fields.
+ * @param excludeFields (Object) Optional mapping of keys to `true` for
+ *    keys to NOT apply a serializer.
+ */
+Logger.prototype._applySerializers = function (fields, excludeFields) {
+    var self = this;
+
+    xxx('_applySerializers: excludeFields', excludeFields);
+
+    // Check each serializer against these (presuming number of serializers
+    // is typically less than number of fields).
+    Object.keys(this.serializers).forEach(function (name) {
+        if (fields[name] === undefined ||
+            (excludeFields && excludeFields[name]))
+        {
+            return;
+        }
+        xxx('_applySerializers; apply to "%s" key', name)
+        try {
+            fields[name] = self.serializers[name](fields[name]);
+        } catch (err) {
+            _warn(format('bunyan: ERROR: Exception thrown from the "%s" '
+                + 'Bunyan serializer. This should never happen. This is a bug'
+                + 'in that serializer function.\n%s',
+                name, err.stack || err));
+            fields[name] = format('(Error in Bunyan log "%s" serializer '
+                + 'broke field. See stderr for details.)', name);
+        }
+    });
+}
+
+
+/**
+ * Emit a log record.
+ *
+ * @param rec {log record}
+ * @param noemit {Boolean} Optional. Set to true to skip emission
+ *      and just return the JSON string.
+ */
+Logger.prototype._emit = function (rec, noemit) {
+    var i;
+
+    // Lazily determine if this Logger has non-'raw' streams. If there are
+    // any, then we need to stringify the log record.
+    if (this.haveNonRawStreams === undefined) {
+        this.haveNonRawStreams = false;
+        for (i = 0; i < this.streams.length; i++) {
+            if (!this.streams[i].raw) {
+                this.haveNonRawStreams = true;
+                break;
+            }
+        }
+    }
+
+    // Stringify the object. Attempt to warn/recover on error.
+    var str;
+    if (noemit || this.haveNonRawStreams) {
+        try {
+            str = JSON.stringify(rec, safeCycles()) + '\n';
+        } catch (e) {
+            if (safeJsonStringify) {
+                str = safeJsonStringify(rec) + '\n';
+            } else {
+                var dedupKey = e.stack.split(/\n/g, 2).join('\n');
+                _warn('bunyan: ERROR: Exception in '
+                    + '`JSON.stringify(rec)`. You can install the '
+                    + '"safe-json-stringify" module to have Bunyan fallback '
+                    + 'to safer stringification. Record:\n'
+                    + _indent(format('%s\n%s', util.inspect(rec), e.stack)),
+                    dedupKey);
+                str = format('(Exception in JSON.stringify(rec): %j. '
+                    + 'See stderr for details.)\n', e.message);
+            }
+        }
+    }
+
+    if (noemit)
+        return str;
+
+    var level = rec.level;
+    for (i = 0; i < this.streams.length; i++) {
+        var s = this.streams[i];
+        if (s.level <= level) {
+            xxx('writing log rec "%s" to "%s" stream (%d <= %d): %j',
+                rec.msg, s.type, s.level, level, rec);
+            s.stream.write(s.raw ? rec : str);
+        }
+    };
+
+    return str;
+}
+
+
+/**
+ * Build a log emitter function for level minLevel. I.e. this is the
+ * creator of `log.info`, `log.error`, etc.
+ */
+function mkLogEmitter(minLevel) {
+    return function () {
+        var log = this;
+
+        function mkRecord(args) {
+            var excludeFields;
+            if (args[0] instanceof Error) {
+                // `log.<level>(err, ...)`
+                fields = {
+                    // Use this Logger's err serializer, if defined.
+                    err: (log.serializers && log.serializers.err
+                        ? log.serializers.err(args[0])
+                        : Logger.stdSerializers.err(args[0]))
+                };
+                excludeFields = {err: true};
+                if (args.length === 1) {
+                    msgArgs = [fields.err.message];
+                } else {
+                    msgArgs = Array.prototype.slice.call(args, 1);
+                }
+            } else if (typeof (args[0]) !== 'object' && args[0] !== null ||
+                       Array.isArray(args[0])) {
+                // `log.<level>(msg, ...)`
+                fields = null;
+                msgArgs = Array.prototype.slice.call(args);
+            } else if (Buffer.isBuffer(args[0])) {  // `log.<level>(buf, ...)`
+                // Almost certainly an error, show `inspect(buf)`. See bunyan
+                // issue #35.
+                fields = null;
+                msgArgs = Array.prototype.slice.call(args);
+                msgArgs[0] = util.inspect(msgArgs[0]);
+            } else {  // `log.<level>(fields, msg, ...)`
+                fields = args[0];
+                msgArgs = Array.prototype.slice.call(args, 1);
+            }
+
+            // Build up the record object.
+            var rec = objCopy(log.fields);
+            var level = rec.level = minLevel;
+            var recFields = (fields ? objCopy(fields) : null);
+            if (recFields) {
+                if (log.serializers) {
+                    log._applySerializers(recFields, excludeFields);
+                }
+                Object.keys(recFields).forEach(function (k) {
+                    rec[k] = recFields[k];
+                });
+            }
+            rec.msg = format.apply(log, msgArgs);
+            if (!rec.time) {
+                rec.time = (new Date());
+            }
+            // Get call source info
+            if (log.src && !rec.src) {
+                rec.src = getCaller3Info()
+            }
+            rec.v = LOG_VERSION;
+
+            return rec;
+        };
+
+        var fields = null;
+        var msgArgs = arguments;
+        var str = null;
+        var rec = null;
+        if (! this._emit) {
+            /*
+             * Show this invalid Bunyan usage warning *once*.
+             *
+             * See <https://github.com/trentm/node-bunyan/issues/100> for
+             * an example of how this can happen.
+             */
+            var dedupKey = 'unbound';
+            if (!_haveWarned[dedupKey]) {
+                var caller = getCaller3Info();
+                _warn(format('bunyan usage error: %s:%s: attempt to log '
+                    + 'with an unbound log method: `this` is: %s',
+                    caller.file, caller.line, util.inspect(this)),
+                    dedupKey);
+            }
+            return;
+        } else if (arguments.length === 0) {   // `log.<level>()`
+            return (this._level <= minLevel);
+        } else if (this._level > minLevel) {
+            /* pass through */
+        } else {
+            rec = mkRecord(msgArgs);
+            str = this._emit(rec);
+        }
+        probes && probes[minLevel].fire(function () {
+                return [ str ||
+                    (rec && log._emit(rec, true)) ||
+                    log._emit(mkRecord(msgArgs), true) ];
+        });
+    }
+}
+
+
+/**
+ * The functions below log a record at a specific level.
+ *
+ * Usages:
+ *    log.<level>()  -> boolean is-trace-enabled
+ *    log.<level>(<Error> err, [<string> msg, ...])
+ *    log.<level>(<string> msg, ...)
+ *    log.<level>(<object> fields, <string> msg, ...)
+ *
+ * where <level> is the lowercase version of the log level. E.g.:
+ *
+ *    log.info()
+ *
+ * @params fields {Object} Optional set of additional fields to log.
+ * @params msg {String} Log message. This can be followed by additional
+ *    arguments that are handled like
+ *    [util.format](http://nodejs.org/docs/latest/api/all.html#util.format).
+ */
+Logger.prototype.trace = mkLogEmitter(TRACE);
+Logger.prototype.debug = mkLogEmitter(DEBUG);
+Logger.prototype.info = mkLogEmitter(INFO);
+Logger.prototype.warn = mkLogEmitter(WARN);
+Logger.prototype.error = mkLogEmitter(ERROR);
+Logger.prototype.fatal = mkLogEmitter(FATAL);
+
+
+
+//---- Standard serializers
+// A serializer is a function that serializes a JavaScript object to a
+// JSON representation for logging. There is a standard set of presumed
+// interesting objects in node.js-land.
+
+Logger.stdSerializers = {};
+
+// Serialize an HTTP request.
+Logger.stdSerializers.req = function req(req) {
+    if (!req || !req.connection)
+        return req;
+    return {
+        method: req.method,
+        url: req.url,
+        headers: req.headers,
+        remoteAddress: req.connection.remoteAddress,
+        remotePort: req.connection.remotePort
+    };
+    // Trailers: Skipping for speed. If you need trailers in your app, then
+    // make a custom serializer.
+    //if (Object.keys(trailers).length > 0) {
+    //  obj.trailers = req.trailers;
+    //}
+};
+
+// Serialize an HTTP response.
+Logger.stdSerializers.res = function res(res) {
+    if (!res || !res.statusCode)
+        return res;
+    return {
+        statusCode: res.statusCode,
+        header: res._header
+    }
+};
+
+
+/*
+ * This function dumps long stack traces for exceptions having a cause()
+ * method. The error classes from
+ * [verror](https://github.com/davepacheco/node-verror) and
+ * [restify v2.0](https://github.com/mcavage/node-restify) are examples.
+ *
+ * Based on `dumpException` in
+ * https://github.com/davepacheco/node-extsprintf/blob/master/lib/extsprintf.js
+ */
+function getFullErrorStack(ex)
+{
+    var ret = ex.stack || ex.toString();
+    if (ex.cause && typeof (ex.cause) === 'function') {
+        var cex = ex.cause();
+        if (cex) {
+            ret += '\nCaused by: ' + getFullErrorStack(cex);
+        }
+    }
+    return (ret);
+}
+
+// Serialize an Error object
+// (Core error properties are enumerable in node 0.4, not in 0.6).
+var errSerializer = Logger.stdSerializers.err = function err(err) {
+    if (!err || !err.stack)
+        return err;
+    var obj = {
+        message: err.message,
+        name: err.name,
+        stack: getFullErrorStack(err),
+        code: err.code,
+        signal: err.signal
+    }
+    return obj;
+};
+
+
+// A JSON stringifier that handles cycles safely.
+// Usage: JSON.stringify(obj, safeCycles())
+function safeCycles() {
+    var seen = [];
+    return function (key, val) {
+        if (!val || typeof (val) !== 'object') {
+            return val;
+        }
+        if (seen.indexOf(val) !== -1) {
+            return '[Circular]';
+        }
+        seen.push(val);
+        return val;
+    };
+}
+
+
+/**
+ * XXX
+ */
+if (mv) {
+
+function RotatingFileStream(options) {
+    this.path = options.path;
+    this.stream = fs.createWriteStream(this.path,
+        {flags: 'a', encoding: 'utf8'});
+    this.count = (options.count == null ? 10 : options.count);
+    assert.equal(typeof (this.count), 'number',
+        format('rotating-file stream "count" is not a number: %j (%s) in %j',
+            this.count, typeof (this.count), this));
+    assert.ok(this.count >= 0,
+        format('rotating-file stream "count" is not >= 0: %j in %j',
+            this.count, this));
+
+    // Parse `options.period`.
+    if (options.period) {
+        // <number><scope> where scope is:
+        //    h   hours (at the start of the hour)
+        //    d   days (at the start of the day, i.e. just after midnight)
+        //    w   weeks (at the start of Sunday)
+        //    m   months (on the first of the month)
+        //    y   years (at the start of Jan 1st)
+        // with special values 'hourly' (1h), 'daily' (1d), "weekly" (1w),
+        // 'monthly' (1m) and 'yearly' (1y)
+        var period = {
+            'hourly': '1h',
+            'daily': '1d',
+            'weekly': '1w',
+            'monthly': '1m',
+            'yearly': '1y'
+        }[options.period] || options.period;
+        var m = /^([1-9][0-9]*)([hdwmy]|ms)$/.exec(period);
+        if (!m) {
+            throw new Error(format('invalid period: "%s"', options.period));
+        }
+        this.periodNum = Number(m[1]);
+        this.periodScope = m[2];
+    } else {
+        this.periodNum = 1;
+        this.periodScope = 'd';
+    }
+
+    // TODO: template support for backup files
+    // template: <path to which to rotate>
+    //      default is %P.%n
+    //      '/var/log/archive/foo.log'  -> foo.log.%n
+    //      '/var/log/archive/foo.log.%n'
+    //      codes:
+    //          XXX support strftime codes (per node version of those)
+    //              or whatever module. Pick non-colliding for extra
+    //              codes
+    //          %P      `path` base value
+    //          %n      integer number of rotated log (1,2,3,...)
+    //          %d      datetime in YYYY-MM-DD_HH-MM-SS
+    //                      XXX what should default date format be?
+    //                          prior art? Want to avoid ':' in
+    //                          filenames (illegal on Windows for one).
+
+    this.rotQueue = [];
+    this.rotating = false;
+    this._setupNextRot();
+}
+
+util.inherits(RotatingFileStream, EventEmitter);
+
+RotatingFileStream.prototype._setupNextRot = function () {
+    var self = this;
+    this.rotAt = this._nextRotTime();
+    var delay = this.rotAt - Date.now();
+    // Cap timeout to Node's max setTimeout, see
+    // <https://github.com/joyent/node/issues/8656>.
+    var TIMEOUT_MAX = 2147483647; // 2^31-1
+    if (delay > TIMEOUT_MAX) {
+        delay = TIMEOUT_MAX;
+    }
+    this.timeout = setTimeout(
+        function () { self.rotate(); },
+        delay);
+    if (typeof (this.timeout.unref) === 'function') {
+        this.timeout.unref();
+    }
+}
+
+RotatingFileStream.prototype._nextRotTime = function _nextRotTime(first) {
+    var _DEBUG = false;
+    if (_DEBUG)
+        console.log('-- _nextRotTime: %s%s', this.periodNum, this.periodScope);
+    var d = new Date();
+
+    if (_DEBUG) console.log('  now local: %s', d);
+    if (_DEBUG) console.log('    now utc: %s', d.toISOString());
+    var rotAt;
+    switch (this.periodScope) {
+    case 'ms':
+        // Hidden millisecond period for debugging.
+        if (this.rotAt) {
+            rotAt = this.rotAt + this.periodNum;
+        } else {
+            rotAt = Date.now() + this.periodNum;
+        }
+        break;
+    case 'h':
+        if (this.rotAt) {
+            rotAt = this.rotAt + this.periodNum * 60 * 60 * 1000;
+        } else {
+            // First time: top of the next hour.
+            rotAt = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(),
+                d.getUTCDate(), d.getUTCHours() + 1);
+        }
+        break;
+    case 'd':
+        if (this.rotAt) {
+            rotAt = this.rotAt + this.periodNum * 24 * 60 * 60 * 1000;
+        } else {
+            // First time: start of tomorrow (i.e. at the coming midnight) UTC.
+            rotAt = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(),
+                d.getUTCDate() + 1);
+        }
+        break;
+    case 'w':
+        // Currently, always on Sunday morning at 00:00:00 (UTC).
+        if (this.rotAt) {
+            rotAt = this.rotAt + this.periodNum * 7 * 24 * 60 * 60 * 1000;
+        } else {
+            // First time: this coming Sunday.
+            rotAt = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(),
+                d.getUTCDate() + (7 - d.getUTCDay()));
+        }
+        break;
+    case 'm':
+        if (this.rotAt) {
+            rotAt = Date.UTC(d.getUTCFullYear(),
+                d.getUTCMonth() + this.periodNum, 1);
+        } else {
+            // First time: the start of the next month.
+            rotAt = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+        }
+        break;
+    case 'y':
+        if (this.rotAt) {
+            rotAt = Date.UTC(d.getUTCFullYear() + this.periodNum, 0, 1);
+        } else {
+            // First time: the start of the next year.
+            rotAt = Date.UTC(d.getUTCFullYear() + 1, 0, 1);
+        }
+        break;
+    default:
+        assert.fail(format('invalid period scope: "%s"', this.periodScope));
+    }
+
+    if (_DEBUG) {
+        console.log('  **rotAt**: %s (utc: %s)', rotAt,
+            new Date(rotAt).toUTCString());
+        var now = Date.now();
+        console.log('        now: %s (%sms == %smin == %sh to go)',
+            now,
+            rotAt - now,
+            (rotAt-now)/1000/60,
+            (rotAt-now)/1000/60/60);
+    }
+    return rotAt;
+};
+
+RotatingFileStream.prototype.rotate = function rotate() {
+    // XXX What about shutdown?
+    var self = this;
+    var _DEBUG = false;
+
+    // If rotation period is > ~25 days, we have to break into multiple
+    // setTimeout's. See <https://github.com/joyent/node/issues/8656>.
+    if (self.rotAt && self.rotAt > Date.now()) {
+        return self._setupNextRot();
+    }
+
+    if (_DEBUG) {
+        console.log('-- [%s, pid=%s] rotating %s',
+            new Date(), process.pid, self.path);
+    }
+    if (self.rotating) {
+        throw new TypeError('cannot start a rotation when already rotating');
+    }
+    self.rotating = true;
+
+    self.stream.end();  // XXX can do moves sync after this? test at high rate
+
+    function del() {
+        var toDel = self.path + '.' + String(n - 1);
+        if (n === 0) {
+            toDel = self.path;
+        }
+        n -= 1;
+        if (_DEBUG) console.log('rm %s', toDel);
+        fs.unlink(toDel, function (delErr) {
+            //XXX handle err other than not exists
+            moves();
+        });
+    }
+
+    function moves() {
+        if (self.count === 0 || n < 0) {
+            return finish();
+        }
+        var before = self.path;
+        var after = self.path + '.' + String(n);
+        if (n > 0) {
+            before += '.' + String(n - 1);
+        }
+        n -= 1;
+        fs.exists(before, function (exists) {
+            if (!exists) {
+                moves();
+            } else {
+                if (_DEBUG) {
+                    console.log('[pid %s] mv %s %s',
+                        process.pid, before, after);
+                }
+                mv(before, after, function (mvErr) {
+                    if (mvErr) {
+                        self.emit('error', mvErr);
+                        finish(); // XXX finish here?
+                    } else {
+                        moves();
+                    }
+                });
+            }
+        })
+    }
+
+    function finish() {
+        if (_DEBUG) console.log('[pid %s] open %s', process.pid, self.path);
+        self.stream = fs.createWriteStream(self.path,
+            {flags: 'a', encoding: 'utf8'});
+        var q = self.rotQueue, len = q.length;
+        for (var i = 0; i < len; i++) {
+            self.stream.write(q[i]);
+        }
+        self.rotQueue = [];
+        self.rotating = false;
+        self.emit('drain');
+        self._setupNextRot();
+    }
+
+    var n = this.count;
+    del();
+};
+
+RotatingFileStream.prototype.write = function write(s) {
+    if (this.rotating) {
+        this.rotQueue.push(s);
+        return false;
+    } else {
+        return this.stream.write(s);
+    }
+};
+
+RotatingFileStream.prototype.end = function end(s) {
+    this.stream.end();
+};
+
+RotatingFileStream.prototype.destroy = function destroy(s) {
+    this.stream.destroy();
+};
+
+RotatingFileStream.prototype.destroySoon = function destroySoon(s) {
+    this.stream.destroySoon();
+};
+
+} /* if (mv) */
+
+
+
+/**
+ * RingBuffer is a Writable Stream that just stores the last N records in
+ * memory.
+ *
+ * @param options {Object}, with the following fields:
+ *
+ *    - limit: number of records to keep in memory
+ */
+function RingBuffer(options) {
+    this.limit = options && options.limit ? options.limit : 100;
+    this.writable = true;
+    this.records = [];
+    EventEmitter.call(this);
+}
+
+util.inherits(RingBuffer, EventEmitter);
+
+RingBuffer.prototype.write = function (record) {
+    if (!this.writable)
+        throw (new Error('RingBuffer has been ended already'));
+
+    this.records.push(record);
+
+    if (this.records.length > this.limit)
+        this.records.shift();
+
+    return (true);
+};
+
+RingBuffer.prototype.end = function () {
+    if (arguments.length > 0)
+        this.write.apply(this, Array.prototype.slice.call(arguments));
+    this.writable = false;
+};
+
+RingBuffer.prototype.destroy = function () {
+    this.writable = false;
+    this.emit('close');
+};
+
+RingBuffer.prototype.destroySoon = function () {
+    this.destroy();
+};
+
+
+//---- Exports
+
+module.exports = Logger;
+
+module.exports.TRACE = TRACE;
+module.exports.DEBUG = DEBUG;
+module.exports.INFO = INFO;
+module.exports.WARN = WARN;
+module.exports.ERROR = ERROR;
+module.exports.FATAL = FATAL;
+module.exports.resolveLevel = resolveLevel;
+module.exports.levelFromName = levelFromName;
+module.exports.nameFromLevel = nameFromLevel;
+
+module.exports.VERSION = VERSION;
+module.exports.LOG_VERSION = LOG_VERSION;
+
+module.exports.createLogger = function createLogger(options) {
+    return new Logger(options);
+};
+
+module.exports.RingBuffer = RingBuffer;
+module.exports.RotatingFileStream = RotatingFileStream;
+
+// Useful for custom `type == 'raw'` streams that may do JSON stringification
+// of log records themselves. Usage:
+//    var str = JSON.stringify(rec, bunyan.safeCycles());
+module.exports.safeCycles = safeCycles;
+
+}).call(this,require('_process'),require("buffer").Buffer)
+},{"_process":56,"assert":45,"buffer":47,"events":52,"fs":"fs","os":55,"safe-json-stringify":41,"util":77}],41:[function(require,module,exports){
+var hasProp = Object.prototype.hasOwnProperty;
+
+function throwsMessage(err) {
+	return '[Throws: ' + (err ? err.message : '?') + ']';
+}
+
+function safeGetValueFromPropertyOnObject(obj, property) {
+	if (hasProp.call(obj, property)) {
+		try {
+			return obj[property];
+		}
+		catch (err) {
+			return throwsMessage(err);
+		}
+	}
+
+	return obj[property];
+}
+
+function ensureProperties(obj) {
+	var seen = [ ]; // store references to objects we have seen before
+
+	function visit(obj) {
+		if (obj === null || typeof obj !== 'object') {
+			return obj;
+		}
+
+		if (seen.indexOf(obj) !== -1) {
+			return '[Circular]';
+		}
+		seen.push(obj);
+
+		if (typeof obj.toJSON === 'function') {
+			try {
+				return visit(obj.toJSON());
+			} catch(err) {
+				return throwsMessage(err);
+			}
+		}
+
+		if (Array.isArray(obj)) {
+			return obj.map(visit);
+		}
+
+		return Object.keys(obj).reduce(function(result, prop) {
+			// prevent faulty defined getter properties
+			result[prop] = visit(safeGetValueFromPropertyOnObject(obj, prop));
+			return result;
+		}, {});
+	};
+
+	return visit(obj);
+}
+
+module.exports = function(data) {
+	return JSON.stringify(ensureProperties(data));
+}
+
+module.exports.ensureProperties = ensureProperties;
+
+},{}],42:[function(require,module,exports){
+var ip = exports,
+    Buffer = require('buffer').Buffer,
+    os = require('os');
+
+ip.toBuffer = function toBuffer(ip, buff, offset) {
+  offset = ~~offset;
+
+  var result;
+
+  if (/^(\d{1,3}\.){3,3}\d{1,3}$/.test(ip)) {
+    result = buff || new Buffer(offset + 4);
+    ip.split(/\./g).map(function(byte) {
+      result[offset++] = parseInt(byte, 10) & 0xff;
+    });
+  } else if (/^[a-f0-9:]+$/.test(ip)) {
+    var s = ip.split(/::/g, 2),
+        head = (s[0] || '').split(/:/g, 8),
+        tail = (s[1] || '').split(/:/g, 8);
+
+    if (tail.length === 0) {
+      // xxxx::
+      while (head.length < 8) head.push('0000');
+    } else if (head.length === 0) {
+      // ::xxxx
+      while (tail.length < 8) tail.unshift('0000');
+    } else {
+      // xxxx::xxxx
+      while (head.length + tail.length < 8) head.push('0000');
+    }
+
+    result = buff || new Buffer(offset + 16);
+    head.concat(tail).map(function(word) {
+      word = parseInt(word, 16);
+      result[offset++] = (word >> 8) & 0xff;
+      result[offset++] = word & 0xff;
+    });
+  } else {
+    throw Error('Invalid ip address: ' + ip);
+  }
+
+  return result;
+};
+
+ip.toString = function toString(buff, offset, length) {
+  offset = ~~offset;
+  length = length || (buff.length - offset);
+
+  var result = [];
+  if (length === 4) {
+    // IPv4
+    for (var i = 0; i < length; i++) {
+      result.push(buff[offset + i]);
+    }
+    result = result.join('.');
+  } else if (length === 16) {
+    // IPv6
+    for (var i = 0; i < length; i += 2) {
+      result.push(buff.readUInt16BE(offset + i).toString(16));
+    }
+    result = result.join(':');
+    result = result.replace(/(^|:)0(:0)*:0(:|$)/, '$1::$3');
+    result = result.replace(/:{3,4}/, '::');
+  }
+
+  return result;
+};
+
+ip.fromPrefixLen = function fromPrefixLen(prefixlen, family) {
+  if (prefixlen > 32) {
+    family = 'ipv6';
+  } else {
+    family = _normalizeFamily(family);
+  }
+
+  var len = 4;
+  if (family === 'ipv6') {
+    len = 16;
+  }
+  var buff = new Buffer(len);
+
+  for (var i = 0, n = buff.length; i < n; ++i) {
+    var bits = 8;
+    if (prefixlen < 8) {
+      bits = prefixlen;
+    }
+    prefixlen -= bits;
+
+    buff[i] = ~(0xff >> bits);
+  }
+
+  return ip.toString(buff);
+};
+
+ip.mask = function mask(addr, mask) {
+  addr = ip.toBuffer(addr);
+  mask = ip.toBuffer(mask);
+
+  var result = new Buffer(Math.max(addr.length, mask.length));
+
+  // Same protocol - do bitwise and
+  if (addr.length === mask.length) {
+    for (var i = 0; i < addr.length; i++) {
+      result[i] = addr[i] & mask[i];
+    }
+  } else if (mask.length === 4) {
+    // IPv6 address and IPv4 mask
+    // (Mask low bits)
+    for (var i = 0; i < mask.length; i++) {
+      result[i] = addr[addr.length - 4  + i] & mask[i];
+    }
+  } else {
+    // IPv6 mask and IPv4 addr
+    for (var i = 0; i < result.length - 6; i++) {
+      result[i] = 0;
+    }
+
+    // ::ffff:ipv4
+    result[10] = 0xff;
+    result[11] = 0xff;
+    for (var i = 0; i < addr.length; i++) {
+      result[i + 12] = addr[i] & mask[i + 12];
+    }
+  }
+
+  return ip.toString(result);
+};
+
+ip.cidr = function cidr(cidrString) {
+  var cidrParts = cidrString.split('/');
+
+  if (cidrParts.length != 2)
+    throw new Error('invalid CIDR subnet: ' + addr);
+
+  var addr = cidrParts[0];
+  var mask = ip.fromPrefixLen(parseInt(cidrParts[1], 10));
+
+  return ip.mask(addr, mask);
+}
+
+ip.subnet = function subnet(addr, mask) {
+  var networkAddress = ip.toLong(ip.mask(addr, mask));
+
+  // Calculate the mask's length.
+  var maskBuffer = ip.toBuffer(mask);
+  var maskLength = 0;
+
+  for (var i = 0; i < maskBuffer.length; i++) {
+    if (maskBuffer[i] == 0xff) {
+      maskLength += 8;
+    } else {
+      var octet = maskBuffer[i] & 0xff;
+      while (octet) {
+        octet = (octet << 1) & 0xff;
+        maskLength++;
+      }
+    }
+  }
+
+  var numberOfAddresses = Math.pow(2, 32 - maskLength);
+
+  return {
+    networkAddress: ip.fromLong(networkAddress),
+    firstAddress: numberOfAddresses <= 2 ?
+                    ip.fromLong(networkAddress) :
+                    ip.fromLong(networkAddress + 1),
+    lastAddress: numberOfAddresses <= 2 ?
+                    ip.fromLong(networkAddress + numberOfAddresses - 1) :
+                    ip.fromLong(networkAddress + numberOfAddresses - 2),
+    broadcastAddress: ip.fromLong(networkAddress + numberOfAddresses - 1),
+    subnetMask: mask,
+    subnetMaskLength: maskLength,
+    numHosts: numberOfAddresses <= 2 ?
+                numberOfAddresses : numberOfAddresses - 2,
+    length: numberOfAddresses
+  };
+}
+
+ip.cidrSubnet = function cidrSubnet(cidrString) {
+  var cidrParts = cidrString.split('/');
+
+  if (cidrParts.length !== 2)
+    throw new Error('invalid CIDR subnet: ' + addr);
+
+  var addr = cidrParts[0];
+  var mask = ip.fromPrefixLen(parseInt(cidrParts[1], 10));
+
+  return ip.subnet(addr, mask);
+}
+
+ip.not = function not(addr) {
+  var buff = ip.toBuffer(addr);
+  for (var i = 0; i < buff.length; i++) {
+    buff[i] = 0xff ^ buff[i];
+  }
+  return ip.toString(buff);
+};
+
+ip.or = function or(a, b) {
+  a = ip.toBuffer(a);
+  b = ip.toBuffer(b);
+
+  // same protocol
+  if (a.length == b.length) {
+    for (var i = 0; i < a.length; ++i) {
+      a[i] |= b[i];
+    }
+    return ip.toString(a);
+
+  // mixed protocols
+  } else {
+    var buff = a;
+    var other = b;
+    if (b.length > a.length) {
+      buff = b;
+      other = a;
+    }
+
+    var offset = buff.length - other.length;
+    for (var i = offset; i < buff.length; ++i) {
+      buff[i] |= other[i - offset];
+    }
+
+    return ip.toString(buff);
+  }
+};
+
+ip.isEqual = function isEqual(a, b) {
+  a = ip.toBuffer(a);
+  b = ip.toBuffer(b);
+
+  // Same protocol
+  if (a.length === b.length) {
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] !== b[i]) return false;
+    }
+    return true;
+  }
+
+  // Swap
+  if (b.length === 4) {
+    var t = b;
+    b = a;
+    a = t;
+  }
+
+  // a - IPv4, b - IPv6
+  for (var i = 0; i < 10; i++) {
+    if (b[i] !== 0) return false;
+  }
+
+  var word = b.readUInt16BE(10);
+  if (word !== 0 && word !== 0xffff) return false;
+
+  for (var i = 0; i < 4; i++) {
+    if (a[i] !== b[i + 12]) return false;
+  }
+
+  return true;
+};
+
+ip.isPrivate = function isPrivate(addr) {
+  return addr.match(/^10\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})/) != null ||
+    addr.match(/^192\.168\.([0-9]{1,3})\.([0-9]{1,3})/) != null ||
+    addr.match(
+        /^172\.(1[6-9]|2\d|30|31)\.([0-9]{1,3})\.([0-9]{1,3})/) != null ||
+    addr.match(/^127\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})/) != null ||
+    addr.match(/^169\.254\.([0-9]{1,3})\.([0-9]{1,3})/) != null ||
+    addr.match(/^fc00:/) != null || addr.match(/^fe80:/) != null ||
+    addr.match(/^::1$/) != null || addr.match(/^::$/) != null;
+};
+
+ip.isPublic = function isPublic(addr) {
+  return !ip.isPrivate(addr);
+}
+
+ip.isLoopback = function isLoopback(addr) {
+  return /^127\.0\.0\.1$/.test(addr)
+    || /^fe80::1$/.test(addr)
+    || /^::1$/.test(addr)
+    || /^::$/.test(addr);
+};
+
+ip.loopback = function loopback(family) {
+  //
+  // Default to `ipv4`
+  //
+  family = _normalizeFamily(family);
+
+  if (family !== 'ipv4' && family !== 'ipv6') {
+    throw new Error('family must be ipv4 or ipv6');
+  }
+
+  return family === 'ipv4'
+    ? '127.0.0.1'
+    : 'fe80::1';
+};
+
+//
+// ### function address (name, family)
+// #### @name {string|'public'|'private'} **Optional** Name or security
+//      of the network interface.
+// #### @family {ipv4|ipv6} **Optional** IP family of the address (defaults
+//      to ipv4).
+//
+// Returns the address for the network interface on the current system with
+// the specified `name`:
+//   * String: First `family` address of the interface.
+//             If not found see `undefined`.
+//   * 'public': the first public ip address of family.
+//   * 'private': the first private ip address of family.
+//   * undefined: First address with `ipv4` or loopback addres `127.0.0.1`.
+//
+ip.address = function address(name, family) {
+  var interfaces = os.networkInterfaces(),
+      all;
+
+  //
+  // Default to `ipv4`
+  //
+  family = _normalizeFamily(family);
+
+  //
+  // If a specific network interface has been named,
+  // return the address.
+  //
+  if (name && !~['public', 'private'].indexOf(name)) {
+    return interfaces[name].filter(function (details) {
+      details.family = details.family.toLowerCase();
+      return details.family === family;
+    })[0].address;
+  }
+
+  var all = Object.keys(interfaces).map(function (nic) {
+    //
+    // Note: name will only be `public` or `private`
+    // when this is called.
+    //
+    var addresses = interfaces[nic].filter(function (details) {
+      details.family = details.family.toLowerCase();
+      if (details.family !== family || ip.isLoopback(details.address)) {
+        return false;
+      }
+      else if (!name) {
+        return true;
+      }
+
+      return name === 'public'
+        ? !ip.isPrivate(details.address)
+        : ip.isPrivate(details.address)
+    });
+
+    return addresses.length
+      ? addresses[0].address
+      : undefined;
+  }).filter(Boolean);
+
+  return !all.length
+    ? ip.loopback(family)
+    : all[0];
+};
+
+ip.toLong = function toInt(ip){
+  var ipl=0;
+  ip.split('.').forEach(function( octet ) {
+      ipl<<=8;
+      ipl+=parseInt(octet);
+  });
+  return(ipl >>>0);
+};
+
+ip.fromLong = function fromInt(ipl){
+  return ( (ipl>>>24) +'.' +
+      (ipl>>16 & 255) +'.' +
+      (ipl>>8 & 255) +'.' +
+      (ipl & 255) );
+};
+
+function _normalizeFamily(family) {
+  return family ? family.toLowerCase() : 'ipv4';
+}
+
+},{"buffer":47,"os":55}],43:[function(require,module,exports){
+module.exports={
+  "name": "node-ssdp",
+  "description": "A node.js SSDP client and server library.",
+  "keywords": [
+    "ssdp",
+    "multicast",
+    "media",
+    "device",
+    "upnp"
+  ],
+  "version": "2.5.1",
+  "author": {
+    "name": "Ilya Shaisultanov",
+    "email": "ilya.shaisultanov@gmail.com"
+  },
+  "dependencies": {
+    "ip": "^0.3.2",
+    "bunyan-pretty-colors": "~0.1.7",
+    "bunyan": "~1.4.0",
+    "bunyan-prettystream": "~0.1.3"
+  },
+  "optionalDependencies": {
+    "bunyan-prettystream": "~0.1.3",
+    "bunyan": "~1.4.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/diversario/node-ssdp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/diversario/node-ssdp/issues"
+  },
+  "main": "./index",
+  "engines": {
+    "node": ">=0.10.0"
+  },
+  "devDependencies": {
+    "chai": "^3.2.0",
+    "coveralls": "~2.11.2",
+    "istanbul": "~0.3.13",
+    "mocha": "~2.2.4",
+    "mocha-istanbul": "~0.2.0",
+    "sinon": "~1.14.1"
+  },
+  "scripts": {
+    "test": "make coveralls",
+    "coverage": "istanbul cover node_modules/.bin/_mocha -- test/lib --recursive"
+  },
+  "homepage": "https://github.com/diversario/node-ssdp#readme",
+  "directories": {
+    "example": "example",
+    "test": "test"
+  },
+  "license": "MIT",
+  "gitHead": "9e92d977c6da5604d84a14abd6c07dcc3c239dcb",
+  "readme": "[![Build Status](https://travis-ci.org/diversario/node-ssdp.svg?branch=master)](https://travis-ci.org/diversario/node-ssdp)\n[![Coverage Status](https://img.shields.io/coveralls/diversario/node-ssdp.svg)](https://coveralls.io/r/diversario/node-ssdp?branch=master)\n[![Dependency Status](https://gemnasium.com/diversario/node-ssdp.png)](https://gemnasium.com/diversario/node-ssdp)\n[![NPM version](https://badge.fury.io/js/node-ssdp.svg)](http://badge.fury.io/js/node-ssdp)\n[![Stories in Ready](https://badge.waffle.io/diversario/node-ssdp.png?label=ready&title=Ready)](https://waffle.io/diversario/node-ssdp)\n\n## Installation\n\n```sh\nnpm install node-ssdp\n```\n\nThere is another package called `ssdp` which is the original unmaintained version. Make sure to install `node-ssdp` instead.\n\n## Usage - Client\n\n```javascript\n    var Client = require('node-ssdp').Client\n      , client = new Client();\n\n    client.on('response', function (headers, statusCode, rinfo) {\n      console.log('Got a response to an m-search.');\n    });\n\n    // search for a service type\n    client.search('urn:schemas-upnp-org:service:ContentDirectory:1');\n\n    // Or get a list of all services on the network\n\n    client.search('ssdp:all');\n```\n\n## Usage - Server\n\n```javascript\n    var Server = require('node-ssdp').Server\n      , server = new Server()\n    ;\n\n    server.addUSN('upnp:rootdevice');\n    server.addUSN('urn:schemas-upnp-org:device:MediaServer:1');\n    server.addUSN('urn:schemas-upnp-org:service:ContentDirectory:1');\n    server.addUSN('urn:schemas-upnp-org:service:ConnectionManager:1');\n\n    server.on('advertise-alive', function (headers) {\n      // Expire old devices from your cache.\n      // Register advertising device somewhere (as designated in http headers heads)\n    });\n\n    server.on('advertise-bye', function (headers) {\n      // Remove specified device from cache.\n    });\n\n    // start the server\n    server.start();\n\n    process.on('exit', function(){\n      server.stop() // advertise shutting down and stop listening\n    })\n```\n\nTake a look at `example` directory as well to see examples or client and server.\n\n##Configuration\n`new SSDP([options, [socket]])`\n\nSSDP constructor accepts an optional configuration object and an optional initialized socket. At the moment, the following is supported:\n\n- `logLevel` _String_ Specifies log level to print. Possible values: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL`. If not explicitly set in options logging is disabled completely.\n- `logJSON` _Boolean_ Log JSON strings (using [bunyan](https://github.com/trentm/node-bunyan)). Default: `true`.\n- `ssdpSig` _String_ SSDP signature. Default: `node.js/NODE_VERSION UPnP/1.1 node-ssdp/PACKAGE_VERSION`\n- `ssdpIp` _String_ SSDP multicast group. Default: `239.255.255.250`.\n- `ssdpPort` _Number_ SSDP port. Default: `1900`\n- `ssdpTtl` _Number_ Multicast TTL. Default: `1`\n- `adInterval` _Number_ `advertise` event frequency (ms). Default: 10 sec.\n- `unicastHost` _String_ IP address or hostname of server where SSDP service is running. This is used in `HOST` header. Default: `0.0.0.0`.\n- `location` _String_ URL pointing to description of your service, or a function which returns that URL\n- `udn` _String_ Unique Device Name. Default: `uuid:f40c2981-7329-40b7-8b04-27f187aecfb5`.\n- `description` _String_ Path to description file. Default: `upnp/desc.php`.\n- `ttl` _Number_ Packet TTL. Default: `1800`.\n- `allowWildcards` _Boolean_ Accept wildcards (`*`) in `serviceTypes` of `M-SEARCH` packets, e.g. `usn:Belkin:device:**`. Default: `false`\n\n###Logging\nAside from `logLevel` configuration option you can set the level via an environment variable `LOG_LEVEL`, which overrides configuration.\n\nAt log levels `DEBUG` and `TRACE` module will print call source location.\n\nUse `bunyan` CLI tool to pretty-print JSON logs; running the module with pretty-print enabled is not recommended. \n\n# License\n\n(The MIT License)\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the 'Software'), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n\n[![Analytics](https://ga-beacon.appspot.com/UA-51511945-1/node-ssdp/README.md)](https://github.com/igrigorik/ga-beacon)\n",
+  "readmeFilename": "README.md",
+  "_id": "node-ssdp@2.5.1",
+  "_shasum": "921a17bdb728f4199663461c377a2516436179b4",
+  "_from": "git+https://github.com/No9/node-ssdp.git",
+  "_resolved": "git+https://github.com/No9/node-ssdp.git#9e92d977c6da5604d84a14abd6c07dcc3c239dcb"
+}
+
+},{}],44:[function(require,module,exports){
+chrome.app.runtime.onLaunched.addListener(function () { // eslint-disable-line
+  chrome.app.window.create('index.html', { // eslint-disable-line
+    'bounds': {
+      'width': 1000,
+      'height': 700
+    }
+  })
+})
+
+var http = require('http')
+var Server = require('node-ssdp').Server
+var Client = require('node-ssdp').Client
+
+http.createServer(function (req, res) {
+  res.writeHead(200, {'Content-Type': 'text/plain'})
+  res.end('Hello World\n')
+}).listen(3000, '127.0.0.1')
+console.log('Server running at http://127.0.0.1:3000/')
+
+var server = new Server()
+server.addUSN('upnp:rootdevice')
+server.addUSN('urn:schemas-upnp-org:device:MediaServer:1')
+server.addUSN('urn:schemas-upnp-org:service:ContentDirectory:1')
+server.addUSN('urn:schemas-upnp-org:service:ConnectionManager:1')
+
+server.on('advertise-alive', function (headers) {
+  console.log('advertise-alive', headers)
+  // Expire old devices from your cache.
+  // Register advertising device somewhere (as designated in http headers heads)
+})
+
+server.on('advertise-bye', function (headers) {
+  // Remove specified device from cache.
+})
+
+// start the server
+server.start()
+
+var client = new Client();
+
+    client.on('response', function (headers, statusCode, rinfo) {
+      console.log('Got a response to an m-search.');
+      console.log(headers)
+      console.log(statusCode)
+      console.log(rinfo)
+    });
+    client.search('urn:schemas-upnp-org:service:ContentDirectory:1')
+},{"http":"http","node-ssdp":34}],45:[function(require,module,exports){
 // http://wiki.commonjs.org/wiki/Unit_Testing/1.0
 //
 // THIS IS NOT TESTED NOR LIKELY TO WORK OUTSIDE V8!
@@ -359,9 +8245,9 @@ var objectKeys = Object.keys || function (obj) {
   return keys;
 };
 
-},{"util/":32}],2:[function(require,module,exports){
+},{"util/":77}],46:[function(require,module,exports){
 
-},{}],3:[function(require,module,exports){
+},{}],47:[function(require,module,exports){
 /*!
  * The buffer module from node.js, for the browser.
  *
@@ -378,7 +8264,6 @@ exports.SlowBuffer = SlowBuffer
 exports.INSPECT_MAX_BYTES = 50
 Buffer.poolSize = 8192 // not used by this implementation
 
-var kMaxLength = 0x3fffffff
 var rootParent = {}
 
 /**
@@ -389,32 +8274,45 @@ var rootParent = {}
  * Browsers that support typed arrays are IE 10+, Firefox 4+, Chrome 7+, Safari 5.1+,
  * Opera 11.6+, iOS 4.2+.
  *
+ * Due to various browser bugs, sometimes the Object implementation will be used even
+ * when the browser supports typed arrays.
+ *
  * Note:
  *
- * - Implementation must support adding new properties to `Uint8Array` instances.
- *   Firefox 4-29 lacked support, fixed in Firefox 30+.
- *   See: https://bugzilla.mozilla.org/show_bug.cgi?id=695438.
+ *   - Firefox 4-29 lacks support for adding new properties to `Uint8Array` instances,
+ *     See: https://bugzilla.mozilla.org/show_bug.cgi?id=695438.
  *
- *  - Chrome 9-10 is missing the `TypedArray.prototype.subarray` function.
+ *   - Safari 5-7 lacks support for changing the `Object.prototype.constructor` property
+ *     on objects.
  *
- *  - IE10 has a broken `TypedArray.prototype.subarray` function which returns arrays of
- *    incorrect length in some situations.
+ *   - Chrome 9-10 is missing the `TypedArray.prototype.subarray` function.
  *
- * We detect these buggy browsers and set `Buffer.TYPED_ARRAY_SUPPORT` to `false` so they will
- * get the Object implementation, which is slower but will work correctly.
+ *   - IE10 has a broken `TypedArray.prototype.subarray` function which returns arrays of
+ *     incorrect length in some situations.
+
+ * We detect these buggy browsers and set `Buffer.TYPED_ARRAY_SUPPORT` to `false` so they
+ * get the Object implementation, which is slower but behaves correctly.
  */
 Buffer.TYPED_ARRAY_SUPPORT = (function () {
+  function Bar () {}
   try {
-    var buf = new ArrayBuffer(0)
-    var arr = new Uint8Array(buf)
+    var arr = new Uint8Array(1)
     arr.foo = function () { return 42 }
+    arr.constructor = Bar
     return arr.foo() === 42 && // typed array instances can be augmented
+        arr.constructor === Bar && // constructor can be set
         typeof arr.subarray === 'function' && // chrome 9-10 lack `subarray`
-        new Uint8Array(1).subarray(1, 1).byteLength === 0 // ie10 has broken `subarray`
+        arr.subarray(1, 1).byteLength === 0 // ie10 has broken `subarray`
   } catch (e) {
     return false
   }
 })()
+
+function kMaxLength () {
+  return Buffer.TYPED_ARRAY_SUPPORT
+    ? 0x7fffffff
+    : 0x3fffffff
+}
 
 /**
  * Class: Buffer
@@ -482,8 +8380,13 @@ function fromObject (that, object) {
     throw new TypeError('must start with number, buffer, array or string')
   }
 
-  if (typeof ArrayBuffer !== 'undefined' && object.buffer instanceof ArrayBuffer) {
-    return fromTypedArray(that, object)
+  if (typeof ArrayBuffer !== 'undefined') {
+    if (object.buffer instanceof ArrayBuffer) {
+      return fromTypedArray(that, object)
+    }
+    if (object instanceof ArrayBuffer) {
+      return fromArrayBuffer(that, object)
+    }
   }
 
   if (object.length) return fromArrayLike(that, object)
@@ -516,6 +8419,18 @@ function fromTypedArray (that, array) {
   // of the old Buffer constructor.
   for (var i = 0; i < length; i += 1) {
     that[i] = array[i] & 255
+  }
+  return that
+}
+
+function fromArrayBuffer (that, array) {
+  if (Buffer.TYPED_ARRAY_SUPPORT) {
+    // Return an augmented `Uint8Array` instance, for best performance
+    array.byteLength
+    that = Buffer._augment(new Uint8Array(array))
+  } else {
+    // Fallback: Return an object instance of the Buffer class
+    that = fromTypedArray(that, new Uint8Array(array))
   }
   return that
 }
@@ -566,9 +8481,9 @@ function allocate (that, length) {
 function checked (length) {
   // Note: cannot use `length < kMaxLength` here because that fails when
   // length is NaN (which is otherwise coerced to zero.)
-  if (length >= kMaxLength) {
+  if (length >= kMaxLength()) {
     throw new RangeError('Attempt to allocate Buffer larger than maximum ' +
-                         'size: 0x' + kMaxLength.toString(16) + ' bytes')
+                         'size: 0x' + kMaxLength().toString(16) + ' bytes')
   }
   return length | 0
 }
@@ -637,8 +8552,6 @@ Buffer.concat = function concat (list, length) {
 
   if (list.length === 0) {
     return new Buffer(0)
-  } else if (list.length === 1) {
-    return list[0]
   }
 
   var i
@@ -660,29 +8573,38 @@ Buffer.concat = function concat (list, length) {
 }
 
 function byteLength (string, encoding) {
-  if (typeof string !== 'string') string = String(string)
+  if (typeof string !== 'string') string = '' + string
 
-  if (string.length === 0) return 0
+  var len = string.length
+  if (len === 0) return 0
 
-  switch (encoding || 'utf8') {
-    case 'ascii':
-    case 'binary':
-    case 'raw':
-      return string.length
-    case 'ucs2':
-    case 'ucs-2':
-    case 'utf16le':
-    case 'utf-16le':
-      return string.length * 2
-    case 'hex':
-      return string.length >>> 1
-    case 'utf8':
-    case 'utf-8':
-      return utf8ToBytes(string).length
-    case 'base64':
-      return base64ToBytes(string).length
-    default:
-      return string.length
+  // Use a for loop to avoid recursion
+  var loweredCase = false
+  for (;;) {
+    switch (encoding) {
+      case 'ascii':
+      case 'binary':
+      // Deprecated
+      case 'raw':
+      case 'raws':
+        return len
+      case 'utf8':
+      case 'utf-8':
+        return utf8ToBytes(string).length
+      case 'ucs2':
+      case 'ucs-2':
+      case 'utf16le':
+      case 'utf-16le':
+        return len * 2
+      case 'hex':
+        return len >>> 1
+      case 'base64':
+        return base64ToBytes(string).length
+      default:
+        if (loweredCase) return utf8ToBytes(string).length // assume utf8
+        encoding = ('' + encoding).toLowerCase()
+        loweredCase = true
+    }
   }
 }
 Buffer.byteLength = byteLength
@@ -691,8 +8613,7 @@ Buffer.byteLength = byteLength
 Buffer.prototype.length = undefined
 Buffer.prototype.parent = undefined
 
-// toString(encoding, start=0, end=buffer.length)
-Buffer.prototype.toString = function toString (encoding, start, end) {
+function slowToString (encoding, start, end) {
   var loweredCase = false
 
   start = start | 0
@@ -733,6 +8654,13 @@ Buffer.prototype.toString = function toString (encoding, start, end) {
         loweredCase = true
     }
   }
+}
+
+Buffer.prototype.toString = function toString () {
+  var length = this.length | 0
+  if (length === 0) return ''
+  if (arguments.length === 0) return utf8Slice(this, 0, length)
+  return slowToString.apply(this, arguments)
 }
 
 Buffer.prototype.equals = function equals (b) {
@@ -798,13 +8726,13 @@ Buffer.prototype.indexOf = function indexOf (val, byteOffset) {
   throw new TypeError('val must be string, number or Buffer')
 }
 
-// `get` will be removed in Node 0.13+
+// `get` is deprecated
 Buffer.prototype.get = function get (offset) {
   console.log('.get() is deprecated. Access using array indexes instead.')
   return this.readUInt8(offset)
 }
 
-// `set` will be removed in Node 0.13+
+// `set` is deprecated
 Buffer.prototype.set = function set (v, offset) {
   console.log('.set() is deprecated. Access using array indexes instead.')
   return this.writeUInt8(v, offset)
@@ -945,20 +8873,99 @@ function base64Slice (buf, start, end) {
 }
 
 function utf8Slice (buf, start, end) {
-  var res = ''
-  var tmp = ''
   end = Math.min(buf.length, end)
+  var res = []
 
-  for (var i = start; i < end; i++) {
-    if (buf[i] <= 0x7F) {
-      res += decodeUtf8Char(tmp) + String.fromCharCode(buf[i])
-      tmp = ''
-    } else {
-      tmp += '%' + buf[i].toString(16)
+  var i = start
+  while (i < end) {
+    var firstByte = buf[i]
+    var codePoint = null
+    var bytesPerSequence = (firstByte > 0xEF) ? 4
+      : (firstByte > 0xDF) ? 3
+      : (firstByte > 0xBF) ? 2
+      : 1
+
+    if (i + bytesPerSequence <= end) {
+      var secondByte, thirdByte, fourthByte, tempCodePoint
+
+      switch (bytesPerSequence) {
+        case 1:
+          if (firstByte < 0x80) {
+            codePoint = firstByte
+          }
+          break
+        case 2:
+          secondByte = buf[i + 1]
+          if ((secondByte & 0xC0) === 0x80) {
+            tempCodePoint = (firstByte & 0x1F) << 0x6 | (secondByte & 0x3F)
+            if (tempCodePoint > 0x7F) {
+              codePoint = tempCodePoint
+            }
+          }
+          break
+        case 3:
+          secondByte = buf[i + 1]
+          thirdByte = buf[i + 2]
+          if ((secondByte & 0xC0) === 0x80 && (thirdByte & 0xC0) === 0x80) {
+            tempCodePoint = (firstByte & 0xF) << 0xC | (secondByte & 0x3F) << 0x6 | (thirdByte & 0x3F)
+            if (tempCodePoint > 0x7FF && (tempCodePoint < 0xD800 || tempCodePoint > 0xDFFF)) {
+              codePoint = tempCodePoint
+            }
+          }
+          break
+        case 4:
+          secondByte = buf[i + 1]
+          thirdByte = buf[i + 2]
+          fourthByte = buf[i + 3]
+          if ((secondByte & 0xC0) === 0x80 && (thirdByte & 0xC0) === 0x80 && (fourthByte & 0xC0) === 0x80) {
+            tempCodePoint = (firstByte & 0xF) << 0x12 | (secondByte & 0x3F) << 0xC | (thirdByte & 0x3F) << 0x6 | (fourthByte & 0x3F)
+            if (tempCodePoint > 0xFFFF && tempCodePoint < 0x110000) {
+              codePoint = tempCodePoint
+            }
+          }
+      }
     }
+
+    if (codePoint === null) {
+      // we did not generate a valid codePoint so insert a
+      // replacement char (U+FFFD) and advance only 1 byte
+      codePoint = 0xFFFD
+      bytesPerSequence = 1
+    } else if (codePoint > 0xFFFF) {
+      // encode to utf16 (surrogate pair dance)
+      codePoint -= 0x10000
+      res.push(codePoint >>> 10 & 0x3FF | 0xD800)
+      codePoint = 0xDC00 | codePoint & 0x3FF
+    }
+
+    res.push(codePoint)
+    i += bytesPerSequence
   }
 
-  return res + decodeUtf8Char(tmp)
+  return decodeCodePointsArray(res)
+}
+
+// Based on http://stackoverflow.com/a/22747272/680742, the browser with
+// the lowest limit is Chrome, with 0x10000 args.
+// We go 1 magnitude less, for safety
+var MAX_ARGUMENTS_LENGTH = 0x1000
+
+function decodeCodePointsArray (codePoints) {
+  var len = codePoints.length
+  if (len <= MAX_ARGUMENTS_LENGTH) {
+    return String.fromCharCode.apply(String, codePoints) // avoid extra slice()
+  }
+
+  // Decode in chunks to avoid "call stack size exceeded".
+  var res = ''
+  var i = 0
+  while (i < len) {
+    res += String.fromCharCode.apply(
+      String,
+      codePoints.slice(i, i += MAX_ARGUMENTS_LENGTH)
+    )
+  }
+  return res
 }
 
 function asciiSlice (buf, start, end) {
@@ -1493,9 +9500,16 @@ Buffer.prototype.copy = function copy (target, targetStart, start, end) {
   }
 
   var len = end - start
+  var i
 
-  if (len < 1000 || !Buffer.TYPED_ARRAY_SUPPORT) {
-    for (var i = 0; i < len; i++) {
+  if (this === target && start < targetStart && targetStart < end) {
+    // descending copy from end
+    for (i = len - 1; i >= 0; i--) {
+      target[i + targetStart] = this[i + start]
+    }
+  } else if (len < 1000 || !Buffer.TYPED_ARRAY_SUPPORT) {
+    // ascending copy from start
+    for (i = 0; i < len; i++) {
       target[i + targetStart] = this[i + start]
     }
   } else {
@@ -1571,7 +9585,7 @@ Buffer._augment = function _augment (arr) {
   // save reference to original Uint8Array set method before overwriting
   arr._set = arr.set
 
-  // deprecated, will be removed in node 0.13+
+  // deprecated
   arr.get = BP.get
   arr.set = BP.set
 
@@ -1627,7 +9641,7 @@ Buffer._augment = function _augment (arr) {
   return arr
 }
 
-var INVALID_BASE64_RE = /[^+\/0-9A-z\-]/g
+var INVALID_BASE64_RE = /[^+\/0-9A-Za-z-_]/g
 
 function base64clean (str) {
   // Node strips out invalid characters like \n and \t from the string, base64-js does not
@@ -1657,28 +9671,15 @@ function utf8ToBytes (string, units) {
   var length = string.length
   var leadSurrogate = null
   var bytes = []
-  var i = 0
 
-  for (; i < length; i++) {
+  for (var i = 0; i < length; i++) {
     codePoint = string.charCodeAt(i)
 
     // is surrogate component
     if (codePoint > 0xD7FF && codePoint < 0xE000) {
       // last char was a lead
-      if (leadSurrogate) {
-        // 2 leads in a row
-        if (codePoint < 0xDC00) {
-          if ((units -= 3) > -1) bytes.push(0xEF, 0xBF, 0xBD)
-          leadSurrogate = codePoint
-          continue
-        } else {
-          // valid surrogate pair
-          codePoint = leadSurrogate - 0xD800 << 10 | codePoint - 0xDC00 | 0x10000
-          leadSurrogate = null
-        }
-      } else {
+      if (!leadSurrogate) {
         // no lead yet
-
         if (codePoint > 0xDBFF) {
           // unexpected trail
           if ((units -= 3) > -1) bytes.push(0xEF, 0xBF, 0xBD)
@@ -1687,17 +9688,29 @@ function utf8ToBytes (string, units) {
           // unpaired lead
           if ((units -= 3) > -1) bytes.push(0xEF, 0xBF, 0xBD)
           continue
-        } else {
-          // valid lead
-          leadSurrogate = codePoint
-          continue
         }
+
+        // valid lead
+        leadSurrogate = codePoint
+
+        continue
       }
+
+      // 2 leads in a row
+      if (codePoint < 0xDC00) {
+        if ((units -= 3) > -1) bytes.push(0xEF, 0xBF, 0xBD)
+        leadSurrogate = codePoint
+        continue
+      }
+
+      // valid surrogate pair
+      codePoint = leadSurrogate - 0xD800 << 10 | codePoint - 0xDC00 | 0x10000
     } else if (leadSurrogate) {
       // valid bmp char, but last char was a lead
       if ((units -= 3) > -1) bytes.push(0xEF, 0xBF, 0xBD)
-      leadSurrogate = null
     }
+
+    leadSurrogate = null
 
     // encode utf8
     if (codePoint < 0x80) {
@@ -1716,7 +9729,7 @@ function utf8ToBytes (string, units) {
         codePoint >> 0x6 & 0x3F | 0x80,
         codePoint & 0x3F | 0x80
       )
-    } else if (codePoint < 0x200000) {
+    } else if (codePoint < 0x110000) {
       if ((units -= 4) < 0) break
       bytes.push(
         codePoint >> 0x12 | 0xF0,
@@ -1769,15 +9782,7 @@ function blitBuffer (src, dst, offset, length) {
   return i
 }
 
-function decodeUtf8Char (str) {
-  try {
-    return decodeURIComponent(str)
-  } catch (err) {
-    return String.fromCharCode(0xFFFD) // UTF 8 invalid char
-  }
-}
-
-},{"base64-js":4,"ieee754":5,"is-array":6}],4:[function(require,module,exports){
+},{"base64-js":48,"ieee754":49,"is-array":50}],48:[function(require,module,exports){
 var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 ;(function (exports) {
@@ -1903,16 +9908,16 @@ var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 	exports.fromByteArray = uint8ToBase64
 }(typeof exports === 'undefined' ? (this.base64js = {}) : exports))
 
-},{}],5:[function(require,module,exports){
+},{}],49:[function(require,module,exports){
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
-  var e, m,
-      eLen = nBytes * 8 - mLen - 1,
-      eMax = (1 << eLen) - 1,
-      eBias = eMax >> 1,
-      nBits = -7,
-      i = isLE ? (nBytes - 1) : 0,
-      d = isLE ? -1 : 1,
-      s = buffer[offset + i]
+  var e, m
+  var eLen = nBytes * 8 - mLen - 1
+  var eMax = (1 << eLen) - 1
+  var eBias = eMax >> 1
+  var nBits = -7
+  var i = isLE ? (nBytes - 1) : 0
+  var d = isLE ? -1 : 1
+  var s = buffer[offset + i]
 
   i += d
 
@@ -1938,14 +9943,14 @@ exports.read = function (buffer, offset, isLE, mLen, nBytes) {
 }
 
 exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
-  var e, m, c,
-      eLen = nBytes * 8 - mLen - 1,
-      eMax = (1 << eLen) - 1,
-      eBias = eMax >> 1,
-      rt = (mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0),
-      i = isLE ? 0 : (nBytes - 1),
-      d = isLE ? 1 : -1,
-      s = value < 0 || (value === 0 && 1 / value < 0) ? 1 : 0
+  var e, m, c
+  var eLen = nBytes * 8 - mLen - 1
+  var eMax = (1 << eLen) - 1
+  var eBias = eMax >> 1
+  var rt = (mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0)
+  var i = isLE ? 0 : (nBytes - 1)
+  var d = isLE ? 1 : -1
+  var s = value < 0 || (value === 0 && 1 / value < 0) ? 1 : 0
 
   value = Math.abs(value)
 
@@ -1989,7 +9994,7 @@ exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
   buffer[offset + i - d] |= s * 128
 }
 
-},{}],6:[function(require,module,exports){
+},{}],50:[function(require,module,exports){
 
 /**
  * isArray
@@ -2024,7 +10029,7 @@ module.exports = isArray || function (val) {
   return !! val && '[object Array]' == str.call(val);
 };
 
-},{}],7:[function(require,module,exports){
+},{}],51:[function(require,module,exports){
 module.exports={
   "O_RDONLY": 0,
   "O_WRONLY": 1,
@@ -2204,7 +10209,7 @@ module.exports={
   "NPN_ENABLED": 1
 }
 
-},{}],8:[function(require,module,exports){
+},{}],52:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -2507,37 +10512,61 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],9:[function(require,module,exports){
-if (typeof Object.create === 'function') {
-  // implementation from standard node.js 'util' module
-  module.exports = function inherits(ctor, superCtor) {
-    ctor.super_ = superCtor
-    ctor.prototype = Object.create(superCtor.prototype, {
-      constructor: {
-        value: ctor,
-        enumerable: false,
-        writable: true,
-        configurable: true
-      }
-    });
-  };
-} else {
-  // old school shim for old browsers
-  module.exports = function inherits(ctor, superCtor) {
-    ctor.super_ = superCtor
-    var TempCtor = function () {}
-    TempCtor.prototype = superCtor.prototype
-    ctor.prototype = new TempCtor()
-    ctor.prototype.constructor = ctor
-  }
-}
-
-},{}],10:[function(require,module,exports){
+},{}],53:[function(require,module,exports){
+arguments[4][7][0].apply(exports,arguments)
+},{"dup":7}],54:[function(require,module,exports){
 module.exports = Array.isArray || function (arr) {
   return Object.prototype.toString.call(arr) == '[object Array]';
 };
 
-},{}],11:[function(require,module,exports){
+},{}],55:[function(require,module,exports){
+exports.endianness = function () { return 'LE' };
+
+exports.hostname = function () {
+    if (typeof location !== 'undefined') {
+        return location.hostname
+    }
+    else return '';
+};
+
+exports.loadavg = function () { return [] };
+
+exports.uptime = function () { return 0 };
+
+exports.freemem = function () {
+    return Number.MAX_VALUE;
+};
+
+exports.totalmem = function () {
+    return Number.MAX_VALUE;
+};
+
+exports.cpus = function () { return [] };
+
+exports.type = function () { return 'Browser' };
+
+exports.release = function () {
+    if (typeof navigator !== 'undefined') {
+        return navigator.appVersion;
+    }
+    return '';
+};
+
+exports.networkInterfaces
+= exports.getNetworkInterfaces
+= function () { return {} };
+
+exports.arch = function () { return 'javascript' };
+
+exports.platform = function () { return 'browser' };
+
+exports.tmpdir = exports.tmpDir = function () {
+    return '/tmp';
+};
+
+exports.EOL = '\n';
+
+},{}],56:[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -2629,7 +10658,7 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],12:[function(require,module,exports){
+},{}],57:[function(require,module,exports){
 (function (global){
 /*! https://mths.be/punycode v1.3.2 by @mathias */
 ;(function(root) {
@@ -3163,7 +11192,7 @@ process.umask = function() { return 0; };
 }(this));
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],13:[function(require,module,exports){
+},{}],58:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -3249,7 +11278,7 @@ var isArray = Array.isArray || function (xs) {
   return Object.prototype.toString.call(xs) === '[object Array]';
 };
 
-},{}],14:[function(require,module,exports){
+},{}],59:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -3336,16 +11365,16 @@ var objectKeys = Object.keys || function (obj) {
   return res;
 };
 
-},{}],15:[function(require,module,exports){
+},{}],60:[function(require,module,exports){
 'use strict';
 
 exports.decode = exports.parse = require('./decode');
 exports.encode = exports.stringify = require('./encode');
 
-},{"./decode":13,"./encode":14}],16:[function(require,module,exports){
+},{"./decode":58,"./encode":59}],61:[function(require,module,exports){
 module.exports = require("./lib/_stream_duplex.js")
 
-},{"./lib/_stream_duplex.js":17}],17:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":62}],62:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -3438,7 +11467,7 @@ function forEach (xs, f) {
 }
 
 }).call(this,require('_process'))
-},{"./_stream_readable":19,"./_stream_writable":21,"_process":11,"core-util-is":22,"inherits":9}],18:[function(require,module,exports){
+},{"./_stream_readable":64,"./_stream_writable":66,"_process":56,"core-util-is":67,"inherits":53}],63:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -3486,7 +11515,7 @@ PassThrough.prototype._transform = function(chunk, encoding, cb) {
   cb(null, chunk);
 };
 
-},{"./_stream_transform":20,"core-util-is":22,"inherits":9}],19:[function(require,module,exports){
+},{"./_stream_transform":65,"core-util-is":67,"inherits":53}],64:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -4441,7 +12470,7 @@ function indexOf (xs, x) {
 }
 
 }).call(this,require('_process'))
-},{"./_stream_duplex":17,"_process":11,"buffer":3,"core-util-is":22,"events":8,"inherits":9,"isarray":10,"stream":27,"string_decoder/":28,"util":2}],20:[function(require,module,exports){
+},{"./_stream_duplex":62,"_process":56,"buffer":47,"core-util-is":67,"events":52,"inherits":53,"isarray":54,"stream":72,"string_decoder/":73,"util":46}],65:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -4652,7 +12681,7 @@ function done(stream, er) {
   return stream.push(null);
 }
 
-},{"./_stream_duplex":17,"core-util-is":22,"inherits":9}],21:[function(require,module,exports){
+},{"./_stream_duplex":62,"core-util-is":67,"inherits":53}],66:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -5133,120 +13162,12 @@ function endWritable(stream, state, cb) {
 }
 
 }).call(this,require('_process'))
-},{"./_stream_duplex":17,"_process":11,"buffer":3,"core-util-is":22,"inherits":9,"stream":27}],22:[function(require,module,exports){
-(function (Buffer){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-// NOTE: These type checking functions intentionally don't use `instanceof`
-// because it is fragile and can be easily faked with `Object.create()`.
-function isArray(ar) {
-  return Array.isArray(ar);
-}
-exports.isArray = isArray;
-
-function isBoolean(arg) {
-  return typeof arg === 'boolean';
-}
-exports.isBoolean = isBoolean;
-
-function isNull(arg) {
-  return arg === null;
-}
-exports.isNull = isNull;
-
-function isNullOrUndefined(arg) {
-  return arg == null;
-}
-exports.isNullOrUndefined = isNullOrUndefined;
-
-function isNumber(arg) {
-  return typeof arg === 'number';
-}
-exports.isNumber = isNumber;
-
-function isString(arg) {
-  return typeof arg === 'string';
-}
-exports.isString = isString;
-
-function isSymbol(arg) {
-  return typeof arg === 'symbol';
-}
-exports.isSymbol = isSymbol;
-
-function isUndefined(arg) {
-  return arg === void 0;
-}
-exports.isUndefined = isUndefined;
-
-function isRegExp(re) {
-  return isObject(re) && objectToString(re) === '[object RegExp]';
-}
-exports.isRegExp = isRegExp;
-
-function isObject(arg) {
-  return typeof arg === 'object' && arg !== null;
-}
-exports.isObject = isObject;
-
-function isDate(d) {
-  return isObject(d) && objectToString(d) === '[object Date]';
-}
-exports.isDate = isDate;
-
-function isError(e) {
-  return isObject(e) &&
-      (objectToString(e) === '[object Error]' || e instanceof Error);
-}
-exports.isError = isError;
-
-function isFunction(arg) {
-  return typeof arg === 'function';
-}
-exports.isFunction = isFunction;
-
-function isPrimitive(arg) {
-  return arg === null ||
-         typeof arg === 'boolean' ||
-         typeof arg === 'number' ||
-         typeof arg === 'string' ||
-         typeof arg === 'symbol' ||  // ES6 symbol
-         typeof arg === 'undefined';
-}
-exports.isPrimitive = isPrimitive;
-
-function isBuffer(arg) {
-  return Buffer.isBuffer(arg);
-}
-exports.isBuffer = isBuffer;
-
-function objectToString(o) {
-  return Object.prototype.toString.call(o);
-}
-}).call(this,require("buffer").Buffer)
-},{"buffer":3}],23:[function(require,module,exports){
+},{"./_stream_duplex":62,"_process":56,"buffer":47,"core-util-is":67,"inherits":53,"stream":72}],67:[function(require,module,exports){
+arguments[4][24][0].apply(exports,arguments)
+},{"buffer":47,"dup":24}],68:[function(require,module,exports){
 module.exports = require("./lib/_stream_passthrough.js")
 
-},{"./lib/_stream_passthrough.js":18}],24:[function(require,module,exports){
+},{"./lib/_stream_passthrough.js":63}],69:[function(require,module,exports){
 exports = module.exports = require('./lib/_stream_readable.js');
 exports.Stream = require('stream');
 exports.Readable = exports;
@@ -5255,13 +13176,13 @@ exports.Duplex = require('./lib/_stream_duplex.js');
 exports.Transform = require('./lib/_stream_transform.js');
 exports.PassThrough = require('./lib/_stream_passthrough.js');
 
-},{"./lib/_stream_duplex.js":17,"./lib/_stream_passthrough.js":18,"./lib/_stream_readable.js":19,"./lib/_stream_transform.js":20,"./lib/_stream_writable.js":21,"stream":27}],25:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":62,"./lib/_stream_passthrough.js":63,"./lib/_stream_readable.js":64,"./lib/_stream_transform.js":65,"./lib/_stream_writable.js":66,"stream":72}],70:[function(require,module,exports){
 module.exports = require("./lib/_stream_transform.js")
 
-},{"./lib/_stream_transform.js":20}],26:[function(require,module,exports){
+},{"./lib/_stream_transform.js":65}],71:[function(require,module,exports){
 module.exports = require("./lib/_stream_writable.js")
 
-},{"./lib/_stream_writable.js":21}],27:[function(require,module,exports){
+},{"./lib/_stream_writable.js":66}],72:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -5390,7 +13311,7 @@ Stream.prototype.pipe = function(dest, options) {
   return dest;
 };
 
-},{"events":8,"inherits":9,"readable-stream/duplex.js":16,"readable-stream/passthrough.js":23,"readable-stream/readable.js":24,"readable-stream/transform.js":25,"readable-stream/writable.js":26}],28:[function(require,module,exports){
+},{"events":52,"inherits":53,"readable-stream/duplex.js":61,"readable-stream/passthrough.js":68,"readable-stream/readable.js":69,"readable-stream/transform.js":70,"readable-stream/writable.js":71}],73:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -5613,7 +13534,7 @@ function base64DetectIncompleteChar(buffer) {
   this.charLength = this.charReceived ? 3 : 0;
 }
 
-},{"buffer":3}],29:[function(require,module,exports){
+},{"buffer":47}],74:[function(require,module,exports){
 var nextTick = require('process/browser.js').nextTick;
 var apply = Function.prototype.apply;
 var slice = Array.prototype.slice;
@@ -5690,7 +13611,7 @@ exports.setImmediate = typeof setImmediate === "function" ? setImmediate : funct
 exports.clearImmediate = typeof clearImmediate === "function" ? clearImmediate : function(id) {
   delete immediateIds[id];
 };
-},{"process/browser.js":11}],30:[function(require,module,exports){
+},{"process/browser.js":56}],75:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -6399,14 +14320,14 @@ function isNullOrUndefined(arg) {
   return  arg == null;
 }
 
-},{"punycode":12,"querystring":15}],31:[function(require,module,exports){
+},{"punycode":57,"querystring":60}],76:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],32:[function(require,module,exports){
+},{}],77:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -6996,5321 +14917,7 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":31,"_process":11,"inherits":9}],33:[function(require,module,exports){
-
-/**
- * This is the common logic for both the Node.js and web browser
- * implementations of `debug()`.
- *
- * Expose `debug()` as the module.
- */
-
-exports = module.exports = debug;
-exports.coerce = coerce;
-exports.disable = disable;
-exports.enable = enable;
-exports.enabled = enabled;
-exports.humanize = require('ms');
-
-/**
- * The currently active debug mode names, and names to skip.
- */
-
-exports.names = [];
-exports.skips = [];
-
-/**
- * Map of special "%n" handling functions, for the debug "format" argument.
- *
- * Valid key names are a single, lowercased letter, i.e. "n".
- */
-
-exports.formatters = {};
-
-/**
- * Previously assigned color.
- */
-
-var prevColor = 0;
-
-/**
- * Previous log timestamp.
- */
-
-var prevTime;
-
-/**
- * Select a color.
- *
- * @return {Number}
- * @api private
- */
-
-function selectColor() {
-  return exports.colors[prevColor++ % exports.colors.length];
-}
-
-/**
- * Create a debugger with the given `namespace`.
- *
- * @param {String} namespace
- * @return {Function}
- * @api public
- */
-
-function debug(namespace) {
-
-  // define the `disabled` version
-  function disabled() {
-  }
-  disabled.enabled = false;
-
-  // define the `enabled` version
-  function enabled() {
-
-    var self = enabled;
-
-    // set `diff` timestamp
-    var curr = +new Date();
-    var ms = curr - (prevTime || curr);
-    self.diff = ms;
-    self.prev = prevTime;
-    self.curr = curr;
-    prevTime = curr;
-
-    // add the `color` if not set
-    if (null == self.useColors) self.useColors = exports.useColors();
-    if (null == self.color && self.useColors) self.color = selectColor();
-
-    var args = Array.prototype.slice.call(arguments);
-
-    args[0] = exports.coerce(args[0]);
-
-    if ('string' !== typeof args[0]) {
-      // anything else let's inspect with %o
-      args = ['%o'].concat(args);
-    }
-
-    // apply any `formatters` transformations
-    var index = 0;
-    args[0] = args[0].replace(/%([a-z%])/g, function(match, format) {
-      // if we encounter an escaped % then don't increase the array index
-      if (match === '%%') return match;
-      index++;
-      var formatter = exports.formatters[format];
-      if ('function' === typeof formatter) {
-        var val = args[index];
-        match = formatter.call(self, val);
-
-        // now we need to remove `args[index]` since it's inlined in the `format`
-        args.splice(index, 1);
-        index--;
-      }
-      return match;
-    });
-
-    if ('function' === typeof exports.formatArgs) {
-      args = exports.formatArgs.apply(self, args);
-    }
-    var logFn = console.log.bind(console);
-    logFn.apply(self, args);
-  }
-  enabled.enabled = true;
-
-  var fn = exports.enabled(namespace) ? enabled : disabled;
-
-  fn.namespace = namespace;
-
-  return fn;
-}
-
-/**
- * Enables a debug mode by namespaces. This can include modes
- * separated by a colon and wildcards.
- *
- * @param {String} namespaces
- * @api public
- */
-
-function enable(namespaces) {
-  exports.save(namespaces);
-
-  var split = (namespaces || '').split(/[\s,]+/);
-  var len = split.length;
-
-  for (var i = 0; i < len; i++) {
-    if (!split[i]) continue; // ignore empty strings
-    namespaces = split[i].replace(/\*/g, '.*?');
-    if (namespaces[0] === '-') {
-      exports.skips.push(new RegExp('^' + namespaces.substr(1) + '$'));
-    } else {
-      exports.names.push(new RegExp('^' + namespaces + '$'));
-    }
-  }
-}
-
-/**
- * Disable debug output.
- *
- * @api public
- */
-
-function disable() {
-  exports.enable('');
-}
-
-/**
- * Returns true if the given mode name is enabled, false otherwise.
- *
- * @param {String} name
- * @return {Boolean}
- * @api public
- */
-
-function enabled(name) {
-  var i, len;
-  for (i = 0, len = exports.skips.length; i < len; i++) {
-    if (exports.skips[i].test(name)) {
-      return false;
-    }
-  }
-  for (i = 0, len = exports.names.length; i < len; i++) {
-    if (exports.names[i].test(name)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Coerce `val`.
- *
- * @param {Mixed} val
- * @return {Mixed}
- * @api private
- */
-
-function coerce(val) {
-  if (val instanceof Error) return val.stack || val.message;
-  return val;
-}
-
-},{"ms":35}],34:[function(require,module,exports){
-(function(root) {
-  var localStorageMemory = {};
-  var cache = {};
-
-  /**
-   * number of stored items.
-   */
-  localStorageMemory.length = 0;
-
-  /**
-   * returns item for passed key, or null
-   *
-   * @para {String} key
-   *       name of item to be returned
-   * @returns {String|null}
-   */
-  localStorageMemory.getItem = function(key) {
-    return cache[key] || null;
-  };
-
-  /**
-   * sets item for key to passed value, as String
-   *
-   * @para {String} key
-   *       name of item to be set
-   * @para {String} value
-   *       value, will always be turned into a String
-   * @returns {undefined}
-   */
-  localStorageMemory.setItem = function(key, value) {
-    if (typeof value === 'undefined') {
-      localStorageMemory.removeItem(key);
-    } else {
-      cache[key] = '' + value;
-      localStorageMemory.length++;
-    }
-  };
-
-  /**
-   * removes item for passed key
-   *
-   * @para {String} key
-   *       name of item to be removed
-   * @returns {undefined}
-   */
-  localStorageMemory.removeItem = function(key) {
-    delete cache[key];
-    localStorageMemory.length--;
-  };
-
-  /**
-   * returns name of key at passed index
-   *
-   * @para {Number} index
-   *       Position for key to be returned (starts at 0)
-   * @returns {String|null}
-   */
-  localStorageMemory.key = function(index) {
-    return Object.keys(cache)[index] || null;
-  };
-
-  /**
-   * removes all stored items and sets length to 0
-   *
-   * @returns {undefined}
-   */
-  localStorageMemory.clear = function() {
-    cache = {};
-    localStorageMemory.length = 0;
-  };
-
-  if (typeof exports === 'object') {
-    module.exports = localStorageMemory;
-  } else {
-    root.localStorageMemory = localStorageMemory;
-  }
-})(this);
-
-
-
-},{}],35:[function(require,module,exports){
-/**
- * Helpers.
- */
-
-var s = 1000;
-var m = s * 60;
-var h = m * 60;
-var d = h * 24;
-var y = d * 365.25;
-
-/**
- * Parse or format the given `val`.
- *
- * Options:
- *
- *  - `long` verbose formatting [false]
- *
- * @param {String|Number} val
- * @param {Object} options
- * @return {String|Number}
- * @api public
- */
-
-module.exports = function(val, options){
-  options = options || {};
-  if ('string' == typeof val) return parse(val);
-  return options.long
-    ? long(val)
-    : short(val);
-};
-
-/**
- * Parse the given `str` and return milliseconds.
- *
- * @param {String} str
- * @return {Number}
- * @api private
- */
-
-function parse(str) {
-  str = '' + str;
-  if (str.length > 10000) return;
-  var match = /^((?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|years?|yrs?|y)?$/i.exec(str);
-  if (!match) return;
-  var n = parseFloat(match[1]);
-  var type = (match[2] || 'ms').toLowerCase();
-  switch (type) {
-    case 'years':
-    case 'year':
-    case 'yrs':
-    case 'yr':
-    case 'y':
-      return n * y;
-    case 'days':
-    case 'day':
-    case 'd':
-      return n * d;
-    case 'hours':
-    case 'hour':
-    case 'hrs':
-    case 'hr':
-    case 'h':
-      return n * h;
-    case 'minutes':
-    case 'minute':
-    case 'mins':
-    case 'min':
-    case 'm':
-      return n * m;
-    case 'seconds':
-    case 'second':
-    case 'secs':
-    case 'sec':
-    case 's':
-      return n * s;
-    case 'milliseconds':
-    case 'millisecond':
-    case 'msecs':
-    case 'msec':
-    case 'ms':
-      return n;
-  }
-}
-
-/**
- * Short format for `ms`.
- *
- * @param {Number} ms
- * @return {String}
- * @api private
- */
-
-function short(ms) {
-  if (ms >= d) return Math.round(ms / d) + 'd';
-  if (ms >= h) return Math.round(ms / h) + 'h';
-  if (ms >= m) return Math.round(ms / m) + 'm';
-  if (ms >= s) return Math.round(ms / s) + 's';
-  return ms + 'ms';
-}
-
-/**
- * Long format for `ms`.
- *
- * @param {Number} ms
- * @return {String}
- * @api private
- */
-
-function long(ms) {
-  return plural(ms, d, 'day')
-    || plural(ms, h, 'hour')
-    || plural(ms, m, 'minute')
-    || plural(ms, s, 'second')
-    || ms + ' ms';
-}
-
-/**
- * Pluralization helper.
- */
-
-function plural(ms, n, name) {
-  if (ms < n) return;
-  if (ms < n * 1.5) return Math.floor(ms / n) + ' ' + name;
-  return Math.ceil(ms / n) + ' ' + name + 's';
-}
-
-},{}],36:[function(require,module,exports){
-(function (Buffer){
-/*!
- * depd
- * Copyright(c) 2014 Douglas Christopher Wilson
- * MIT Licensed
- */
-
-/**
- * Module exports.
- */
-
-module.exports = bufferConcat
-
-/**
- * Concatenate an array of Buffers.
- */
-
-function bufferConcat(bufs) {
-  var length = 0
-
-  for (var i = 0, len = bufs.length; i < len; i++) {
-    length += bufs[i].length
-  }
-
-  var buf = new Buffer(length)
-  var pos = 0
-
-  for (var i = 0, len = bufs.length; i < len; i++) {
-    bufs[i].copy(buf, pos)
-    pos += bufs[i].length
-  }
-
-  return buf
-}
-
-}).call(this,require("buffer").Buffer)
-},{"buffer":3}],37:[function(require,module,exports){
-/*!
- * depd
- * Copyright(c) 2014 Douglas Christopher Wilson
- * MIT Licensed
- */
-
-/**
- * Module exports.
- */
-
-module.exports = callSiteToString
-
-/**
- * Format a CallSite file location to a string.
- */
-
-function callSiteFileLocation(callSite) {
-  var fileName
-  var fileLocation = ''
-
-  if (callSite.isNative()) {
-    fileLocation = 'native'
-  } else if (callSite.isEval()) {
-    fileName = callSite.getScriptNameOrSourceURL()
-    if (!fileName) {
-      fileLocation = callSite.getEvalOrigin()
-    }
-  } else {
-    fileName = callSite.getFileName()
-  }
-
-  if (fileName) {
-    fileLocation += fileName
-
-    var lineNumber = callSite.getLineNumber()
-    if (lineNumber != null) {
-      fileLocation += ':' + lineNumber
-
-      var columnNumber = callSite.getColumnNumber()
-      if (columnNumber) {
-        fileLocation += ':' + columnNumber
-      }
-    }
-  }
-
-  return fileLocation || 'unknown source'
-}
-
-/**
- * Format a CallSite to a string.
- */
-
-function callSiteToString(callSite) {
-  var addSuffix = true
-  var fileLocation = callSiteFileLocation(callSite)
-  var functionName = callSite.getFunctionName()
-  var isConstructor = callSite.isConstructor()
-  var isMethodCall = !(callSite.isToplevel() || isConstructor)
-  var line = ''
-
-  if (isMethodCall) {
-    var methodName = callSite.getMethodName()
-    var typeName = getConstructorName(callSite)
-
-    if (functionName) {
-      if (typeName && functionName.indexOf(typeName) !== 0) {
-        line += typeName + '.'
-      }
-
-      line += functionName
-
-      if (methodName && functionName.lastIndexOf('.' + methodName) !== functionName.length - methodName.length - 1) {
-        line += ' [as ' + methodName + ']'
-      }
-    } else {
-      line += typeName + '.' + (methodName || '<anonymous>')
-    }
-  } else if (isConstructor) {
-    line += 'new ' + (functionName || '<anonymous>')
-  } else if (functionName) {
-    line += functionName
-  } else {
-    addSuffix = false
-    line += fileLocation
-  }
-
-  if (addSuffix) {
-    line += ' (' + fileLocation + ')'
-  }
-
-  return line
-}
-
-/**
- * Get constructor name of reviver.
- */
-
-function getConstructorName(obj) {
-  var receiver = obj.receiver
-  return (receiver.constructor && receiver.constructor.name) || null
-}
-
-},{}],38:[function(require,module,exports){
-(function (Buffer){
-/*!
- * depd
- * Copyright(c) 2014 Douglas Christopher Wilson
- * MIT Licensed
- */
-
-/**
- * Module exports.
- */
-
-lazyProperty(module.exports, 'bufferConcat', function bufferConcat() {
-  return Buffer.concat || require('./buffer-concat')
-})
-
-lazyProperty(module.exports, 'callSiteToString', function callSiteToString() {
-  var limit = Error.stackTraceLimit
-  var obj = {}
-  var prep = Error.prepareStackTrace
-
-  function prepareObjectStackTrace(obj, stack) {
-    return stack
-  }
-
-  Error.prepareStackTrace = prepareObjectStackTrace
-  Error.stackTraceLimit = 2
-
-  // capture the stack
-  Error.captureStackTrace(obj)
-
-  // slice the stack
-  var stack = obj.stack.slice()
-
-  Error.prepareStackTrace = prep
-  Error.stackTraceLimit = limit
-
-  return stack[0].toString ? toString : require('./callsite-tostring')
-})
-
-/**
- * Define a lazy property.
- */
-
-function lazyProperty(obj, prop, getter) {
-  function get() {
-    var val = getter()
-
-    Object.defineProperty(obj, prop, {
-      configurable: true,
-      enumerable: true,
-      value: val
-    })
-
-    return val
-  }
-
-  Object.defineProperty(obj, prop, {
-    configurable: true,
-    enumerable: true,
-    get: get
-  })
-}
-
-/**
- * Call toString() on the obj
- */
-
-function toString(obj) {
-  return obj.toString()
-}
-
-}).call(this,require("buffer").Buffer)
-},{"./buffer-concat":36,"./callsite-tostring":37,"buffer":3}],39:[function(require,module,exports){
-arguments[4][9][0].apply(exports,arguments)
-},{"dup":9}],40:[function(require,module,exports){
-var dezalgo = require('dezalgo')
-
-module.exports = function (tasks, cb) {
-  var current = 0
-  var results = []
-  if (cb) cb = dezalgo(cb)
-
-  function done (err, result) {
-    results.push(result)
-    if (++current >= tasks.length || err) {
-      if (cb) cb(err, results)
-    } else {
-      tasks[current](done)
-    }
-  }
-
-  if (tasks.length) {
-    tasks[0](done)
-  } else {
-    if (cb) cb(null, results)
-  }
-}
-
-},{"dezalgo":41}],41:[function(require,module,exports){
-var wrappy = require('wrappy')
-module.exports = wrappy(dezalgo)
-
-var asap = require('asap')
-
-function dezalgo (cb) {
-  var sync = true
-  asap(function () {
-    sync = false
-  })
-
-  return function zalgoSafe() {
-    var args = arguments
-    var me = this
-    if (sync)
-      asap(function() {
-        cb.apply(me, args)
-      })
-    else
-      cb.apply(me, args)
-  }
-}
-
-},{"asap":42,"wrappy":44}],42:[function(require,module,exports){
-"use strict";
-
-// rawAsap provides everything we need except exception management.
-var rawAsap = require("./raw");
-// RawTasks are recycled to reduce GC churn.
-var freeTasks = [];
-// We queue errors to ensure they are thrown in right order (FIFO).
-// Array-as-queue is good enough here, since we are just dealing with exceptions.
-var pendingErrors = [];
-var requestErrorThrow = rawAsap.makeRequestCallFromTimer(throwFirstError);
-
-function throwFirstError() {
-    if (pendingErrors.length) {
-        throw pendingErrors.shift();
-    }
-}
-
-/**
- * Calls a task as soon as possible after returning, in its own event, with priority
- * over other events like animation, reflow, and repaint. An error thrown from an
- * event will not interrupt, nor even substantially slow down the processing of
- * other events, but will be rather postponed to a lower priority event.
- * @param {{call}} task A callable object, typically a function that takes no
- * arguments.
- */
-module.exports = asap;
-function asap(task) {
-    var rawTask;
-    if (freeTasks.length) {
-        rawTask = freeTasks.pop();
-    } else {
-        rawTask = new RawTask();
-    }
-    rawTask.task = task;
-    rawAsap(rawTask);
-}
-
-// We wrap tasks with recyclable task objects.  A task object implements
-// `call`, just like a function.
-function RawTask() {
-    this.task = null;
-}
-
-// The sole purpose of wrapping the task is to catch the exception and recycle
-// the task object after its single use.
-RawTask.prototype.call = function () {
-    try {
-        this.task.call();
-    } catch (error) {
-        if (asap.onerror) {
-            // This hook exists purely for testing purposes.
-            // Its name will be periodically randomized to break any code that
-            // depends on its existence.
-            asap.onerror(error);
-        } else {
-            // In a web browser, exceptions are not fatal. However, to avoid
-            // slowing down the queue of pending tasks, we rethrow the error in a
-            // lower priority turn.
-            pendingErrors.push(error);
-            requestErrorThrow();
-        }
-    } finally {
-        this.task = null;
-        freeTasks[freeTasks.length] = this;
-    }
-};
-
-},{"./raw":43}],43:[function(require,module,exports){
-(function (global){
-"use strict";
-
-// Use the fastest means possible to execute a task in its own turn, with
-// priority over other events including IO, animation, reflow, and redraw
-// events in browsers.
-//
-// An exception thrown by a task will permanently interrupt the processing of
-// subsequent tasks. The higher level `asap` function ensures that if an
-// exception is thrown by a task, that the task queue will continue flushing as
-// soon as possible, but if you use `rawAsap` directly, you are responsible to
-// either ensure that no exceptions are thrown from your task, or to manually
-// call `rawAsap.requestFlush` if an exception is thrown.
-module.exports = rawAsap;
-function rawAsap(task) {
-    if (!queue.length) {
-        requestFlush();
-        flushing = true;
-    }
-    // Equivalent to push, but avoids a function call.
-    queue[queue.length] = task;
-}
-
-var queue = [];
-// Once a flush has been requested, no further calls to `requestFlush` are
-// necessary until the next `flush` completes.
-var flushing = false;
-// `requestFlush` is an implementation-specific method that attempts to kick
-// off a `flush` event as quickly as possible. `flush` will attempt to exhaust
-// the event queue before yielding to the browser's own event loop.
-var requestFlush;
-// The position of the next task to execute in the task queue. This is
-// preserved between calls to `flush` so that it can be resumed if
-// a task throws an exception.
-var index = 0;
-// If a task schedules additional tasks recursively, the task queue can grow
-// unbounded. To prevent memory exhaustion, the task queue will periodically
-// truncate already-completed tasks.
-var capacity = 1024;
-
-// The flush function processes all tasks that have been scheduled with
-// `rawAsap` unless and until one of those tasks throws an exception.
-// If a task throws an exception, `flush` ensures that its state will remain
-// consistent and will resume where it left off when called again.
-// However, `flush` does not make any arrangements to be called again if an
-// exception is thrown.
-function flush() {
-    while (index < queue.length) {
-        var currentIndex = index;
-        // Advance the index before calling the task. This ensures that we will
-        // begin flushing on the next task the task throws an error.
-        index = index + 1;
-        queue[currentIndex].call();
-        // Prevent leaking memory for long chains of recursive calls to `asap`.
-        // If we call `asap` within tasks scheduled by `asap`, the queue will
-        // grow, but to avoid an O(n) walk for every task we execute, we don't
-        // shift tasks off the queue after they have been executed.
-        // Instead, we periodically shift 1024 tasks off the queue.
-        if (index > capacity) {
-            // Manually shift all values starting at the index back to the
-            // beginning of the queue.
-            for (var scan = 0, newLength = queue.length - index; scan < newLength; scan++) {
-                queue[scan] = queue[scan + index];
-            }
-            queue.length -= index;
-            index = 0;
-        }
-    }
-    queue.length = 0;
-    index = 0;
-    flushing = false;
-}
-
-// `requestFlush` is implemented using a strategy based on data collected from
-// every available SauceLabs Selenium web driver worker at time of writing.
-// https://docs.google.com/spreadsheets/d/1mG-5UYGup5qxGdEMWkhP6BWCz053NUb2E1QoUTU16uA/edit#gid=783724593
-
-// Safari 6 and 6.1 for desktop, iPad, and iPhone are the only browsers that
-// have WebKitMutationObserver but not un-prefixed MutationObserver.
-// Must use `global` instead of `window` to work in both frames and web
-// workers. `global` is a provision of Browserify, Mr, Mrs, or Mop.
-var BrowserMutationObserver = global.MutationObserver || global.WebKitMutationObserver;
-
-// MutationObservers are desirable because they have high priority and work
-// reliably everywhere they are implemented.
-// They are implemented in all modern browsers.
-//
-// - Android 4-4.3
-// - Chrome 26-34
-// - Firefox 14-29
-// - Internet Explorer 11
-// - iPad Safari 6-7.1
-// - iPhone Safari 7-7.1
-// - Safari 6-7
-if (typeof BrowserMutationObserver === "function") {
-    requestFlush = makeRequestCallFromMutationObserver(flush);
-
-// MessageChannels are desirable because they give direct access to the HTML
-// task queue, are implemented in Internet Explorer 10, Safari 5.0-1, and Opera
-// 11-12, and in web workers in many engines.
-// Although message channels yield to any queued rendering and IO tasks, they
-// would be better than imposing the 4ms delay of timers.
-// However, they do not work reliably in Internet Explorer or Safari.
-
-// Internet Explorer 10 is the only browser that has setImmediate but does
-// not have MutationObservers.
-// Although setImmediate yields to the browser's renderer, it would be
-// preferrable to falling back to setTimeout since it does not have
-// the minimum 4ms penalty.
-// Unfortunately there appears to be a bug in Internet Explorer 10 Mobile (and
-// Desktop to a lesser extent) that renders both setImmediate and
-// MessageChannel useless for the purposes of ASAP.
-// https://github.com/kriskowal/q/issues/396
-
-// Timers are implemented universally.
-// We fall back to timers in workers in most engines, and in foreground
-// contexts in the following browsers.
-// However, note that even this simple case requires nuances to operate in a
-// broad spectrum of browsers.
-//
-// - Firefox 3-13
-// - Internet Explorer 6-9
-// - iPad Safari 4.3
-// - Lynx 2.8.7
-} else {
-    requestFlush = makeRequestCallFromTimer(flush);
-}
-
-// `requestFlush` requests that the high priority event queue be flushed as
-// soon as possible.
-// This is useful to prevent an error thrown in a task from stalling the event
-// queue if the exception handled by Node.js’s
-// `process.on("uncaughtException")` or by a domain.
-rawAsap.requestFlush = requestFlush;
-
-// To request a high priority event, we induce a mutation observer by toggling
-// the text of a text node between "1" and "-1".
-function makeRequestCallFromMutationObserver(callback) {
-    var toggle = 1;
-    var observer = new BrowserMutationObserver(callback);
-    var node = document.createTextNode("");
-    observer.observe(node, {characterData: true});
-    return function requestCall() {
-        toggle = -toggle;
-        node.data = toggle;
-    };
-}
-
-// The message channel technique was discovered by Malte Ubl and was the
-// original foundation for this library.
-// http://www.nonblocking.io/2011/06/windownexttick.html
-
-// Safari 6.0.5 (at least) intermittently fails to create message ports on a
-// page's first load. Thankfully, this version of Safari supports
-// MutationObservers, so we don't need to fall back in that case.
-
-// function makeRequestCallFromMessageChannel(callback) {
-//     var channel = new MessageChannel();
-//     channel.port1.onmessage = callback;
-//     return function requestCall() {
-//         channel.port2.postMessage(0);
-//     };
-// }
-
-// For reasons explained above, we are also unable to use `setImmediate`
-// under any circumstances.
-// Even if we were, there is another bug in Internet Explorer 10.
-// It is not sufficient to assign `setImmediate` to `requestFlush` because
-// `setImmediate` must be called *by name* and therefore must be wrapped in a
-// closure.
-// Never forget.
-
-// function makeRequestCallFromSetImmediate(callback) {
-//     return function requestCall() {
-//         setImmediate(callback);
-//     };
-// }
-
-// Safari 6.0 has a problem where timers will get lost while the user is
-// scrolling. This problem does not impact ASAP because Safari 6.0 supports
-// mutation observers, so that implementation is used instead.
-// However, if we ever elect to use timers in Safari, the prevalent work-around
-// is to add a scroll event listener that calls for a flush.
-
-// `setTimeout` does not call the passed callback if the delay is less than
-// approximately 7 in web workers in Firefox 8 through 18, and sometimes not
-// even then.
-
-function makeRequestCallFromTimer(callback) {
-    return function requestCall() {
-        // We dispatch a timeout with a specified delay of 0 for engines that
-        // can reliably accommodate that request. This will usually be snapped
-        // to a 4 milisecond delay, but once we're flushing, there's no delay
-        // between events.
-        var timeoutHandle = setTimeout(handleTimer, 0);
-        // However, since this timer gets frequently dropped in Firefox
-        // workers, we enlist an interval handle that will try to fire
-        // an event 20 times per second until it succeeds.
-        var intervalHandle = setInterval(handleTimer, 50);
-
-        function handleTimer() {
-            // Whichever timer succeeds will cancel both timers and
-            // execute the callback.
-            clearTimeout(timeoutHandle);
-            clearInterval(intervalHandle);
-            callback();
-        }
-    };
-}
-
-// This is for `asap.js` only.
-// Its name will be periodically randomized to break any code that depends on
-// its existence.
-rawAsap.makeRequestCallFromTimer = makeRequestCallFromTimer;
-
-// ASAP was originally a nextTick shim included in Q. This was factored out
-// into this ASAP package. It was later adapted to RSVP which made further
-// amendments. These decisions, particularly to marginalize MessageChannel and
-// to capture the MutationObserver implementation in a closure, were integrated
-// back into ASAP proper.
-// https://github.com/tildeio/rsvp.js/blob/cddf7232546a9cf858524b75cde6f9edf72620a7/lib/rsvp/asap.js
-
-}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],44:[function(require,module,exports){
-// Returns a wrapper function that returns a wrapped callback
-// The wrapper function should do some stuff, and return a
-// presumably different callback function.
-// This makes sure that own properties are retained, so that
-// decorations and such are not lost along the way.
-module.exports = wrappy
-function wrappy (fn, cb) {
-  if (fn && cb) return wrappy(fn)(cb)
-
-  if (typeof fn !== 'function')
-    throw new TypeError('need wrapper function')
-
-  Object.keys(fn).forEach(function (k) {
-    wrapper[k] = fn[k]
-  })
-
-  return wrapper
-
-  function wrapper() {
-    var args = new Array(arguments.length)
-    for (var i = 0; i < args.length; i++) {
-      args[i] = arguments[i]
-    }
-    var ret = fn.apply(this, args)
-    var cb = args[args.length-1]
-    if (typeof ret === 'function' && ret !== cb) {
-      Object.keys(cb).forEach(function (k) {
-        ret[k] = cb[k]
-      })
-    }
-    return ret
-  }
-}
-
-},{}],45:[function(require,module,exports){
-var ClientRequest = require('./lib/request')
-var extend = require('xtend')
-var statusCodes = require('builtin-status-codes')
-var url = require('url')
-
-var http = exports
-
-http.request = function (opts, cb) {
-	if (typeof opts === 'string')
-		opts = url.parse(opts)
-	else
-		opts = extend(opts)
-
-	// Split opts.host into its components
-	var hostHostname = opts.host ? opts.host.split(':')[0] : null
-	var hostPort = opts.host ? parseInt(opts.host.split(':')[1], 10) : null
-
-	opts.method = opts.method || 'GET'
-	opts.headers = opts.headers || {}
-	opts.path = opts.path || '/'
-	opts.protocol = opts.protocol || window.location.protocol
-	// If the hostname is provided, use the default port for the protocol. If
-	// the url is instead relative, use window.location.port
-	var defaultPort = (opts.hostname || hostHostname) ? (opts.protocol === 'https:' ? 443 : 80) : window.location.port
-	opts.hostname = opts.hostname || hostHostname || window.location.hostname
-	opts.port = opts.port || hostPort || defaultPort
-
-	// Also valid opts.auth, opts.mode
-
-	var req = new ClientRequest(opts)
-	if (cb)
-		req.on('response', cb)
-	return req
-}
-
-http.get = function get (opts, cb) {
-	var req = http.request(opts, cb)
-	req.end()
-	return req
-}
-
-http.Agent = function () {}
-http.Agent.defaultMaxSockets = 4
-
-http.STATUS_CODES = statusCodes
-
-http.METHODS = [
-	'GET',
-	'POST',
-	'PUT',
-	'DELETE' // TODO: include the methods from RFC 2616 and 2518?
-]
-},{"./lib/request":47,"builtin-status-codes":49,"url":30,"xtend":55}],46:[function(require,module,exports){
-exports.fetch = isFunction(window.fetch) && isFunction(window.ReadableByteStream)
-
-exports.blobConstructor = false
-try {
-	new Blob([new ArrayBuffer(1)])
-	exports.blobConstructor = true
-} catch (e) {}
-
-var xhr = new window.XMLHttpRequest()
-xhr.open('GET', '/')
-
-function checkTypeSupport (type) {
-	try {
-		xhr.responseType = type
-		return xhr.responseType === type
-	} catch (e) {}
-	return false
-}
-
-var haveArrayBuffer = isFunction(window.ArrayBuffer)
-var haveSlice = haveArrayBuffer && isFunction(window.ArrayBuffer.prototype.slice)
-
-exports.arraybuffer = haveArrayBuffer && checkTypeSupport('arraybuffer')
-exports.msstream = haveSlice && checkTypeSupport('ms-stream')
-exports.mozchunkedarraybuffer = haveArrayBuffer && checkTypeSupport('moz-chunked-arraybuffer')
-exports.overrideMimeType = isFunction(xhr.overrideMimeType)
-exports.vbArray = isFunction(window.VBArray)
-
-function isFunction (value) {
-  return typeof value === 'function'
-}
-
-xhr = null // Help gc
-},{}],47:[function(require,module,exports){
-(function (process,Buffer){
-var capability = require('./capability')
-var foreach = require('foreach')
-var indexOf = require('indexof')
-var inherits = require('inherits')
-var keys = require('object-keys')
-var response = require('./response')
-var stream = require('stream')
-
-var IncomingMessage = response.IncomingMessage
-var rStates = response.readyStates
-
-function decideMode (preferBinary) {
-	if (capability.fetch) {
-		return 'fetch'
-	} else if (capability.mozchunkedarraybuffer) {
-		return 'moz-chunked-arraybuffer'
-	} else if (capability.msstream) {
-		return 'ms-stream'
-	} else if (capability.arraybuffer && preferBinary) {
-		return 'arraybuffer'
-	} else if (capability.vbArray && preferBinary) {
-		return 'text:vbarray'
-	} else {
-		return 'text'
-	}
-}
-
-var ClientRequest = module.exports = function (opts) {
-	var self = this
-	stream.Writable.call(self)
-
-	self._opts = opts
-	self._url = opts.protocol + '//' + opts.hostname + ':' + opts.port + opts.path
-	self._body = []
-	self._headers = {}
-	if (opts.auth)
-		self.setHeader('Authorization', 'Basic ' + new Buffer(opts.auth).toString('base64'))
-	foreach(keys(opts.headers), function (name) {
-		self.setHeader(name, opts.headers[name])
-	})
-
-	var preferBinary
-	if (opts.mode === 'prefer-streaming') {
-		// If streaming is a high priority but binary compatibility isn't
-		preferBinary = false
-	} else if (opts.mode === 'prefer-fast') {
-		// If binary is preferred for speed
-		preferBinary = true
-	} else if (!opts.mode || opts.mode === 'default') {
-		// By default, use binary if text streaming may corrupt data
-		preferBinary = !capability.overrideMimeType
-	} else {
-		throw new Error('Invalid value for opts.mode')
-	}
-	self._mode = decideMode(preferBinary)
-
-	self.on('finish', function () {
-		self._onFinish()
-	})
-}
-
-inherits(ClientRequest, stream.Writable)
-
-ClientRequest.prototype.setHeader = function (name, value) {
-	var self = this
-	var lowerName = name.toLowerCase()
-	// This check is not necessary, but it prevents warnings from browsers about setting unsafe
-	// headers. To be honest I'm not entirely sure hiding these warnings is a good thing, but
-	// http-browserify did it, so I will too.
-	if (indexOf(unsafeHeaders, lowerName) !== -1)
-		return
-
-	self._headers[lowerName] = {
-		name: name,
-		value: value
-	}
-}
-
-ClientRequest.prototype.getHeader = function (name) {
-	var self = this
-	return self._headers[name.toLowerCase()].value
-}
-
-ClientRequest.prototype.removeHeader = function (name) {
-	var self = this
-	delete self._headers[name.toLowerCase()]
-}
-
-ClientRequest.prototype._onFinish = function () {
-	var self = this
-
-	if (self._destroyed)
-		return
-	var opts = self._opts
-
-	var headersObj = self._headers
-	var body
-	if (opts.method === 'POST' || opts.method === 'PUT') {
-		if (capability.blobConstructor) {
-			body = new window.Blob(self._body.map(function (buffer) {
-				return buffer.toArrayBuffer()
-			}), {
-				type: (headersObj['content-type'] || {}).value || ''
-			})
-		} else {
-			// get utf8 string
-			body = Buffer.concat(self._body).toString()
-		}
-	}
-
-	if (self._mode === 'fetch') {
-		var headers = keys(headersObj).map(function (name) {
-			return [headersObj[name].name, headersObj[name].value]
-		})
-
-		window.fetch(self._url, {
-			method: self._opts.method,
-			headers: headers,
-			body: body,
-			mode: 'cors',
-			credentials: opts.withCredentials ? 'include' : 'same-origin'
-		}).then(function (response) {
-			self._fetchResponse = response
-			self._connect()
-		}).then(undefined, function (reason) {
-			self.emit('error', reason)
-		})
-	} else {
-		var xhr = self._xhr = new window.XMLHttpRequest()
-		try {
-			xhr.open(self._opts.method, self._url, true)
-		} catch (err) {
-			process.nextTick(function () {
-				self.emit('error', err)
-			})
-			return
-		}
-
-		// Can't set responseType on really old browsers
-		if ('responseType' in xhr)
-			xhr.responseType = self._mode.split(':')[0]
-
-		if ('withCredentials' in xhr)
-			xhr.withCredentials = !!opts.withCredentials
-
-		if (self._mode === 'text' && 'overrideMimeType' in xhr)
-			xhr.overrideMimeType('text/plain; charset=x-user-defined')
-
-		foreach(keys(headersObj), function (name) {
-			xhr.setRequestHeader(headersObj[name].name, headersObj[name].value)
-		})
-
-		self._response = null
-		xhr.onreadystatechange = function () {
-			switch (xhr.readyState) {
-				case rStates.LOADING:
-				case rStates.DONE:
-					self._onXHRProgress()
-					break
-			}
-		}
-		// Necessary for streaming in Firefox, since xhr.response is ONLY defined
-		// in onprogress, not in onreadystatechange with xhr.readyState = 3
-		if (self._mode === 'moz-chunked-arraybuffer') {
-			xhr.onprogress = function () {
-				self._onXHRProgress()
-			}
-		}
-
-		xhr.onerror = function () {
-			if (self._destroyed)
-				return
-			self.emit('error', new Error('XHR error'))
-		}
-
-		try {
-			xhr.send(body)
-		} catch (err) {
-			process.nextTick(function () {
-				self.emit('error', err)
-			})
-			return
-		}
-	}
-}
-
-/**
- * Checks if xhr.status is readable. Even though the spec says it should
- * be available in readyState 3, accessing it throws an exception in IE8
- */
-function statusValid (xhr) {
-	try {
-		return (xhr.status !== null)
-	} catch (e) {
-		return false
-	}
-}
-
-ClientRequest.prototype._onXHRProgress = function () {
-	var self = this
-
-	if (!statusValid(self._xhr) || self._destroyed)
-		return
-
-	if (!self._response)
-		self._connect()
-
-	self._response._onXHRProgress()
-}
-
-ClientRequest.prototype._connect = function () {
-	var self = this
-
-	if (self._destroyed)
-		return
-
-	self._response = new IncomingMessage(self._xhr, self._fetchResponse, self._mode)
-	self.emit('response', self._response)
-}
-
-ClientRequest.prototype._write = function (chunk, encoding, cb) {
-	var self = this
-
-	self._body.push(chunk)
-	cb()
-}
-
-ClientRequest.prototype.abort = ClientRequest.prototype.destroy = function () {
-	var self = this
-	self._destroyed = true
-	if (self._response)
-		self._response._destroyed = true
-	if (self._xhr)
-		self._xhr.abort()
-	// Currently, there isn't a way to truly abort a fetch.
-	// If you like bikeshedding, see https://github.com/whatwg/fetch/issues/27
-}
-
-ClientRequest.prototype.end = function (data, encoding, cb) {
-	var self = this
-	if (typeof data === 'function') {
-		cb = data
-		data = undefined
-	}
-
-	if (data)
-		stream.Writable.push.call(self, data, encoding)
-
-	stream.Writable.prototype.end.call(self, cb)
-}
-
-ClientRequest.prototype.flushHeaders = function () {}
-ClientRequest.prototype.setTimeout = function () {}
-ClientRequest.prototype.setNoDelay = function () {}
-ClientRequest.prototype.setSocketKeepAlive = function () {}
-
-// Taken from http://www.w3.org/TR/XMLHttpRequest/#the-setrequestheader%28%29-method
-var unsafeHeaders = [
-	'accept-charset',
-	'accept-encoding',
-	'access-control-request-headers',
-	'access-control-request-method',
-	'connection',
-	'content-length',
-	'cookie',
-	'cookie2',
-	'date',
-	'dnt',
-	'expect',
-	'host',
-	'keep-alive',
-	'origin',
-	'referer',
-	'te',
-	'trailer',
-	'transfer-encoding',
-	'upgrade',
-	'user-agent',
-	'via'
-]
-
-}).call(this,require('_process'),require("buffer").Buffer)
-},{"./capability":46,"./response":48,"_process":11,"buffer":3,"foreach":50,"indexof":51,"inherits":52,"object-keys":53,"stream":27}],48:[function(require,module,exports){
-(function (process,Buffer){
-var capability = require('./capability')
-var foreach = require('foreach')
-var inherits = require('inherits')
-var stream = require('stream')
-
-var rStates = exports.readyStates = {
-	UNSENT: 0,
-	OPENED: 1,
-	HEADERS_RECEIVED: 2,
-	LOADING: 3,
-	DONE: 4
-}
-
-var IncomingMessage = exports.IncomingMessage = function (xhr, response, mode) {
-	var self = this
-	stream.Readable.call(self)
-
-	self._mode = mode
-	self.headers = {}
-	self.rawHeaders = []
-	self.trailers = {}
-	self.rawTrailers = []
-
-	// Fake the 'close' event, but only once 'end' fires
-	self.on('end', function () {
-		// The nextTick is necessary to prevent the 'request' module from causing an infinite loop
-		process.nextTick(function () {
-			self.emit('close')
-		})
-	})
-
-	if (mode === 'fetch') {
-		self._fetchResponse = response
-
-		self.statusCode = response.status
-		self.statusMessage = response.statusText
-		// backwards compatible version of for (<item> of <iterable>):
-		// for (var <item>,_i,_it = <iterable>[Symbol.iterator](); <item> = (_i = _it.next()).value,!_i.done;)
-		for (var header, _i, _it = response.headers[Symbol.iterator](); header = (_i = _it.next()).value, !_i.done;) {
-			self.headers[header[0].toLowerCase()] = header[1]
-			self.rawHeaders.push(header[0], header[1])
-		}
-
-		// TODO: this doesn't respect backpressure. Once WritableStream is available, this can be fixed
-		var reader = response.body.getReader()
-		function read () {
-			reader.read().then(function (result) {
-				if (self._destroyed)
-					return
-				if (result.done) {
-					self.push(null)
-					return
-				}
-				self.push(new Buffer(result.value))
-				read()
-			})
-		}
-		read()
-
-	} else {
-		self._xhr = xhr
-		self._pos = 0
-
-		self.statusCode = xhr.status
-		self.statusMessage = xhr.statusText
-		var headers = xhr.getAllResponseHeaders().split(/\r?\n/)
-		foreach(headers, function (header) {
-			var matches = header.match(/^([^:]+):\s*(.*)/)
-			if (matches) {
-				var key = matches[1].toLowerCase()
-				if (self.headers[key] !== undefined)
-					self.headers[key] += ', ' + matches[2]
-				else
-					self.headers[key] = matches[2]
-				self.rawHeaders.push(matches[1], matches[2])
-			}
-		})
-
-		self._charset = 'x-user-defined'
-		if (!capability.overrideMimeType) {
-			var mimeType = self.rawHeaders['mime-type']
-			if (mimeType) {
-				var charsetMatch = mimeType.match(/;\s*charset=([^;])(;|$)/)
-				if (charsetMatch) {
-					self._charset = charsetMatch[1].toLowerCase()
-				}
-			}
-			if (!self._charset)
-				self._charset = 'utf-8' // best guess
-		}
-	}
-}
-
-inherits(IncomingMessage, stream.Readable)
-
-IncomingMessage.prototype._read = function () {}
-
-IncomingMessage.prototype._onXHRProgress = function () {
-	var self = this
-
-	var xhr = self._xhr
-
-	var response = null
-	switch (self._mode) {
-		case 'text:vbarray': // For IE9
-			if (xhr.readyState !== rStates.DONE)
-				break
-			try {
-				// This fails in IE8
-				response = new window.VBArray(xhr.responseBody).toArray()
-			} catch (e) {}
-			if (response !== null) {
-				self.push(new Buffer(response))
-				break
-			}
-			// Falls through in IE8	
-		case 'text':
-			try { // This will fail when readyState = 3 in IE9. Switch mode and wait for readyState = 4
-				response = xhr.responseText
-			} catch (e) {
-				self._mode = 'text:vbarray'
-				break
-			}
-			if (response.length > self._pos) {
-				var newData = response.substr(self._pos)
-				if (self._charset === 'x-user-defined') {
-					var buffer = new Buffer(newData.length)
-					for (var i = 0; i < newData.length; i++)
-						buffer[i] = newData.charCodeAt(i) & 0xff
-
-					self.push(buffer)
-				} else {
-					self.push(newData, self._charset)
-				}
-				self._pos = response.length
-			}
-			break
-		case 'arraybuffer':
-			if (xhr.readyState !== rStates.DONE)
-				break
-			response = xhr.response
-			self.push(new Buffer(new Uint8Array(response)))
-			break
-		case 'moz-chunked-arraybuffer': // take whole
-			response = xhr.response
-			if (xhr.readyState !== rStates.LOADING || !response)
-				break
-			self.push(new Buffer(new Uint8Array(response)))
-			break
-		case 'ms-stream':
-			response = xhr.response
-			if (xhr.readyState !== rStates.LOADING)
-				break
-			var reader = new window.MSStreamReader()
-			reader.onprogress = function () {
-				if (reader.result.byteLength > self._pos) {
-					self.push(new Buffer(new Uint8Array(reader.result.slice(self._pos))))
-					self._pos = reader.result.byteLength
-				}
-			}
-			reader.onload = function () {
-				self.push(null)
-			}
-			// reader.onerror = ??? // TODO: this
-			reader.readAsArrayBuffer(response)
-			break
-	}
-
-	// The ms-stream case handles end separately in reader.onload()
-	if (self._xhr.readyState === rStates.DONE && self._mode !== 'ms-stream') {
-		self.push(null)
-	}
-}
-
-}).call(this,require('_process'),require("buffer").Buffer)
-},{"./capability":46,"_process":11,"buffer":3,"foreach":50,"inherits":52,"stream":27}],49:[function(require,module,exports){
-module.exports = {
-  "100": "Continue",
-  "101": "Switching Protocols",
-  "102": "Processing",
-  "200": "OK",
-  "201": "Created",
-  "202": "Accepted",
-  "203": "Non-Authoritative Information",
-  "204": "No Content",
-  "205": "Reset Content",
-  "206": "Partial Content",
-  "207": "Multi-Status",
-  "300": "Multiple Choices",
-  "301": "Moved Permanently",
-  "302": "Moved Temporarily",
-  "303": "See Other",
-  "304": "Not Modified",
-  "305": "Use Proxy",
-  "307": "Temporary Redirect",
-  "308": "Permanent Redirect",
-  "400": "Bad Request",
-  "401": "Unauthorized",
-  "402": "Payment Required",
-  "403": "Forbidden",
-  "404": "Not Found",
-  "405": "Method Not Allowed",
-  "406": "Not Acceptable",
-  "407": "Proxy Authentication Required",
-  "408": "Request Time-out",
-  "409": "Conflict",
-  "410": "Gone",
-  "411": "Length Required",
-  "412": "Precondition Failed",
-  "413": "Request Entity Too Large",
-  "414": "Request-URI Too Large",
-  "415": "Unsupported Media Type",
-  "416": "Requested Range Not Satisfiable",
-  "417": "Expectation Failed",
-  "418": "I'm a teapot",
-  "422": "Unprocessable Entity",
-  "423": "Locked",
-  "424": "Failed Dependency",
-  "425": "Unordered Collection",
-  "426": "Upgrade Required",
-  "428": "Precondition Required",
-  "429": "Too Many Requests",
-  "431": "Request Header Fields Too Large",
-  "500": "Internal Server Error",
-  "501": "Not Implemented",
-  "502": "Bad Gateway",
-  "503": "Service Unavailable",
-  "504": "Gateway Time-out",
-  "505": "HTTP Version Not Supported",
-  "506": "Variant Also Negotiates",
-  "507": "Insufficient Storage",
-  "509": "Bandwidth Limit Exceeded",
-  "510": "Not Extended",
-  "511": "Network Authentication Required"
-}
-
-},{}],50:[function(require,module,exports){
-
-var hasOwn = Object.prototype.hasOwnProperty;
-var toString = Object.prototype.toString;
-
-module.exports = function forEach (obj, fn, ctx) {
-    if (toString.call(fn) !== '[object Function]') {
-        throw new TypeError('iterator must be a function');
-    }
-    var l = obj.length;
-    if (l === +l) {
-        for (var i = 0; i < l; i++) {
-            fn.call(ctx, obj[i], i, obj);
-        }
-    } else {
-        for (var k in obj) {
-            if (hasOwn.call(obj, k)) {
-                fn.call(ctx, obj[k], k, obj);
-            }
-        }
-    }
-};
-
-
-},{}],51:[function(require,module,exports){
-
-var indexOf = [].indexOf;
-
-module.exports = function(arr, obj){
-  if (indexOf) return arr.indexOf(obj);
-  for (var i = 0; i < arr.length; ++i) {
-    if (arr[i] === obj) return i;
-  }
-  return -1;
-};
-},{}],52:[function(require,module,exports){
-arguments[4][9][0].apply(exports,arguments)
-},{"dup":9}],53:[function(require,module,exports){
-'use strict';
-
-// modified from https://github.com/es-shims/es5-shim
-var has = Object.prototype.hasOwnProperty;
-var toStr = Object.prototype.toString;
-var slice = Array.prototype.slice;
-var isArgs = require('./isArguments');
-var hasDontEnumBug = !({ 'toString': null }).propertyIsEnumerable('toString');
-var hasProtoEnumBug = function () {}.propertyIsEnumerable('prototype');
-var dontEnums = [
-	'toString',
-	'toLocaleString',
-	'valueOf',
-	'hasOwnProperty',
-	'isPrototypeOf',
-	'propertyIsEnumerable',
-	'constructor'
-];
-
-var keysShim = function keys(object) {
-	var isObject = object !== null && typeof object === 'object';
-	var isFunction = toStr.call(object) === '[object Function]';
-	var isArguments = isArgs(object);
-	var isString = isObject && toStr.call(object) === '[object String]';
-	var theKeys = [];
-
-	if (!isObject && !isFunction && !isArguments) {
-		throw new TypeError('Object.keys called on a non-object');
-	}
-
-	var skipProto = hasProtoEnumBug && isFunction;
-	if (isString && object.length > 0 && !has.call(object, 0)) {
-		for (var i = 0; i < object.length; ++i) {
-			theKeys.push(String(i));
-		}
-	}
-
-	if (isArguments && object.length > 0) {
-		for (var j = 0; j < object.length; ++j) {
-			theKeys.push(String(j));
-		}
-	} else {
-		for (var name in object) {
-			if (!(skipProto && name === 'prototype') && has.call(object, name)) {
-				theKeys.push(String(name));
-			}
-		}
-	}
-
-	if (hasDontEnumBug) {
-		var ctor = object.constructor;
-		var skipConstructor = ctor && ctor.prototype === object;
-
-		for (var k = 0; k < dontEnums.length; ++k) {
-			if (!(skipConstructor && dontEnums[k] === 'constructor') && has.call(object, dontEnums[k])) {
-				theKeys.push(dontEnums[k]);
-			}
-		}
-	}
-	return theKeys;
-};
-
-keysShim.shim = function shimObjectKeys() {
-	if (!Object.keys) {
-		Object.keys = keysShim;
-	} else {
-		var keysWorksWithArguments = (function () {
-			// Safari 5.0 bug
-			return (Object.keys(arguments) || '').length === 2;
-		}(1, 2));
-		if (!keysWorksWithArguments) {
-			var originalKeys = Object.keys;
-			Object.keys = function keys(object) {
-				if (isArgs(object)) {
-					return originalKeys(slice.call(object));
-				} else {
-					return originalKeys(object);
-				}
-			};
-		}
-	}
-	return Object.keys || keysShim;
-};
-
-module.exports = keysShim;
-
-},{"./isArguments":54}],54:[function(require,module,exports){
-'use strict';
-
-var toStr = Object.prototype.toString;
-
-module.exports = function isArguments(value) {
-	var str = toStr.call(value);
-	var isArgs = str === '[object Arguments]';
-	if (!isArgs) {
-		isArgs = str !== '[object Array]' &&
-			value !== null &&
-			typeof value === 'object' &&
-			typeof value.length === 'number' &&
-			value.length >= 0 &&
-			toStr.call(value.callee) === '[object Function]';
-	}
-	return isArgs;
-};
-
-},{}],55:[function(require,module,exports){
-module.exports = extend
-
-function extend() {
-    var target = {}
-
-    for (var i = 0; i < arguments.length; i++) {
-        var source = arguments[i]
-
-        for (var key in source) {
-            if (source.hasOwnProperty(key)) {
-                target[key] = source[key]
-            }
-        }
-    }
-
-    return target
-}
-
-},{}],56:[function(require,module,exports){
-arguments[4][22][0].apply(exports,arguments)
-},{"buffer":3,"dup":22}],57:[function(require,module,exports){
-arguments[4][9][0].apply(exports,arguments)
-},{"dup":9}],58:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var net = require('net');
-var util = require('util');
-var EventEmitter = require('events').EventEmitter;
-var debug = util.debuglog('http');
-
-// New Agent code.
-
-// The largest departure from the previous implementation is that
-// an Agent instance holds connections for a variable number of host:ports.
-// Surprisingly, this is still API compatible as far as third parties are
-// concerned. The only code that really notices the difference is the
-// request object.
-
-// Another departure is that all code related to HTTP parsing is in
-// ClientRequest.onSocket(). The Agent is now *strictly*
-// concerned with managing a connection pool.
-
-function Agent(options) {
-  if (!(this instanceof Agent))
-    return new Agent(options);
-
-  EventEmitter.call(this);
-
-  var self = this;
-
-  self.defaultPort = 80;
-  self.protocol = 'http:';
-
-  self.options = util._extend({}, options);
-
-  // don't confuse net and make it think that we're connecting to a pipe
-  self.options.path = null;
-  self.requests = {};
-  self.sockets = {};
-  self.freeSockets = {};
-  self.keepAliveMsecs = self.options.keepAliveMsecs || 1000;
-  self.keepAlive = self.options.keepAlive || false;
-  self.maxSockets = self.options.maxSockets || Agent.defaultMaxSockets;
-  self.maxFreeSockets = self.options.maxFreeSockets || 256;
-
-  self.on('free', function(socket, options) {
-    var name = self.getName(options);
-    debug('agent.on(free)', name);
-
-    if (!socket.destroyed &&
-        self.requests[name] && self.requests[name].length) {
-      self.requests[name].shift().onSocket(socket);
-      if (self.requests[name].length === 0) {
-        // don't leak
-        delete self.requests[name];
-      }
-    } else {
-      // If there are no pending requests, then put it in
-      // the freeSockets pool, but only if we're allowed to do so.
-      var req = socket._httpMessage;
-      if (req &&
-          req.shouldKeepAlive &&
-          !socket.destroyed &&
-          self.options.keepAlive) {
-        var freeSockets = self.freeSockets[name];
-        var freeLen = freeSockets ? freeSockets.length : 0;
-        var count = freeLen;
-        if (self.sockets[name])
-          count += self.sockets[name].length;
-
-        if (count >= self.maxSockets || freeLen >= self.maxFreeSockets) {
-          self.removeSocket(socket, options);
-          socket.destroy();
-        } else {
-          freeSockets = freeSockets || [];
-          self.freeSockets[name] = freeSockets;
-          socket.setKeepAlive(true, self.keepAliveMsecs);
-          socket.unref();
-          socket._httpMessage = null;
-          self.removeSocket(socket, options);
-          freeSockets.push(socket);
-        }
-      } else {
-        self.removeSocket(socket, options);
-        socket.destroy();
-      }
-    }
-  });
-}
-
-util.inherits(Agent, EventEmitter);
-exports.Agent = Agent;
-
-Agent.defaultMaxSockets = Infinity;
-
-Agent.prototype.createConnection = net.createConnection;
-
-// Get the key for a given set of request options
-Agent.prototype.getName = function(options) {
-  var name = '';
-
-  if (options.host)
-    name += options.host;
-  else
-    name += 'localhost';
-
-  name += ':';
-  if (options.port)
-    name += options.port;
-  name += ':';
-  if (options.localAddress)
-    name += options.localAddress;
-  name += ':';
-  return name;
-};
-
-Agent.prototype.addRequest = function(req, options) {
-  // Legacy API: addRequest(req, host, port, path)
-  if (typeof options === 'string') {
-    options = {
-      host: options,
-      port: arguments[2],
-      path: arguments[3]
-    };
-  }
-
-  var name = this.getName(options);
-  if (!this.sockets[name]) {
-    this.sockets[name] = [];
-  }
-
-  var freeLen = this.freeSockets[name] ? this.freeSockets[name].length : 0;
-  var sockLen = freeLen + this.sockets[name].length;
-
-  if (freeLen) {
-    // we have a free socket, so use that.
-    var socket = this.freeSockets[name].shift();
-    debug('have free socket');
-
-    // don't leak
-    if (!this.freeSockets[name].length)
-      delete this.freeSockets[name];
-
-    socket.ref();
-    req.onSocket(socket);
-    this.sockets[name].push(socket);
-  } else if (sockLen < this.maxSockets) {
-    debug('call onSocket', sockLen, freeLen);
-    // If we are under maxSockets create a new one.
-    req.onSocket(this.createSocket(req, options));
-  } else {
-    debug('wait for socket');
-    // We are over limit so we'll add it to the queue.
-    if (!this.requests[name]) {
-      this.requests[name] = [];
-    }
-    this.requests[name].push(req);
-  }
-};
-
-Agent.prototype.createSocket = function(req, options) {
-  var self = this;
-  options = util._extend({}, options);
-  options = util._extend(options, self.options);
-
-  options.servername = options.host;
-  if (req) {
-    var hostHeader = req.getHeader('host');
-    if (hostHeader) {
-      options.servername = hostHeader.replace(/:.*$/, '');
-    }
-  }
-
-  var name = self.getName(options);
-
-  debug('createConnection', name, options);
-  options.encoding = null;
-  var s = self.createConnection(options);
-  if (!self.sockets[name]) {
-    self.sockets[name] = [];
-  }
-  this.sockets[name].push(s);
-  debug('sockets', name, this.sockets[name].length);
-
-  function onFree() {
-    self.emit('free', s, options);
-  }
-  s.on('free', onFree);
-
-  function onClose(err) {
-    debug('CLIENT socket onClose');
-    // This is the only place where sockets get removed from the Agent.
-    // If you want to remove a socket from the pool, just close it.
-    // All socket errors end in a close event anyway.
-    self.removeSocket(s, options);
-  }
-  s.on('close', onClose);
-
-  function onRemove() {
-    // We need this function for cases like HTTP 'upgrade'
-    // (defined by WebSockets) where we need to remove a socket from the
-    // pool because it'll be locked up indefinitely
-    debug('CLIENT socket onRemove');
-    self.removeSocket(s, options);
-    s.removeListener('close', onClose);
-    s.removeListener('free', onFree);
-    s.removeListener('agentRemove', onRemove);
-  }
-  s.on('agentRemove', onRemove);
-  return s;
-};
-
-Agent.prototype.removeSocket = function(s, options) {
-  var name = this.getName(options);
-  debug('removeSocket', name, 'destroyed:', s.destroyed);
-  var sets = [this.sockets];
-
-  // If the socket was destroyed, remove it from the free buffers too.
-  if (s.destroyed)
-    sets.push(this.freeSockets);
-
-  for (var sk = 0; sk < sets.length; sk++) {
-    var sockets = sets[sk];
-
-    if (sockets[name]) {
-      var index = sockets[name].indexOf(s);
-      if (index !== -1) {
-        sockets[name].splice(index, 1);
-        // Don't leak
-        if (sockets[name].length === 0)
-          delete sockets[name];
-      }
-    }
-  }
-
-  if (this.requests[name] && this.requests[name].length) {
-    debug('removeSocket, have a request, make a socket');
-    var req = this.requests[name][0];
-    // If we have pending requests and a socket gets closed make a new one
-    this.createSocket(req, options).emit('free');
-  }
-};
-
-Agent.prototype.destroy = function() {
-  var sets = [this.freeSockets, this.sockets];
-  for (var s = 0; s < sets.length; s++) {
-    var set = sets[s];
-    var keys = Object.keys(set);
-    for (var v = 0; v < keys.length; v++) {
-      var setName = set[keys[v]];
-      for (var n = 0; n < setName.length; n++) {
-        setName[n].destroy();
-      }
-    }
-  }
-};
-
-exports.globalAgent = new Agent();
-
-},{"events":8,"net":"net","util":32}],59:[function(require,module,exports){
-(function (process){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var util = require('util');
-var net = require('net');
-var url = require('url');
-var EventEmitter = require('events').EventEmitter;
-var HTTPParser = require('http-parser-js').HTTPParser;
-var assert = require('assert').ok;
-var Buffer = require('buffer').Buffer;
-
-var common = require('./_http_common');
-
-var httpSocketSetup = common.httpSocketSetup;
-var parsers = common.parsers;
-var freeParser = common.freeParser;
-var debug = common.debug;
-
-var OutgoingMessage = require('./_http_outgoing').OutgoingMessage;
-
-var Agent = require('./_http_agent');
-
-
-function ClientRequest(options, cb) {
-  var self = this;
-  OutgoingMessage.call(self);
-
-  if (util.isString(options)) {
-    options = url.parse(options);
-  } else {
-    options = util._extend({}, options);
-  }
-
-  var agent = options.agent;
-  var defaultAgent = options._defaultAgent || Agent.globalAgent;
-  if (agent === false) {
-    agent = new defaultAgent.constructor();
-  } else if (util.isNullOrUndefined(agent) && !options.createConnection) {
-    agent = defaultAgent;
-  }
-  self.agent = agent;
-
-  var protocol = options.protocol || defaultAgent.protocol;
-  var expectedProtocol = defaultAgent.protocol;
-  if (self.agent && self.agent.protocol)
-    expectedProtocol = self.agent.protocol;
-
-  if (options.path && / /.test(options.path)) {
-    // The actual regex is more like /[^A-Za-z0-9\-._~!$&'()*+,;=/:@]/
-    // with an additional rule for ignoring percentage-escaped characters
-    // but that's a) hard to capture in a regular expression that performs
-    // well, and b) possibly too restrictive for real-world usage. That's
-    // why it only scans for spaces because those are guaranteed to create
-    // an invalid request.
-    throw new TypeError('Request path contains unescaped characters.');
-  } else if (protocol !== expectedProtocol) {
-    throw new Error('Protocol "' + protocol + '" not supported. ' +
-                    'Expected "' + expectedProtocol + '".');
-  }
-
-  var defaultPort = options.defaultPort || self.agent && self.agent.defaultPort;
-
-  var port = options.port = options.port || defaultPort || 80;
-  var host = options.host = options.hostname || options.host || 'localhost';
-
-  if (util.isUndefined(options.setHost)) {
-    var setHost = true;
-  }
-
-  self.socketPath = options.socketPath;
-
-  var method = self.method = (options.method || 'GET').toUpperCase();
-  self.path = options.path || '/';
-  if (cb) {
-    self.once('response', cb);
-  }
-
-  if (!util.isArray(options.headers)) {
-    if (options.headers) {
-      var keys = Object.keys(options.headers);
-      for (var i = 0, l = keys.length; i < l; i++) {
-        var key = keys[i];
-        self.setHeader(key, options.headers[key]);
-      }
-    }
-    if (host && !this.getHeader('host') && setHost) {
-      var hostHeader = host;
-      if (port && +port !== defaultPort) {
-        hostHeader += ':' + port;
-      }
-      this.setHeader('Host', hostHeader);
-    }
-  }
-
-  if (options.auth && !this.getHeader('Authorization')) {
-    //basic auth
-    this.setHeader('Authorization', 'Basic ' +
-                   new Buffer(options.auth).toString('base64'));
-  }
-
-  if (method === 'GET' ||
-      method === 'HEAD' ||
-      method === 'DELETE' ||
-      method === 'OPTIONS' ||
-      method === 'CONNECT') {
-    self.useChunkedEncodingByDefault = false;
-  } else {
-    self.useChunkedEncodingByDefault = true;
-  }
-
-  if (util.isArray(options.headers)) {
-    self._storeHeader(self.method + ' ' + self.path + ' HTTP/1.1\r\n',
-                      options.headers);
-  } else if (self.getHeader('expect')) {
-    self._storeHeader(self.method + ' ' + self.path + ' HTTP/1.1\r\n',
-                      self._renderHeaders());
-  }
-
-  if (self.socketPath) {
-    self._last = true;
-    self.shouldKeepAlive = false;
-    var conn = self.agent.createConnection({ path: self.socketPath });
-    self.onSocket(conn);
-  } else if (self.agent) {
-    // If there is an agent we should default to Connection:keep-alive,
-    // but only if the Agent will actually reuse the connection!
-    // If it's not a keepAlive agent, and the maxSockets==Infinity, then
-    // there's never a case where this socket will actually be reused
-    if (!self.agent.keepAlive && !Number.isFinite(self.agent.maxSockets)) {
-      self._last = true;
-      self.shouldKeepAlive = false;
-    } else {
-      self._last = false;
-      self.shouldKeepAlive = true;
-    }
-    self.agent.addRequest(self, options);
-  } else {
-    // No agent, default to Connection:close.
-    self._last = true;
-    self.shouldKeepAlive = false;
-    if (options.createConnection) {
-      var conn = options.createConnection(options);
-    } else {
-      debug('CLIENT use net.createConnection', options);
-      var conn = net.createConnection(options);
-    }
-    self.onSocket(conn);
-  }
-
-  self._deferToConnect(null, null, function() {
-    self._flush();
-    self = null;
-  });
-}
-
-util.inherits(ClientRequest, OutgoingMessage);
-
-exports.ClientRequest = ClientRequest;
-
-ClientRequest.prototype.aborted = undefined;
-
-ClientRequest.prototype._finish = function() {
-  // DTRACE_HTTP_CLIENT_REQUEST(this, this.connection);
-  // COUNTER_HTTP_CLIENT_REQUEST();
-  OutgoingMessage.prototype._finish.call(this);
-};
-
-ClientRequest.prototype._implicitHeader = function() {
-  this._storeHeader(this.method + ' ' + this.path + ' HTTP/1.1\r\n',
-                    this._renderHeaders());
-};
-
-ClientRequest.prototype.abort = function() {
-  // Mark as aborting so we can avoid sending queued request data
-  // This is used as a truthy flag elsewhere. The use of Date.now is for
-  // debugging purposes only.
-  this.aborted = Date.now();
-
-  // If we're aborting, we don't care about any more response data.
-  if (this.res)
-    this.res._dump();
-  else
-    this.once('response', function(res) {
-      res._dump();
-    });
-
-  // In the event that we don't have a socket, we will pop out of
-  // the request queue through handling in onSocket.
-  if (this.socket) {
-    // in-progress
-    this.socket.destroy();
-  }
-};
-
-
-function createHangUpError() {
-  var error = new Error('socket hang up');
-  error.code = 'ECONNRESET';
-  return error;
-}
-
-
-function socketCloseListener() {
-  var socket = this;
-  var req = socket._httpMessage;
-  debug('HTTP socket close');
-
-  // Pull through final chunk, if anything is buffered.
-  // the ondata function will handle it properly, and this
-  // is a no-op if no final chunk remains.
-  socket.read();
-
-  // NOTE: Its important to get parser here, because it could be freed by
-  // the `socketOnData`.
-  var parser = socket.parser;
-  req.emit('close');
-  if (req.res && req.res.readable) {
-    // Socket closed before we emitted 'end' below.
-    req.res.emit('aborted');
-    var res = req.res;
-    res.on('end', function() {
-      res.emit('close');
-    });
-    res.push(null);
-  } else if (!req.res && !req.socket._hadError) {
-    // This socket error fired before we started to
-    // receive a response. The error needs to
-    // fire on the request.
-    req.emit('error', createHangUpError());
-    req.socket._hadError = true;
-  }
-
-  // Too bad.  That output wasn't getting written.
-  // This is pretty terrible that it doesn't raise an error.
-  // Fixed better in v0.10
-  if (req.output)
-    req.output.length = 0;
-  if (req.outputEncodings)
-    req.outputEncodings.length = 0;
-
-  if (parser) {
-    parser.finish();
-    freeParser(parser, req, socket);
-  }
-}
-
-function socketErrorListener(err) {
-  var socket = this;
-  var req = socket._httpMessage;
-  debug('SOCKET ERROR:', err.message, err.stack);
-
-  if (req) {
-    req.emit('error', err);
-    // For Safety. Some additional errors might fire later on
-    // and we need to make sure we don't double-fire the error event.
-    req.socket._hadError = true;
-  }
-
-  // Handle any pending data
-  socket.read();
-
-  var parser = socket.parser;
-  if (parser) {
-    parser.finish();
-    freeParser(parser, req, socket);
-  }
-
-  // Ensure that no further data will come out of the socket
-  socket.removeListener('data', socketOnData);
-  socket.removeListener('end', socketOnEnd);
-  socket.destroy();
-}
-
-function socketOnEnd() {
-  var socket = this;
-  var req = this._httpMessage;
-  var parser = this.parser;
-
-  if (!req.res && !req.socket._hadError) {
-    // If we don't have a response then we know that the socket
-    // ended prematurely and we need to emit an error on the request.
-    req.emit('error', createHangUpError());
-    req.socket._hadError = true;
-  }
-  if (parser) {
-    parser.finish();
-    freeParser(parser, req, socket);
-  }
-  socket.destroy();
-}
-
-function socketOnData(d) {
-  var socket = this;
-  var req = this._httpMessage;
-  var parser = this.parser;
-
-  assert(parser && parser.socket === socket);
-
-  var ret = parser.execute(d);
-  if (ret instanceof Error) {
-    debug('parse error');
-    freeParser(parser, req, socket);
-    socket.destroy();
-    req.emit('error', ret);
-    req.socket._hadError = true;
-  } else if (parser.incoming && parser.incoming.upgrade) {
-    // Upgrade or CONNECT
-    var bytesParsed = ret;
-    var res = parser.incoming;
-    req.res = res;
-
-    socket.removeListener('data', socketOnData);
-    socket.removeListener('end', socketOnEnd);
-    parser.finish();
-
-    var bodyHead = d.slice(bytesParsed, d.length);
-
-    var eventName = req.method === 'CONNECT' ? 'connect' : 'upgrade';
-    if (EventEmitter.listenerCount(req, eventName) > 0) {
-      req.upgradeOrConnect = true;
-
-      // detach the socket
-      socket.emit('agentRemove');
-      socket.removeListener('close', socketCloseListener);
-      socket.removeListener('error', socketErrorListener);
-
-      // TODO(isaacs): Need a way to reset a stream to fresh state
-      // IE, not flowing, and not explicitly paused.
-      socket._readableState.flowing = null;
-
-      req.emit(eventName, res, socket, bodyHead);
-      req.emit('close');
-    } else {
-      // Got Upgrade header or CONNECT method, but have no handler.
-      socket.destroy();
-    }
-    freeParser(parser, req, socket);
-  } else if (parser.incoming && parser.incoming.complete &&
-             // When the status code is 100 (Continue), the server will
-             // send a final response after this client sends a request
-             // body. So, we must not free the parser.
-             parser.incoming.statusCode !== 100) {
-    socket.removeListener('data', socketOnData);
-    socket.removeListener('end', socketOnEnd);
-    freeParser(parser, req, socket);
-  }
-}
-
-
-// client
-function parserOnIncomingClient(res, shouldKeepAlive) {
-  var socket = this.socket;
-  var req = socket._httpMessage;
-
-
-  // propogate "domain" setting...
-  if (req.domain && !res.domain) {
-    debug('setting "res.domain"');
-    res.domain = req.domain;
-  }
-
-  debug('AGENT incoming response!');
-
-  if (req.res) {
-    // We already have a response object, this means the server
-    // sent a double response.
-    socket.destroy();
-    return;
-  }
-  req.res = res;
-
-  // Responses to CONNECT request is handled as Upgrade.
-  if (req.method === 'CONNECT') {
-    res.upgrade = true;
-    return true; // skip body
-  }
-
-  // Responses to HEAD requests are crazy.
-  // HEAD responses aren't allowed to have an entity-body
-  // but *can* have a content-length which actually corresponds
-  // to the content-length of the entity-body had the request
-  // been a GET.
-  var isHeadResponse = req.method === 'HEAD';
-  debug('AGENT isHeadResponse', isHeadResponse);
-
-  if (res.statusCode === 100) {
-    // restart the parser, as this is a continue message.
-    delete req.res; // Clear res so that we don't hit double-responses.
-    req.emit('continue');
-    return true;
-  }
-
-  if (req.shouldKeepAlive && !shouldKeepAlive && !req.upgradeOrConnect) {
-    // Server MUST respond with Connection:keep-alive for us to enable it.
-    // If we've been upgraded (via WebSockets) we also shouldn't try to
-    // keep the connection open.
-    req.shouldKeepAlive = false;
-  }
-
-
-  // DTRACE_HTTP_CLIENT_RESPONSE(socket, req);
-  // COUNTER_HTTP_CLIENT_RESPONSE();
-  req.res = res;
-  res.req = req;
-
-  // add our listener first, so that we guarantee socket cleanup
-  res.on('end', responseOnEnd);
-  var handled = req.emit('response', res);
-
-  // If the user did not listen for the 'response' event, then they
-  // can't possibly read the data, so we ._dump() it into the void
-  // so that the socket doesn't hang there in a paused state.
-  if (!handled)
-    res._dump();
-
-  return isHeadResponse;
-}
-
-// client
-function responseOnEnd() {
-  var res = this;
-  var req = res.req;
-  var socket = req.socket;
-
-  if (!req.shouldKeepAlive) {
-    if (socket.writable) {
-      debug('AGENT socket.destroySoon()');
-      socket.destroySoon();
-    }
-    assert(!socket.writable);
-  } else {
-    debug('AGENT socket keep-alive');
-    if (req.timeoutCb) {
-      socket.setTimeout(0, req.timeoutCb);
-      req.timeoutCb = null;
-    }
-    socket.removeListener('close', socketCloseListener);
-    socket.removeListener('error', socketErrorListener);
-    // Mark this socket as available, AFTER user-added end
-    // handlers have a chance to run.
-    process.nextTick(function() {
-      socket.emit('free');
-    });
-  }
-}
-
-function tickOnSocket(req, socket) {
-  var parser = parsers.alloc();
-  req.socket = socket;
-  req.connection = socket;
-  parser.reinitialize(HTTPParser.RESPONSE);
-  parser.socket = socket;
-  parser.incoming = null;
-  req.parser = parser;
-
-  socket.parser = parser;
-  socket._httpMessage = req;
-
-  // Setup "drain" propogation.
-  httpSocketSetup(socket);
-
-  // Propagate headers limit from request object to parser
-  if (util.isNumber(req.maxHeadersCount)) {
-    parser.maxHeaderPairs = req.maxHeadersCount << 1;
-  } else {
-    // Set default value because parser may be reused from FreeList
-    parser.maxHeaderPairs = 2000;
-  }
-
-  parser.onIncoming = parserOnIncomingClient;
-  socket.on('error', socketErrorListener);
-  socket.on('data', socketOnData);
-  socket.on('end', socketOnEnd);
-  socket.on('close', socketCloseListener);
-  req.emit('socket', socket);
-}
-
-ClientRequest.prototype.onSocket = function(socket) {
-  var req = this;
-
-  process.nextTick(function() {
-    if (req.aborted) {
-      // If we were aborted while waiting for a socket, skip the whole thing.
-      socket.emit('free');
-    } else {
-      tickOnSocket(req, socket);
-    }
-  });
-};
-
-ClientRequest.prototype._deferToConnect = function(method, arguments_, cb) {
-  // This function is for calls that need to happen once the socket is
-  // connected and writable. It's an important promisy thing for all the socket
-  // calls that happen either now (when a socket is assigned) or
-  // in the future (when a socket gets assigned out of the pool and is
-  // eventually writable).
-  var self = this;
-  var onSocket = function() {
-    if (self.socket.writable) {
-      if (method) {
-        self.socket[method].apply(self.socket, arguments_);
-      }
-      if (cb) { cb(); }
-    } else {
-      self.socket.once('connect', function() {
-        if (method) {
-          self.socket[method].apply(self.socket, arguments_);
-        }
-        if (cb) { cb(); }
-      });
-    }
-  }
-  if (!self.socket) {
-    self.once('socket', onSocket);
-  } else {
-    onSocket();
-  }
-};
-
-ClientRequest.prototype.setTimeout = function(msecs, callback) {
-  if (callback) this.once('timeout', callback);
-
-  var self = this;
-  function emitTimeout() {
-    self.emit('timeout');
-  }
-
-  if (this.socket && this.socket.writable) {
-    if (this.timeoutCb)
-      this.socket.setTimeout(0, this.timeoutCb);
-    this.timeoutCb = emitTimeout;
-    this.socket.setTimeout(msecs, emitTimeout);
-    return;
-  }
-
-  // Set timeoutCb so that it'll get cleaned up on request end
-  this.timeoutCb = emitTimeout;
-  if (this.socket) {
-    var sock = this.socket;
-    this.socket.once('connect', function() {
-      sock.setTimeout(msecs, emitTimeout);
-    });
-    return;
-  }
-
-  this.once('socket', function(sock) {
-    sock.setTimeout(msecs, emitTimeout);
-  });
-};
-
-ClientRequest.prototype.setNoDelay = function() {
-  this._deferToConnect('setNoDelay', arguments);
-};
-ClientRequest.prototype.setSocketKeepAlive = function() {
-  this._deferToConnect('setKeepAlive', arguments);
-};
-
-ClientRequest.prototype.clearTimeout = function(cb) {
-  this.setTimeout(0, cb);
-};
-
-}).call(this,require('_process'))
-},{"./_http_agent":58,"./_http_common":60,"./_http_outgoing":62,"_process":11,"assert":1,"buffer":3,"events":8,"http-parser-js":65,"net":"net","url":30,"util":32}],60:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var FreeList = require('freelist').FreeList;
-var HTTPParser = require('http-parser-js').HTTPParser;
-
-var incoming = require('./_http_incoming');
-var IncomingMessage = incoming.IncomingMessage;
-var readStart = incoming.readStart;
-var readStop = incoming.readStop;
-
-var isNumber = require('util').isNumber;
-var debug = require('util').debuglog('http');
-exports.debug = debug;
-
-exports.CRLF = '\r\n';
-exports.chunkExpression = /chunk/i;
-exports.continueExpression = /100-continue/i;
-exports.methods = HTTPParser.methods;
-
-var kOnHeaders = HTTPParser.kOnHeaders | 0;
-var kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
-var kOnBody = HTTPParser.kOnBody | 0;
-var kOnMessageComplete = HTTPParser.kOnMessageComplete | 0;
-
-// Only called in the slow case where slow means
-// that the request headers were either fragmented
-// across multiple TCP packets or too large to be
-// processed in a single run. This method is also
-// called to process trailing HTTP headers.
-function parserOnHeaders(headers, url) {
-  // Once we exceeded headers limit - stop collecting them
-  if (this.maxHeaderPairs <= 0 ||
-      this._headers.length < this.maxHeaderPairs) {
-    this._headers = this._headers.concat(headers);
-  }
-  this._url += url;
-}
-
-// info.headers and info.url are set only if .onHeaders()
-// has not been called for this request.
-//
-// info.url is not set for response parsers but that's not
-// applicable here since all our parsers are request parsers.
-function parserOnHeadersComplete(info) {
-  debug('parserOnHeadersComplete', info);
-  var parser = this;
-  var headers = info.headers;
-  var url = info.url;
-
-  if (!headers) {
-    headers = parser._headers;
-    parser._headers = [];
-  }
-
-  if (!url) {
-    url = parser._url;
-    parser._url = '';
-  }
-
-  parser.incoming = new IncomingMessage(parser.socket);
-  parser.incoming.httpVersionMajor = info.versionMajor;
-  parser.incoming.httpVersionMinor = info.versionMinor;
-  parser.incoming.httpVersion = info.versionMajor + '.' + info.versionMinor;
-  parser.incoming.url = url;
-
-  var n = headers.length;
-
-  // If parser.maxHeaderPairs <= 0 - assume that there're no limit
-  if (parser.maxHeaderPairs > 0) {
-    n = Math.min(n, parser.maxHeaderPairs);
-  }
-
-  parser.incoming._addHeaderLines(headers, n);
-
-  if (isNumber(info.method)) {
-    // server only
-    parser.incoming.method = HTTPParser.methods[info.method];
-  } else {
-    // client only
-    parser.incoming.statusCode = info.statusCode;
-    parser.incoming.statusMessage = info.statusMessage;
-  }
-
-  parser.incoming.upgrade = info.upgrade;
-
-  var skipBody = false; // response to HEAD or CONNECT
-
-  if (!info.upgrade) {
-    // For upgraded connections and CONNECT method request,
-    // we'll emit this after parser.execute
-    // so that we can capture the first part of the new protocol
-    skipBody = parser.onIncoming(parser.incoming, info.shouldKeepAlive);
-  }
-
-  return skipBody;
-}
-
-// XXX This is a mess.
-// TODO: http.Parser should be a Writable emits request/response events.
-function parserOnBody(b, start, len) {
-  var parser = this;
-  var stream = parser.incoming;
-
-  // if the stream has already been removed, then drop it.
-  if (!stream)
-    return;
-
-  var socket = stream.socket;
-
-  // pretend this was the result of a stream._read call.
-  if (len > 0 && !stream._dumped) {
-    var slice = b.slice(start, start + len);
-    var ret = stream.push(slice);
-    if (!ret)
-      readStop(socket);
-  }
-}
-
-function parserOnMessageComplete() {
-  var parser = this;
-  var stream = parser.incoming;
-
-  if (stream) {
-    stream.complete = true;
-    // Emit any trailing headers.
-    var headers = parser._headers;
-    if (headers) {
-      parser.incoming._addHeaderLines(headers, headers.length);
-      parser._headers = [];
-      parser._url = '';
-    }
-
-    if (!stream.upgrade)
-      // For upgraded connections, also emit this after parser.execute
-      stream.push(null);
-  }
-
-  if (stream && !parser.incoming._pendings.length) {
-    // For emit end event
-    stream.push(null);
-  }
-
-  // force to read the next incoming message
-  readStart(parser.socket);
-}
-
-
-var parsers = new FreeList('parsers', 1000, function() {
-  var parser = new HTTPParser(HTTPParser.REQUEST);
-
-  parser._headers = [];
-  parser._url = '';
-
-  // Only called in the slow case where slow means
-  // that the request headers were either fragmented
-  // across multiple TCP packets or too large to be
-  // processed in a single run. This method is also
-  // called to process trailing HTTP headers.
-  parser[kOnHeaders] = parserOnHeaders;
-  parser[kOnHeadersComplete] = parserOnHeadersComplete;
-  parser[kOnBody] = parserOnBody;
-  parser[kOnMessageComplete] = parserOnMessageComplete;
-
-  return parser;
-});
-exports.parsers = parsers;
-
-
-// Free the parser and also break any links that it
-// might have to any other things.
-// TODO: All parser data should be attached to a
-// single object, so that it can be easily cleaned
-// up by doing `parser.data = {}`, which should
-// be done in FreeList.free.  `parsers.free(parser)`
-// should be all that is needed.
-function freeParser(parser, req, socket) {
-  if (parser) {
-    parser._headers = [];
-    parser.onIncoming = null;
-    if (parser.socket)
-      parser.socket.parser = null;
-    parser.socket = null;
-    parser.incoming = null;
-    if (parsers.free(parser) === false)
-      parser.close();
-    parser = null;
-  }
-  if (req) {
-    req.parser = null;
-  }
-  if (socket) {
-    socket.parser = null;
-  }
-}
-exports.freeParser = freeParser;
-
-
-function ondrain() {
-  if (this._httpMessage) this._httpMessage.emit('drain');
-}
-
-
-function httpSocketSetup(socket) {
-  socket.removeListener('drain', ondrain);
-  socket.on('drain', ondrain);
-}
-exports.httpSocketSetup = httpSocketSetup;
-
-},{"./_http_incoming":61,"freelist":64,"http-parser-js":65,"util":32}],61:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var util = require('util');
-var Stream = require('stream');
-
-function readStart(socket) {
-  if (socket && !socket._paused && socket.readable)
-    socket.resume();
-}
-exports.readStart = readStart;
-
-function readStop(socket) {
-  if (socket)
-    socket.pause();
-}
-exports.readStop = readStop;
-
-
-/* Abstract base class for ServerRequest and ClientResponse. */
-function IncomingMessage(socket) {
-  Stream.Readable.call(this);
-
-  // XXX This implementation is kind of all over the place
-  // When the parser emits body chunks, they go in this list.
-  // _read() pulls them out, and when it finds EOF, it ends.
-
-  this.socket = socket;
-  this.connection = socket;
-
-  this.httpVersionMajor = null;
-  this.httpVersionMinor = null;
-  this.httpVersion = null;
-  this.complete = false;
-  this.headers = {};
-  this.rawHeaders = [];
-  this.trailers = {};
-  this.rawTrailers = [];
-
-  this.readable = true;
-
-  this._pendings = [];
-  this._pendingIndex = 0;
-  this.upgrade = null;
-
-  // request (server) only
-  this.url = '';
-  this.method = null;
-
-  // response (client) only
-  this.statusCode = null;
-  this.statusMessage = null;
-  this.client = this.socket;
-
-  // flag for backwards compatibility grossness.
-  this._consuming = false;
-
-  // flag for when we decide that this message cannot possibly be
-  // read by the user, so there's no point continuing to handle it.
-  this._dumped = false;
-}
-util.inherits(IncomingMessage, Stream.Readable);
-
-
-exports.IncomingMessage = IncomingMessage;
-
-
-IncomingMessage.prototype.setTimeout = function(msecs, callback) {
-  if (callback)
-    this.on('timeout', callback);
-  this.socket.setTimeout(msecs);
-};
-
-
-IncomingMessage.prototype.read = function(n) {
-  this._consuming = true;
-  this.read = Stream.Readable.prototype.read;
-  return this.read(n);
-};
-
-
-IncomingMessage.prototype._read = function(n) {
-  // We actually do almost nothing here, because the parserOnBody
-  // function fills up our internal buffer directly.  However, we
-  // do need to unpause the underlying socket so that it flows.
-  if (this.socket.readable)
-    readStart(this.socket);
-};
-
-
-// It's possible that the socket will be destroyed, and removed from
-// any messages, before ever calling this.  In that case, just skip
-// it, since something else is destroying this connection anyway.
-IncomingMessage.prototype.destroy = function(error) {
-  if (this.socket)
-    this.socket.destroy(error);
-};
-
-
-IncomingMessage.prototype._addHeaderLines = function(headers, n) {
-  if (headers && headers.length) {
-    var raw, dest;
-    if (this.complete) {
-      raw = this.rawTrailers;
-      dest = this.trailers;
-    } else {
-      raw = this.rawHeaders;
-      dest = this.headers;
-    }
-
-    for (var i = 0; i < n; i += 2) {
-      var k = headers[i];
-      var v = headers[i + 1];
-      raw.push(k);
-      raw.push(v);
-      this._addHeaderLine(k, v, dest);
-    }
-  }
-};
-
-
-// Add the given (field, value) pair to the message
-//
-// Per RFC2616, section 4.2 it is acceptable to join multiple instances of the
-// same header with a ', ' if the header in question supports specification of
-// multiple values this way. If not, we declare the first instance the winner
-// and drop the second. Extended header fields (those beginning with 'x-') are
-// always joined.
-IncomingMessage.prototype._addHeaderLine = function(field, value, dest) {
-  field = field.toLowerCase();
-  switch (field) {
-    // Array headers:
-    case 'set-cookie':
-      if (!util.isUndefined(dest[field])) {
-        dest[field].push(value);
-      } else {
-        dest[field] = [value];
-      }
-      break;
-
-    // list is taken from:
-    // https://mxr.mozilla.org/mozilla/source/netwerk/protocol/http/src/nsHttpHeaderArray.cpp
-    case 'content-type':
-    case 'content-length':
-    case 'user-agent':
-    case 'referer':
-    case 'host':
-    case 'authorization':
-    case 'proxy-authorization':
-    case 'if-modified-since':
-    case 'if-unmodified-since':
-    case 'from':
-    case 'location':
-    case 'max-forwards':
-      // drop duplicates
-      if (util.isUndefined(dest[field]))
-        dest[field] = value;
-      break;
-
-    default:
-      // make comma-separated list
-      if (!util.isUndefined(dest[field]))
-        dest[field] += ', ' + value;
-      else {
-        dest[field] = value;
-      }
-  }
-};
-
-
-// Call this instead of resume() if we want to just
-// dump all the data to /dev/null
-IncomingMessage.prototype._dump = function() {
-  if (!this._dumped) {
-    this._dumped = true;
-    this.resume();
-  }
-};
-
-},{"stream":27,"util":32}],62:[function(require,module,exports){
-(function (process){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var assert = require('assert').ok;
-var Stream = require('stream');
-var timers = require('timers');
-var util = require('util');
-var Buffer = require('buffer').Buffer;
-var common = require('./_http_common');
-
-// fix if cork methods aren't available
-if (!Stream.Writable.prototype.cork) {
-  Stream.Writable.prototype.cork = Stream.Writable.prototype.uncork = function() {};
-}
-if (!Stream.Duplex.prototype.cork) {
-  Stream.Duplex.prototype.cork = Stream.Duplex.prototype.uncork = function() {};
-}
-
-var CRLF = common.CRLF;
-var chunkExpression = common.chunkExpression;
-var debug = common.debug;
-
-
-var connectionExpression = /Connection/i;
-var transferEncodingExpression = /Transfer-Encoding/i;
-var closeExpression = /close/i;
-var contentLengthExpression = /Content-Length/i;
-var dateExpression = /Date/i;
-var expectExpression = /Expect/i;
-
-var automaticHeaders = {
-  connection: true,
-  'content-length': true,
-  'transfer-encoding': true,
-  date: true
-};
-
-
-var dateCache;
-function utcDate() {
-  if (!dateCache) {
-    var d = new Date();
-    dateCache = d.toUTCString();
-    timers.enroll(utcDate, 1000 - d.getMilliseconds());
-    timers._unrefActive(utcDate);
-  }
-  return dateCache;
-}
-utcDate._onTimeout = function() {
-  dateCache = undefined;
-};
-
-
-function OutgoingMessage() {
-  Stream.call(this);
-
-  this.output = [];
-  this.outputEncodings = [];
-  this.outputCallbacks = [];
-
-  this.writable = true;
-
-  this._last = false;
-  this.chunkedEncoding = false;
-  this.shouldKeepAlive = true;
-  this.useChunkedEncodingByDefault = true;
-  this.sendDate = false;
-  this._removedHeader = {};
-
-  this._hasBody = true;
-  this._trailer = '';
-
-  this.finished = false;
-  this._hangupClose = false;
-  this._headerSent = false;
-
-  this.socket = null;
-  this.connection = null;
-  this._header = null;
-  this._headers = null;
-  this._headerNames = {};
-}
-util.inherits(OutgoingMessage, Stream);
-
-
-exports.OutgoingMessage = OutgoingMessage;
-
-
-OutgoingMessage.prototype.setTimeout = function(msecs, callback) {
-  if (callback)
-    this.on('timeout', callback);
-  if (!this.socket) {
-    this.once('socket', function(socket) {
-      socket.setTimeout(msecs);
-    });
-  } else
-    this.socket.setTimeout(msecs);
-};
-
-
-// It's possible that the socket will be destroyed, and removed from
-// any messages, before ever calling this.  In that case, just skip
-// it, since something else is destroying this connection anyway.
-OutgoingMessage.prototype.destroy = function(error) {
-  if (this.socket)
-    this.socket.destroy(error);
-  else
-    this.once('socket', function(socket) {
-      socket.destroy(error);
-    });
-};
-
-
-// This abstract either writing directly to the socket or buffering it.
-OutgoingMessage.prototype._send = function(data, encoding, callback) {
-  // This is a shameful hack to get the headers and first body chunk onto
-  // the same packet. Future versions of Node are going to take care of
-  // this at a lower level and in a more general way.
-  if (!this._headerSent) {
-    if (util.isString(data) &&
-        encoding !== 'hex' &&
-        encoding !== 'base64') {
-      data = this._header + data;
-    } else {
-      this.output.unshift(this._header);
-      this.outputEncodings.unshift('binary');
-      this.outputCallbacks.unshift(null);
-    }
-    this._headerSent = true;
-  }
-  return this._writeRaw(data, encoding, callback);
-};
-
-
-OutgoingMessage.prototype._writeRaw = function(data, encoding, callback) {
-  if (util.isFunction(encoding)) {
-    callback = encoding;
-    encoding = null;
-  }
-
-  if (data.length === 0) {
-    if (util.isFunction(callback))
-      process.nextTick(callback);
-    return true;
-  }
-
-  if (this.connection &&
-      this.connection._httpMessage === this &&
-      this.connection.writable &&
-      !this.connection.destroyed) {
-    // There might be pending data in the this.output buffer.
-    while (this.output.length) {
-      if (!this.connection.writable) {
-        this._buffer(data, encoding, callback);
-        return false;
-      }
-      var c = this.output.shift();
-      var e = this.outputEncodings.shift();
-      var cb = this.outputCallbacks.shift();
-      this.connection.write(c, e, cb);
-    }
-
-    // Directly write to socket.
-    return this.connection.write(data, encoding, callback);
-  } else if (this.connection && this.connection.destroyed) {
-    // The socket was destroyed.  If we're still trying to write to it,
-    // then we haven't gotten the 'close' event yet.
-    return false;
-  } else {
-    // buffer, as long as we're not destroyed.
-    this._buffer(data, encoding, callback);
-    return false;
-  }
-};
-
-
-OutgoingMessage.prototype._buffer = function(data, encoding, callback) {
-  this.output.push(data);
-  this.outputEncodings.push(encoding);
-  this.outputCallbacks.push(callback);
-  return false;
-};
-
-
-OutgoingMessage.prototype._storeHeader = function(firstLine, headers) {
-  // firstLine in the case of request is: 'GET /index.html HTTP/1.1\r\n'
-  // in the case of response it is: 'HTTP/1.1 200 OK\r\n'
-  var state = {
-    sentConnectionHeader: false,
-    sentContentLengthHeader: false,
-    sentTransferEncodingHeader: false,
-    sentDateHeader: false,
-    sentExpect: false,
-    messageHeader: firstLine
-  };
-
-  var field, value;
-
-  if (headers) {
-    var keys = Object.keys(headers);
-    var isArray = util.isArray(headers);
-    var field, value;
-
-    for (var i = 0, l = keys.length; i < l; i++) {
-      var key = keys[i];
-      if (isArray) {
-        field = headers[key][0];
-        value = headers[key][1];
-      } else {
-        field = key;
-        value = headers[key];
-      }
-
-      if (util.isArray(value)) {
-        for (var j = 0; j < value.length; j++) {
-          storeHeader(this, state, field, value[j]);
-        }
-      } else {
-        storeHeader(this, state, field, value);
-      }
-    }
-  }
-
-  // Date header
-  if (this.sendDate === true && state.sentDateHeader === false) {
-    state.messageHeader += 'Date: ' + utcDate() + CRLF;
-  }
-
-  // Force the connection to close when the response is a 204 No Content or
-  // a 304 Not Modified and the user has set a "Transfer-Encoding: chunked"
-  // header.
-  //
-  // RFC 2616 mandates that 204 and 304 responses MUST NOT have a body but
-  // node.js used to send out a zero chunk anyway to accommodate clients
-  // that don't have special handling for those responses.
-  //
-  // It was pointed out that this might confuse reverse proxies to the point
-  // of creating security liabilities, so suppress the zero chunk and force
-  // the connection to close.
-  var statusCode = this.statusCode;
-  if ((statusCode === 204 || statusCode === 304) &&
-      this.chunkedEncoding === true) {
-    debug(statusCode + ' response should not use chunked encoding,' +
-          ' closing connection.');
-    this.chunkedEncoding = false;
-    this.shouldKeepAlive = false;
-  }
-
-  // keep-alive logic
-  if (this._removedHeader.connection) {
-    this._last = true;
-    this.shouldKeepAlive = false;
-  } else if (state.sentConnectionHeader === false) {
-    var shouldSendKeepAlive = this.shouldKeepAlive &&
-        (state.sentContentLengthHeader ||
-         this.useChunkedEncodingByDefault ||
-         this.agent);
-    if (shouldSendKeepAlive) {
-      state.messageHeader += 'Connection: keep-alive\r\n';
-    } else {
-      this._last = true;
-      state.messageHeader += 'Connection: close\r\n';
-    }
-  }
-
-  if (state.sentContentLengthHeader === false &&
-      state.sentTransferEncodingHeader === false) {
-    if (this._hasBody && !this._removedHeader['transfer-encoding']) {
-      if (this.useChunkedEncodingByDefault) {
-        state.messageHeader += 'Transfer-Encoding: chunked\r\n';
-        this.chunkedEncoding = true;
-      } else {
-        this._last = true;
-      }
-    } else {
-      // Make sure we don't end the 0\r\n\r\n at the end of the message.
-      this.chunkedEncoding = false;
-    }
-  }
-
-  this._header = state.messageHeader + CRLF;
-  this._headerSent = false;
-
-  // wait until the first body chunk, or close(), is sent to flush,
-  // UNLESS we're sending Expect: 100-continue.
-  if (state.sentExpect) this._send('');
-};
-
-function storeHeader(self, state, field, value) {
-  // Protect against response splitting. The if statement is there to
-  // minimize the performance impact in the common case.
-  if (/[\r\n]/.test(value))
-    value = value.replace(/[\r\n]+[ \t]*/g, '');
-
-  state.messageHeader += field + ': ' + value + CRLF;
-
-  if (connectionExpression.test(field)) {
-    state.sentConnectionHeader = true;
-    if (closeExpression.test(value)) {
-      self._last = true;
-    } else {
-      self.shouldKeepAlive = true;
-    }
-
-  } else if (transferEncodingExpression.test(field)) {
-    state.sentTransferEncodingHeader = true;
-    if (chunkExpression.test(value)) self.chunkedEncoding = true;
-
-  } else if (contentLengthExpression.test(field)) {
-    state.sentContentLengthHeader = true;
-  } else if (dateExpression.test(field)) {
-    state.sentDateHeader = true;
-  } else if (expectExpression.test(field)) {
-    state.sentExpect = true;
-  }
-}
-
-
-OutgoingMessage.prototype.setHeader = function(name, value) {
-  if (typeof name !== 'string')
-    throw new TypeError('"name" should be a string');
-  if (value === undefined)
-    throw new Error('"name" and "value" are required for setHeader().');
-  if (this._header)
-    throw new Error('Can\'t set headers after they are sent.');
-
-  if (this._headers === null)
-    this._headers = {};
-
-  var key = name.toLowerCase();
-  this._headers[key] = value;
-  this._headerNames[key] = name;
-
-  if (automaticHeaders[key])
-    this._removedHeader[key] = false;
-};
-
-
-OutgoingMessage.prototype.getHeader = function(name) {
-  if (arguments.length < 1) {
-    throw new Error('`name` is required for getHeader().');
-  }
-
-  if (!this._headers) return;
-
-  var key = name.toLowerCase();
-  return this._headers[key];
-};
-
-
-OutgoingMessage.prototype.removeHeader = function(name) {
-  if (arguments.length < 1) {
-    throw new Error('`name` is required for removeHeader().');
-  }
-
-  if (this._header) {
-    throw new Error('Can\'t remove headers after they are sent.');
-  }
-
-  var key = name.toLowerCase();
-
-  if (key === 'date')
-    this.sendDate = false;
-  else if (automaticHeaders[key])
-    this._removedHeader[key] = true;
-
-  if (this._headers) {
-    delete this._headers[key];
-    delete this._headerNames[key];
-  }
-};
-
-
-OutgoingMessage.prototype._renderHeaders = function() {
-  if (this._header) {
-    throw new Error('Can\'t render headers after they are sent to the client.');
-  }
-
-  if (!this._headers) return {};
-
-  var headers = {};
-  var keys = Object.keys(this._headers);
-
-  for (var i = 0, l = keys.length; i < l; i++) {
-    var key = keys[i];
-    headers[this._headerNames[key]] = this._headers[key];
-  }
-  return headers;
-};
-
-
-Object.defineProperty(OutgoingMessage.prototype, 'headersSent', {
-  configurable: true,
-  enumerable: true,
-  get: function() { return !!this._header; }
-});
-
-
-OutgoingMessage.prototype.write = function(chunk, encoding, callback) {
-  var self = this;
-
-  if (this.finished) {
-    var err = new Error('write after end');
-    process.nextTick(function() {
-      self.emit('error', err);
-      if (callback) callback(err);
-    });
-
-    return true;
-  }
-
-  if (!this._header) {
-    this._implicitHeader();
-  }
-
-  if (!this._hasBody) {
-    debug('This type of response MUST NOT have a body. ' +
-          'Ignoring write() calls.');
-    return true;
-  }
-
-  if (!util.isString(chunk) && !util.isBuffer(chunk)) {
-    throw new TypeError('first argument must be a string or Buffer');
-  }
-
-
-  // If we get an empty string or buffer, then just do nothing, and
-  // signal the user to keep writing.
-  if (chunk.length === 0) return true;
-
-  var len, ret;
-  if (this.chunkedEncoding) {
-    if (util.isString(chunk) &&
-        encoding !== 'hex' &&
-        encoding !== 'base64' &&
-        encoding !== 'binary') {
-      len = Buffer.byteLength(chunk, encoding);
-      chunk = len.toString(16) + CRLF + chunk + CRLF;
-      ret = this._send(chunk, encoding, callback);
-    } else {
-      // buffer, or a non-toString-friendly encoding
-      if (util.isString(chunk))
-        len = Buffer.byteLength(chunk, encoding);
-      else
-        len = chunk.length;
-
-      if (this.connection && !this.connection.corked) {
-        this.connection.cork();
-        var conn = this.connection;
-        process.nextTick(function connectionCork() {
-          if (conn)
-            conn.uncork();
-        });
-      }
-      this._send(len.toString(16), 'binary', null);
-      this._send(crlf_buf, null, null);
-      this._send(chunk, encoding, null);
-      ret = this._send(crlf_buf, null, callback);
-    }
-  } else {
-    ret = this._send(chunk, encoding, callback);
-  }
-
-  debug('write ret = ' + ret);
-  return ret;
-};
-
-
-OutgoingMessage.prototype.addTrailers = function(headers) {
-  this._trailer = '';
-  var keys = Object.keys(headers);
-  var isArray = util.isArray(headers);
-  var field, value;
-  for (var i = 0, l = keys.length; i < l; i++) {
-    var key = keys[i];
-    if (isArray) {
-      field = headers[key][0];
-      value = headers[key][1];
-    } else {
-      field = key;
-      value = headers[key];
-    }
-
-    this._trailer += field + ': ' + value + CRLF;
-  }
-};
-
-
-var crlf_buf = new Buffer('\r\n');
-
-
-OutgoingMessage.prototype.end = function(data, encoding, callback) {
-  if (util.isFunction(data)) {
-    callback = data;
-    data = null;
-  } else if (util.isFunction(encoding)) {
-    callback = encoding;
-    encoding = null;
-  }
-
-  if (data && !util.isString(data) && !util.isBuffer(data)) {
-    throw new TypeError('first argument must be a string or Buffer');
-  }
-
-  if (this.finished) {
-    return false;
-  }
-
-  var self = this;
-  function finish() {
-    self.emit('finish');
-  }
-
-  if (util.isFunction(callback))
-    this.once('finish', callback);
-
-
-  if (!this._header) {
-    this._implicitHeader();
-  }
-
-  if (data && !this._hasBody) {
-    debug('This type of response MUST NOT have a body. ' +
-          'Ignoring data passed to end().');
-    data = null;
-  }
-
-  if (this.connection && data)
-    this.connection.cork();
-
-  var ret;
-  if (data) {
-    // Normal body write.
-    ret = this.write(data, encoding);
-  }
-
-  if (this._hasBody && this.chunkedEncoding) {
-    ret = this._send('0\r\n' + this._trailer + '\r\n', 'binary', finish);
-  } else {
-    // Force a flush, HACK.
-    ret = this._send('', 'binary', finish);
-  }
-
-  if (this.connection && data)
-    this.connection.uncork();
-
-  this.finished = true;
-
-  // There is the first message on the outgoing queue, and we've sent
-  // everything to the socket.
-  debug('outgoing message end.');
-  if (this.output.length === 0 && this.connection._httpMessage === this) {
-    this._finish();
-  }
-
-  return ret;
-};
-
-
-OutgoingMessage.prototype._finish = function() {
-  assert(this.connection);
-  this.emit('prefinish');
-};
-
-
-// This logic is probably a bit confusing. Let me explain a bit:
-//
-// In both HTTP servers and clients it is possible to queue up several
-// outgoing messages. This is easiest to imagine in the case of a client.
-// Take the following situation:
-//
-//    req1 = client.request('GET', '/');
-//    req2 = client.request('POST', '/');
-//
-// When the user does
-//
-//   req2.write('hello world\n');
-//
-// it's possible that the first request has not been completely flushed to
-// the socket yet. Thus the outgoing messages need to be prepared to queue
-// up data internally before sending it on further to the socket's queue.
-//
-// This function, outgoingFlush(), is called by both the Server and Client
-// to attempt to flush any pending messages out to the socket.
-OutgoingMessage.prototype._flush = function() {
-  if (this.socket && this.socket.writable) {
-    var ret;
-    while (this.output.length) {
-      var data = this.output.shift();
-      var encoding = this.outputEncodings.shift();
-      var cb = this.outputCallbacks.shift();
-      ret = this.socket.write(data, encoding, cb);
-    }
-
-    if (this.finished) {
-      // This is a queue to the server or client to bring in the next this.
-      this._finish();
-    } else if (ret) {
-      // This is necessary to prevent https from breaking
-      this.emit('drain');
-    }
-  }
-};
-
-
-OutgoingMessage.prototype.flushHeaders = function outgoingFlushHeaders() {
-  if (!this._header) {
-    // Force-flush the headers.
-    this._implicitHeader();
-    this._send('');
-  }
-};
-
-}).call(this,require('_process'))
-},{"./_http_common":60,"_process":11,"assert":1,"buffer":3,"stream":27,"timers":29,"util":32}],63:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var util = require('util');
-var net = require('net');
-var EventEmitter = require('events').EventEmitter;
-var HTTPParser = require('http-parser-js').HTTPParser;
-var assert = require('assert').ok;
-
-var common = require('./_http_common');
-var parsers = common.parsers;
-var freeParser = common.freeParser;
-var debug = common.debug;
-var CRLF = common.CRLF;
-var continueExpression = common.continueExpression;
-var chunkExpression = common.chunkExpression;
-var httpSocketSetup = common.httpSocketSetup;
-
-var OutgoingMessage = require('./_http_outgoing').OutgoingMessage;
-
-
-var STATUS_CODES = exports.STATUS_CODES = {
-  100 : 'Continue',
-  101 : 'Switching Protocols',
-  102 : 'Processing',                 // RFC 2518, obsoleted by RFC 4918
-  200 : 'OK',
-  201 : 'Created',
-  202 : 'Accepted',
-  203 : 'Non-Authoritative Information',
-  204 : 'No Content',
-  205 : 'Reset Content',
-  206 : 'Partial Content',
-  207 : 'Multi-Status',               // RFC 4918
-  300 : 'Multiple Choices',
-  301 : 'Moved Permanently',
-  302 : 'Moved Temporarily',
-  303 : 'See Other',
-  304 : 'Not Modified',
-  305 : 'Use Proxy',
-  307 : 'Temporary Redirect',
-  308 : 'Permanent Redirect',         // RFC 7238
-  400 : 'Bad Request',
-  401 : 'Unauthorized',
-  402 : 'Payment Required',
-  403 : 'Forbidden',
-  404 : 'Not Found',
-  405 : 'Method Not Allowed',
-  406 : 'Not Acceptable',
-  407 : 'Proxy Authentication Required',
-  408 : 'Request Time-out',
-  409 : 'Conflict',
-  410 : 'Gone',
-  411 : 'Length Required',
-  412 : 'Precondition Failed',
-  413 : 'Request Entity Too Large',
-  414 : 'Request-URI Too Large',
-  415 : 'Unsupported Media Type',
-  416 : 'Requested Range Not Satisfiable',
-  417 : 'Expectation Failed',
-  418 : 'I\'m a teapot',              // RFC 2324
-  422 : 'Unprocessable Entity',       // RFC 4918
-  423 : 'Locked',                     // RFC 4918
-  424 : 'Failed Dependency',          // RFC 4918
-  425 : 'Unordered Collection',       // RFC 4918
-  426 : 'Upgrade Required',           // RFC 2817
-  428 : 'Precondition Required',      // RFC 6585
-  429 : 'Too Many Requests',          // RFC 6585
-  431 : 'Request Header Fields Too Large',// RFC 6585
-  500 : 'Internal Server Error',
-  501 : 'Not Implemented',
-  502 : 'Bad Gateway',
-  503 : 'Service Unavailable',
-  504 : 'Gateway Time-out',
-  505 : 'HTTP Version Not Supported',
-  506 : 'Variant Also Negotiates',    // RFC 2295
-  507 : 'Insufficient Storage',       // RFC 4918
-  509 : 'Bandwidth Limit Exceeded',
-  510 : 'Not Extended',               // RFC 2774
-  511 : 'Network Authentication Required' // RFC 6585
-};
-
-
-function ServerResponse(req) {
-  OutgoingMessage.call(this);
-
-  if (req.method === 'HEAD') this._hasBody = false;
-
-  this.sendDate = true;
-
-  if (req.httpVersionMajor < 1 || req.httpVersionMinor < 1) {
-    this.useChunkedEncodingByDefault = chunkExpression.test(req.headers.te);
-    this.shouldKeepAlive = false;
-  }
-}
-util.inherits(ServerResponse, OutgoingMessage);
-
-ServerResponse.prototype._finish = function() {
-  // DTRACE_HTTP_SERVER_RESPONSE(this.connection);
-  // COUNTER_HTTP_SERVER_RESPONSE();
-  OutgoingMessage.prototype._finish.call(this);
-};
-
-
-
-exports.ServerResponse = ServerResponse;
-
-ServerResponse.prototype.statusCode = 200;
-ServerResponse.prototype.statusMessage = undefined;
-
-function onServerResponseClose() {
-  // EventEmitter.emit makes a copy of the 'close' listeners array before
-  // calling the listeners. detachSocket() unregisters onServerResponseClose
-  // but if detachSocket() is called, directly or indirectly, by a 'close'
-  // listener, onServerResponseClose is still in that copy of the listeners
-  // array. That is, in the example below, b still gets called even though
-  // it's been removed by a:
-  //
-  //   var obj = new events.EventEmitter;
-  //   obj.on('event', a);
-  //   obj.on('event', b);
-  //   function a() { obj.removeListener('event', b) }
-  //   function b() { throw "BAM!" }
-  //   obj.emit('event');  // throws
-  //
-  // Ergo, we need to deal with stale 'close' events and handle the case
-  // where the ServerResponse object has already been deconstructed.
-  // Fortunately, that requires only a single if check. :-)
-  if (this._httpMessage) this._httpMessage.emit('close');
-}
-
-ServerResponse.prototype.assignSocket = function(socket) {
-  assert(!socket._httpMessage);
-  socket._httpMessage = this;
-  socket.on('close', onServerResponseClose);
-  this.socket = socket;
-  this.connection = socket;
-  this.emit('socket', socket);
-  this._flush();
-};
-
-ServerResponse.prototype.detachSocket = function(socket) {
-  assert(socket._httpMessage === this);
-  socket.removeListener('close', onServerResponseClose);
-  socket._httpMessage = null;
-  this.socket = this.connection = null;
-};
-
-ServerResponse.prototype.writeContinue = function(cb) {
-  this._writeRaw('HTTP/1.1 100 Continue' + CRLF + CRLF, 'ascii', cb);
-  this._sent100 = true;
-};
-
-ServerResponse.prototype._implicitHeader = function() {
-  this.writeHead(this.statusCode);
-};
-
-ServerResponse.prototype.writeHead = function(statusCode, reason, obj) {
-  var headers;
-
-  if (util.isString(reason)) {
-    // writeHead(statusCode, reasonPhrase[, headers])
-    this.statusMessage = reason;
-  } else {
-    // writeHead(statusCode[, headers])
-    this.statusMessage =
-        this.statusMessage || STATUS_CODES[statusCode] || 'unknown';
-    obj = reason;
-  }
-  this.statusCode = statusCode;
-
-  if (this._headers) {
-    // Slow-case: when progressive API and header fields are passed.
-    if (obj) {
-      var keys = Object.keys(obj);
-      for (var i = 0; i < keys.length; i++) {
-        var k = keys[i];
-        if (k) this.setHeader(k, obj[k]);
-      }
-    }
-    // only progressive api is used
-    headers = this._renderHeaders();
-  } else {
-    // only writeHead() called
-    headers = obj;
-  }
-
-  var statusLine = 'HTTP/1.1 ' + statusCode.toString() + ' ' +
-                   this.statusMessage + CRLF;
-
-  if (statusCode === 204 || statusCode === 304 ||
-      (100 <= statusCode && statusCode <= 199)) {
-    // RFC 2616, 10.2.5:
-    // The 204 response MUST NOT include a message-body, and thus is always
-    // terminated by the first empty line after the header fields.
-    // RFC 2616, 10.3.5:
-    // The 304 response MUST NOT contain a message-body, and thus is always
-    // terminated by the first empty line after the header fields.
-    // RFC 2616, 10.1 Informational 1xx:
-    // This class of status code indicates a provisional response,
-    // consisting only of the Status-Line and optional headers, and is
-    // terminated by an empty line.
-    this._hasBody = false;
-  }
-
-  // don't keep alive connections where the client expects 100 Continue
-  // but we sent a final status; they may put extra bytes on the wire.
-  if (this._expect_continue && !this._sent100) {
-    this.shouldKeepAlive = false;
-  }
-
-  this._storeHeader(statusLine, headers);
-};
-
-ServerResponse.prototype.writeHeader = function() {
-  this.writeHead.apply(this, arguments);
-};
-
-
-function Server(requestListener) {
-  if (!(this instanceof Server)) return new Server(requestListener);
-  net.Server.call(this, { allowHalfOpen: true });
-
-  if (requestListener) {
-    this.addListener('request', requestListener);
-  }
-
-  // Similar option to this. Too lazy to write my own docs.
-  // http://www.squid-cache.org/Doc/config/half_closed_clients/
-  // http://wiki.squid-cache.org/SquidFaq/InnerWorkings#What_is_a_half-closed_filedescriptor.3F
-  this.httpAllowHalfOpen = false;
-
-  this.addListener('connection', connectionListener);
-
-  this.addListener('clientError', function(err, conn) {
-    conn.destroy(err);
-  });
-
-  this.timeout = 2 * 60 * 1000;
-}
-util.inherits(Server, net.Server);
-
-
-Server.prototype.setTimeout = function(msecs, callback) {
-  this.timeout = msecs;
-  if (callback)
-    this.on('timeout', callback);
-};
-
-
-exports.Server = Server;
-
-
-function connectionListener(socket) {
-  var self = this;
-  var outgoing = [];
-  var incoming = [];
-
-  function abortIncoming() {
-    while (incoming.length) {
-      var req = incoming.shift();
-      req.emit('aborted');
-      req.emit('close');
-    }
-    // abort socket._httpMessage ?
-  }
-
-  function serverSocketCloseListener() {
-    debug('server socket close');
-    // mark this parser as reusable
-    if (this.parser) {
-      freeParser(this.parser, null, this);
-    }
-
-    abortIncoming();
-  }
-
-  debug('SERVER new http connection');
-
-  httpSocketSetup(socket);
-
-  // If the user has added a listener to the server,
-  // request, or response, then it's their responsibility.
-  // otherwise, destroy on timeout by default
-  if (self.timeout)
-    socket.setTimeout(self.timeout);
-  socket.on('timeout', function() {
-    var req = socket.parser && socket.parser.incoming;
-    var reqTimeout = req && !req.complete && req.emit('timeout', socket);
-    var res = socket._httpMessage;
-    var resTimeout = res && res.emit('timeout', socket);
-    var serverTimeout = self.emit('timeout', socket);
-
-    if (!reqTimeout && !resTimeout && !serverTimeout)
-      socket.destroy();
-  });
-
-  var parser = parsers.alloc();
-  parser.reinitialize(HTTPParser.REQUEST);
-  parser.socket = socket;
-  socket.parser = parser;
-  parser.incoming = null;
-
-  // Propagate headers limit from server instance to parser
-  if (util.isNumber(this.maxHeadersCount)) {
-    parser.maxHeaderPairs = this.maxHeadersCount << 1;
-  } else {
-    // Set default value because parser may be reused from FreeList
-    parser.maxHeaderPairs = 2000;
-  }
-
-  socket.addListener('error', socketOnError);
-  socket.addListener('close', serverSocketCloseListener);
-  parser.onIncoming = parserOnIncoming;
-  socket.on('end', socketOnEnd);
-  socket.on('data', socketOnData);
-
-  // TODO(isaacs): Move all these functions out of here
-  function socketOnError(e) {
-    self.emit('clientError', e, this);
-  }
-
-  function socketOnData(d) {
-    assert(!socket._paused);
-    debug('SERVER socketOnData %d', d.length);
-    var ret = parser.execute(d);
-    if (ret instanceof Error) {
-      debug('parse error');
-      socket.destroy(ret);
-    } else if (parser.incoming && parser.incoming.upgrade) {
-      // Upgrade or CONNECT
-      var bytesParsed = ret;
-      var req = parser.incoming;
-      debug('SERVER upgrade or connect', req.method);
-
-      socket.removeListener('data', socketOnData);
-      socket.removeListener('end', socketOnEnd);
-      socket.removeListener('close', serverSocketCloseListener);
-      parser.finish();
-      freeParser(parser, req, null);
-      parser = null;
-
-      var eventName = req.method === 'CONNECT' ? 'connect' : 'upgrade';
-      if (EventEmitter.listenerCount(self, eventName) > 0) {
-        debug('SERVER have listener for %s', eventName);
-        var bodyHead = d.slice(bytesParsed, d.length);
-
-        // TODO(isaacs): Need a way to reset a stream to fresh state
-        // IE, not flowing, and not explicitly paused.
-        socket._readableState.flowing = null;
-        self.emit(eventName, req, socket, bodyHead);
-      } else {
-        // Got upgrade header or CONNECT method, but have no handler.
-        socket.destroy();
-      }
-    }
-
-    if (socket._paused) {
-      // onIncoming paused the socket, we should pause the parser as well
-      debug('pause parser');
-      socket.parser.pause();
-    }
-  }
-
-  function socketOnEnd() {
-    var socket = this;
-    var ret = parser.finish();
-
-    if (ret instanceof Error) {
-      debug('parse error');
-      socket.destroy(ret);
-      return;
-    }
-
-    if (!self.httpAllowHalfOpen) {
-      abortIncoming();
-      if (socket.writable) socket.end();
-    } else if (outgoing.length) {
-      outgoing[outgoing.length - 1]._last = true;
-    } else if (socket._httpMessage) {
-      socket._httpMessage._last = true;
-    } else {
-      if (socket.writable) socket.end();
-    }
-  }
-
-
-  // The following callback is issued after the headers have been read on a
-  // new message. In this callback we setup the response object and pass it
-  // to the user.
-
-  socket._paused = false;
-  function socketOnDrain() {
-    // If we previously paused, then start reading again.
-    if (socket._paused) {
-      socket._paused = false;
-      socket.parser.resume();
-      socket.resume();
-    }
-  }
-  socket.on('drain', socketOnDrain);
-
-  function parserOnIncoming(req, shouldKeepAlive) {
-    incoming.push(req);
-
-    // If the writable end isn't consuming, then stop reading
-    // so that we don't become overwhelmed by a flood of
-    // pipelined requests that may never be resolved.
-    if (!socket._paused) {
-      var needPause = socket._writableState.needDrain;
-      if (needPause) {
-        socket._paused = true;
-        // We also need to pause the parser, but don't do that until after
-        // the call to execute, because we may still be processing the last
-        // chunk.
-        socket.pause();
-      }
-    }
-
-    var res = new ServerResponse(req);
-
-    res.shouldKeepAlive = shouldKeepAlive;
-    // DTRACE_HTTP_SERVER_REQUEST(req, socket);
-    // COUNTER_HTTP_SERVER_REQUEST();
-
-    if (socket._httpMessage) {
-      // There are already pending outgoing res, append.
-      outgoing.push(res);
-    } else {
-      res.assignSocket(socket);
-    }
-
-    // When we're finished writing the response, check if this is the last
-    // respose, if so destroy the socket.
-    res.on('prefinish', resOnFinish);
-    function resOnFinish() {
-      // Usually the first incoming element should be our request.  it may
-      // be that in the case abortIncoming() was called that the incoming
-      // array will be empty.
-      assert(incoming.length === 0 || incoming[0] === req);
-
-      incoming.shift();
-
-      // if the user never called req.read(), and didn't pipe() or
-      // .resume() or .on('data'), then we call req._dump() so that the
-      // bytes will be pulled off the wire.
-      if (!req._consuming && !req._readableState.resumeScheduled)
-        req._dump();
-
-      res.detachSocket(socket);
-
-      if (res._last) {
-        socket.destroySoon();
-      } else {
-        // start sending the next message
-        var m = outgoing.shift();
-        if (m) {
-          m.assignSocket(socket);
-        }
-      }
-    }
-
-    if (!util.isUndefined(req.headers.expect) &&
-        (req.httpVersionMajor == 1 && req.httpVersionMinor == 1) &&
-        continueExpression.test(req.headers['expect'])) {
-      res._expect_continue = true;
-      if (EventEmitter.listenerCount(self, 'checkContinue') > 0) {
-        self.emit('checkContinue', req, res);
-      } else {
-        res.writeContinue();
-        self.emit('request', req, res);
-      }
-    } else {
-      self.emit('request', req, res);
-    }
-    return false; // Not a HEAD response. (Not even a response!)
-  }
-}
-exports._connectionListener = connectionListener;
-
-},{"./_http_common":60,"./_http_outgoing":62,"assert":1,"events":8,"http-parser-js":65,"net":"net","util":32}],64:[function(require,module,exports){
-var FreeList = (function() {
-	function FreeList(name, max, constructor) {
-		this.name = name;
-		this.max = max;
-		this.constructor = constructor != null ? constructor : function() {};
-		this.list = [];
-	}
-
-	FreeList.prototype.alloc = function() {
-		if (this.list.length) {
-			return this.list.shift();
-		} else {
-			return this.constructor.apply(this, arguments);
-		}
-	};
-
-	FreeList.prototype.free = function(obj) {
-		if (this.list.length < this.max) {
-			this.list.push(obj);
-			return true;
-		} else {
-			return false;
-		}
-	};
-
-	return FreeList;
-})();
-
-// remain backward compatible
-FreeList.FreeList = FreeList;
-
-module.exports = FreeList;
-
-},{}],65:[function(require,module,exports){
-/*jshint node:true */
-
-var assert = require('assert');
-
-exports.HTTPParser = HTTPParser;
-function HTTPParser(type) {
-  assert.ok(type === HTTPParser.REQUEST || type === HTTPParser.RESPONSE);
-  this.type = type;
-  this.state = type + '_LINE';
-  this.info = {
-    headers: [],
-    upgrade: false
-  };
-  this.trailers = [];
-  this.line = '';
-  this.isChunked = false;
-  this.connection = '';
-  this.headerSize = 0; // for preventing too big headers
-  this.body_bytes = null;
-  this.isUserCall = false;
-}
-HTTPParser.REQUEST = 'REQUEST';
-HTTPParser.RESPONSE = 'RESPONSE';
-var kOnHeaders = HTTPParser.kOnHeaders = 0;
-var kOnHeadersComplete = HTTPParser.kOnHeadersComplete = 1;
-var kOnBody = HTTPParser.kOnBody = 2;
-var kOnMessageComplete = HTTPParser.kOnMessageComplete = 3;
-var methods = HTTPParser.methods = [
-  'DELETE',
-  'GET',
-  'HEAD',
-  'POST',
-  'PUT',
-  'CONNECT',
-  'OPTIONS',
-  'TRACE',
-  'COPY',
-  'LOCK',
-  'MKCOL',
-  'MOVE',
-  'PROPFIND',
-  'PROPPATCH',
-  'SEARCH',
-  'UNLOCK',
-  'REPORT',
-  'MKACTIVITY',
-  'CHECKOUT',
-  'MERGE',
-  'M-SEARCH',
-  'NOTIFY',
-  'SUBSCRIBE',
-  'UNSUBSCRIBE',
-  'PATCH',
-  'PURGE'
-];
-HTTPParser.prototype.reinitialize = HTTPParser;
-HTTPParser.prototype.close =
-HTTPParser.prototype.pause =
-HTTPParser.prototype.resume = function () {};
-HTTPParser.prototype._compatMode = false;
-
-var maxHeaderSize = 80 * 1024;
-var headerState = {
-  REQUEST_LINE: true,
-  RESPONSE_LINE: true,
-  HEADER: true
-};
-HTTPParser.prototype.execute = function (chunk, start, length) {
-  if (!(this instanceof HTTPParser)) {
-    throw new TypeError('not a HTTPParser');
-  }
-  
-  // backward compat to node < 0.11.4
-  // Note: the start and length params were removed in newer version
-  start = start || 0;
-  length = typeof length === 'number' ? length : chunk.length;
-
-  this.chunk = chunk;
-  this.offset = start;
-  var end = this.end = start + length;
-  try {
-    while (this.offset < end) {
-      if (this[this.state]()) {
-        break;
-      }
-    }
-  } catch (err) {
-    if (this.isUserCall) {
-      throw err;
-    }
-    return err;
-  }
-  this.chunk = null;
-  var length = this.offset - start
-  if (headerState[this.state]) {
-    this.headerSize += length;
-    if (this.headerSize > maxHeaderSize) {
-      return new Error('max header size exceeded');
-    }
-  }
-  return length;
-};
-
-var stateFinishAllowed = {
-  REQUEST_LINE: true,
-  RESPONSE_LINE: true,
-  BODY_RAW: true
-};
-HTTPParser.prototype.finish = function () {
-  if (!stateFinishAllowed[this.state]) {
-    return new Error('invalid state for EOF');
-  }
-  if (this.state === 'BODY_RAW') {
-    this.userCall()(this[kOnMessageComplete]());
-  }
-};
-
-//For correct error handling - see HTTPParser#execute
-//Usage: this.userCall()(userFunction('arg'));
-HTTPParser.prototype.userCall = function () {
-  this.isUserCall = true;
-  var self = this;
-  return function (ret) {
-    self.isUserCall = false;
-    return ret;
-  };
-};
-
-HTTPParser.prototype.nextRequest = function () {
-  this.userCall()(this[kOnMessageComplete]());
-  this.reinitialize(this.type);
-};
-
-HTTPParser.prototype.consumeLine = function () {
-  var end = this.end,
-      chunk = this.chunk;
-  for (var i = this.offset; i < end; i++) {
-    if (chunk[i] === 0x0a) { // \n
-      var line = this.line + chunk.toString('ascii', this.offset, i);
-      if (line.charAt(line.length - 1) === '\r') {
-        line = line.substr(0, line.length - 1);
-      }
-      this.line = '';
-      this.offset = i + 1;
-      return line;
-    }
-  }
-  //line split over multiple chunks
-  this.line += chunk.toString('ascii', this.offset, this.end);
-  this.offset = this.end;
-};
-
-var headerExp = /^([^: \t]+):[ \t]*((?:.*[^ \t])|)/;
-var headerContinueExp = /^[ \t]+(.*[^ \t])/;
-HTTPParser.prototype.parseHeader = function (line, headers) {
-  var match = headerExp.exec(line);
-  var k = match && match[1];
-  if (k) { // skip empty string (malformed header)
-    headers.push(k);
-    headers.push(match[2]);
-  } else {
-    var matchContinue = headerContinueExp.exec(line);
-    if (matchContinue && headers.length) {
-      if (headers[headers.length - 1]) {
-        headers[headers.length - 1] += ' ';
-      }
-      headers[headers.length - 1] += matchContinue[1];
-    }
-  }
-};
-
-var requestExp = /^([A-Z-]+) ([^ ]+) HTTP\/(\d)\.(\d)$/;
-HTTPParser.prototype.REQUEST_LINE = function () {
-  var line = this.consumeLine();
-  if (!line) {
-    return;
-  }
-  var match = requestExp.exec(line);
-  if (match === null) {
-    var err = new Error('Parse Error');
-    err.code = 'HPE_INVALID_CONSTANT';
-    throw err;
-  }
-  this.info.method = this._compatMode ? match[1] : methods.indexOf(match[1]);
-  if (this.info.method === -1) {
-    throw new Error('invalid request method');
-  }
-  if (match[1] === 'CONNECT') {
-    this.info.upgrade = true;
-  }
-  this.info.url = match[2];
-  this.info.versionMajor = +match[3];
-  this.info.versionMinor = +match[4];
-  this.body_bytes = 0;
-  this.state = 'HEADER';
-};
-
-var responseExp = /^HTTP\/(\d)\.(\d) (\d{3}) ?(.*)$/;
-HTTPParser.prototype.RESPONSE_LINE = function () {
-  var line = this.consumeLine();
-  if (!line) {
-    return;
-  }
-  var match = responseExp.exec(line);
-  if (match === null) {
-    var err = new Error('Parse Error');
-    err.code = 'HPE_INVALID_CONSTANT';
-    throw err;
-  }
-  this.info.versionMajor = +match[1];
-  this.info.versionMinor = +match[2];
-  var statusCode = this.info.statusCode = +match[3];
-  this.info.statusMessage = match[4];
-  // Implied zero length.
-  if ((statusCode / 100 | 0) === 1 || statusCode === 204 || statusCode === 304) {
-    this.body_bytes = 0;
-  }
-  this.state = 'HEADER';
-};
-
-HTTPParser.prototype.shouldKeepAlive = function () {
-  if (this.info.versionMajor > 0 && this.info.versionMinor > 0) {
-    if (this.connection.indexOf('close') !== -1) {
-      return false;
-    }
-  } else if (this.connection.indexOf('keep-alive') === -1) {
-    return false;
-  }
-  if (this.body_bytes !== null || this.isChunked) { // || skipBody
-    return true;
-  }
-  return false;
-};
-
-HTTPParser.prototype.HEADER = function () {
-  var line = this.consumeLine();
-  if (line === undefined) {
-    return;
-  }
-  if (line) {
-    this.parseHeader(line, this.info.headers);
-  } else {
-    var headers = this.info.headers;
-    for (var i = 0; i < headers.length; i += 2) {
-      switch (headers[i].toLowerCase()) {
-        case 'transfer-encoding':
-          this.isChunked = headers[i + 1].toLowerCase() === 'chunked';
-          break;
-        case 'content-length':
-          this.body_bytes = +headers[i + 1];
-          break;
-        case 'connection':
-          this.connection += headers[i + 1].toLowerCase();
-          break;
-        case 'upgrade':
-          this.info.upgrade = true;
-          break;
-      }
-    }
-    
-    this.info.shouldKeepAlive = this.shouldKeepAlive();
-    //problem which also exists in original node: we should know skipBody before calling onHeadersComplete
-    var skipBody = this.userCall()(this[kOnHeadersComplete](this.info));
-    
-    if (this.info.upgrade) {
-      this.nextRequest();
-      return true;
-    } else if (this.isChunked && !skipBody) {
-      this.state = 'BODY_CHUNKHEAD';
-    } else if (skipBody || this.body_bytes === 0) {
-      this.nextRequest();
-    } else if (this.body_bytes === null) {
-      this.state = 'BODY_RAW';
-    } else {
-      this.state = 'BODY_SIZED';
-    }
-  }
-};
-
-HTTPParser.prototype.BODY_CHUNKHEAD = function () {
-  var line = this.consumeLine();
-  if (line === undefined) {
-    return;
-  }
-  this.body_bytes = parseInt(line, 16);
-  if (!this.body_bytes) {
-    this.state = 'BODY_CHUNKTRAILERS';
-  } else {
-    this.state = 'BODY_CHUNK';
-  }
-};
-
-HTTPParser.prototype.BODY_CHUNK = function () {
-  var length = Math.min(this.end - this.offset, this.body_bytes);
-  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
-  this.offset += length;
-  this.body_bytes -= length;
-  if (!this.body_bytes) {
-    this.state = 'BODY_CHUNKEMPTYLINE';
-  }
-};
-
-HTTPParser.prototype.BODY_CHUNKEMPTYLINE = function () {
-  var line = this.consumeLine();
-  if (line === undefined) {
-    return;
-  }
-  assert.equal(line, '');
-  this.state = 'BODY_CHUNKHEAD';
-};
-
-HTTPParser.prototype.BODY_CHUNKTRAILERS = function () {
-  var line = this.consumeLine();
-  if (line === undefined) {
-    return;
-  }
-  if (line) {
-    this.parseHeader(line, this.trailers);
-  } else {
-    if (this.trailers.length) {
-      this.userCall()(this[kOnHeaders](this.trailers, this.info.url));
-    }
-    this.nextRequest();
-  }
-};
-
-HTTPParser.prototype.BODY_RAW = function () {
-  var length = this.end - this.offset;
-  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
-  this.offset = this.end;
-};
-
-HTTPParser.prototype.BODY_SIZED = function () {
-  var length = Math.min(this.end - this.offset, this.body_bytes);
-  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
-  this.offset += length;
-  this.body_bytes -= length;
-  if (!this.body_bytes) {
-    this.nextRequest();
-  }
-};
-
-// backward compat to node < 0.11.6
-['Headers', 'HeadersComplete', 'Body', 'MessageComplete'].forEach(function (name) {
-  var k = HTTPParser['kOn' + name];
-  Object.defineProperty(HTTPParser.prototype, 'on' + name, {
-    get: function () {
-      return this[k];
-    },
-    set: function (to) {
-      // hack for backward compatibility
-      this._compatMode = true;
-      return (this[k] = to);
-    }
-  });
-});
-
-},{"assert":1}],66:[function(require,module,exports){
-var packets = require('./packets')
-var dgram = require('dgram')
-var thunky = require('thunky')
-var events = require('events')
-
-var noop = function () {}
-
-module.exports = function (opts) {
-  if (!opts) opts = {}
-
-  var that = new events.EventEmitter()
-  var port = opts.port || 5353
-  var type = opts.type || 'udp4'
-  var ip = opts.ip || opts.host || (type === 'udp4' ? '224.0.0.251' : null)
-
-  if (type === 'udp6' && (!ip || !opts.interface)) {
-    throw new Error('For IPv6 multicast you must specify `ip` and `interface`')
-  }
-
-  var createSocket = function () {
-    var socket = dgram.createSocket({
-      type: type,
-      reuseAddr: opts.reuseAddr !== false,
-      toString: function () {
-        return type
-      }
-    })
-
-    socket.on('error', function (err) {
-      that.emit('warning', err)
-    })
-
-    socket.on('message', function (message, rinfo) {
-      try {
-        message = packets.decode(message)
-      } catch (err) {
-        that.emit('warning', err)
-        return
-      }
-
-      that.emit('packet', message, rinfo)
-
-      if (message.type === 'query') that.emit('query', message, rinfo)
-      if (message.type === 'response') that.emit('response', message, rinfo)
-    })
-
-    socket.on('listening', function () {
-      if (opts.multicast !== false) {
-        socket.addMembership(ip, opts.interface)
-        socket.setMulticastTTL(opts.ttl || 255)
-        socket.setMulticastLoopback(opts.loopback !== false)
-      }
-    })
-
-    return socket
-  }
-
-  var receiveSocket = createSocket()
-  var sendSocket = createSocket()
-
-  var sendBind = thunky(function (cb) {
-    sendSocket.on('error', cb)
-    sendSocket.bind(0, function () {
-      sendSocket.removeListener('error', cb)
-      cb(null, sendSocket)
-    })
-  })
-
-  receiveSocket.bind(port, function () {
-    that.emit('ready')
-  })
-
-  that.send = function (packet, cb) {
-    if (!cb) cb = noop
-    sendBind(function (err, socket) {
-      if (err) return cb(err)
-      var message = packets.encode(packet)
-      sendSocket.send(message, 0, message.length, port, ip, cb)
-    })
-  }
-
-  that.response =
-  that.respond = function (res, cb) {
-    if (!cb) cb = noop
-    if (Array.isArray(res)) res = {answers: res}
-
-    res.type = 'response'
-    that.send(res, cb)
-  }
-
-  that.query = function (q, type, cb) {
-    if (typeof type === 'function') return that.query(q, null, type)
-    if (!cb) cb = noop
-
-    if (typeof q === 'string') q = [{name: q, type: type || 'A'}]
-    if (Array.isArray(q)) q = {type: 'query', questions: q}
-
-    q.type = 'query'
-    that.send(q, cb)
-  }
-
-  that.destroy = function (cb) {
-    if (!cb) cb = noop
-    sendSocket.once('close', function () {
-      receiveSocket.once('close', cb)
-      receiveSocket.close()
-    })
-    sendSocket.close()
-  }
-
-  return that
-}
-
-},{"./packets":68,"dgram":"dgram","events":8,"thunky":67}],67:[function(require,module,exports){
-var isError = function(err) { // inlined from util so this works in the browser
-	return Object.prototype.toString.call(err) === '[object Error]';
-};
-
-var thunky = function(fn) {
-	var run = function(callback) {
-		var stack = [callback];
-
-		state = function(callback) {
-			stack.push(callback);
-		};
-
-		fn(function(err) {
-			var args = arguments;
-			var apply = function(callback) {
-				if (callback) callback.apply(null, args);
-			};
-
-			state = isError(err) ? run : apply;
-			while (stack.length) apply(stack.shift());
-		});
-	};
-
-	var state = run;
-
-	return function(callback) {
-		state(callback);
-	};
-};
-
-module.exports = thunky;
-},{}],68:[function(require,module,exports){
-(function (Buffer){
-var types = require('./types')
-
-var name = {}
-
-name.decode = function (buf, offset) {
-  var list = []
-  var oldOffset = offset
-  var len = buf[offset++]
-
-  if (len >= 0xc0) {
-    var res = name.decode(buf, buf.readUInt16BE(offset - 1) - 0xc000)
-    name.decode.bytes = 2
-    return res
-  }
-
-  while (len) {
-    if (len >= 0xc0) {
-      list.push(name.decode(buf, buf.readUInt16BE(offset - 1) - 0xc000))
-      offset++
-      break
-    }
-
-    list.push(buf.toString('utf-8', offset, offset + len))
-    offset += len
-    len = buf[offset++]
-  }
-
-  name.decode.bytes = offset - oldOffset
-  return list.join('.')
-}
-
-name.encode = function (n, buf, offset) {
-  var list = n.split('.')
-  var oldOffset = offset
-
-  for (var i = 0; i < list.length; i++) {
-    var len = buf.write(list[i], offset + 1)
-    buf[offset] = len
-    offset += len + 1
-  }
-
-  buf[offset++] = 0
-
-  name.encode.bytes = offset - oldOffset
-  return buf
-}
-
-name.encodingLength = function (n) {
-  return Buffer.byteLength(n) + 2
-}
-
-var str = {}
-
-str.encode = function (s, buf, offset) {
-  var len = buf.write(s, offset + 1)
-  buf[offset] = len
-  str.encode.bytes = len + 1
-  return buf
-}
-
-str.decode = function (buf, offset) {
-  var len = buf[offset]
-  var s = buf.toString('utf-8', offset + 1, offset + 1 + len)
-  str.decode.bytes = len + 1
-  return s
-}
-
-str.encodingLength = function (s) {
-  return Buffer.byteLength(s) + 1
-}
-
-var QUERY_FLAG = 0x0000
-var RESPONSE_FLAG = 0x8400
-
-var header = {}
-
-header.decode = function (buf, offset) {
-  var flags = buf.readUInt16BE(offset + 2)
-  if (flags !== RESPONSE_FLAG && flags !== QUERY_FLAG) throw new Error('bad type: ' + flags)
-
-  header.decode.bytes = 12
-  return {
-    type: flags === RESPONSE_FLAG ? 'response' : 'query',
-    qdcount: buf.readUInt16BE(offset + 4),
-    ancount: buf.readUInt16BE(offset + 6),
-    nscount: buf.readUInt16BE(offset + 8),
-    arcount: buf.readUInt16BE(offset + 10)
-   }
-}
-
-header.encode = function (h, buf, offset) {
-  buf.writeUInt16BE(0, offset)
-  buf.writeUInt16BE(h.type === 'response' ? RESPONSE_FLAG : QUERY_FLAG, offset + 2)
-  buf.writeUInt16BE(h.qdcount, offset + 4)
-  buf.writeUInt16BE(h.ancount, offset + 6)
-  buf.writeUInt16BE(h.nscount, offset + 8)
-  buf.writeUInt16BE(h.arcount, offset + 10)
-
-  header.encode.bytes = 12
-  return buf
-}
-
-header.encodingLength = function (h) {
-  return 12
-}
-
-var runknown = {}
-
-runknown.encode = function (data, buf, offset) {
-  buf.writeUInt16BE(data.length, offset)
-  data.copy(buf, offset + 2)
-
-  runknown.encode.bytes = data.length + 2
-  return buf
-}
-
-runknown.decode = function (buf, offset) {
-  var len = buf.readUInt16BE(offset)
-  var data = buf.slice(offset + 2, offset + 2 + len)
-  runknown.decode.bytes = len + 2
-  return data
-}
-
-runknown.encodingLength = function (data) {
-  return data.length + 2
-}
-
-var rtxt = {}
-
-rtxt.encode = function (s, buf, offset) {
-  str.encode(s, buf, offset + 2)
-  buf.writeUInt16BE(str.encode.bytes, offset)
-  rtxt.encode.bytes = str.encode.bytes + 2
-  return buf
-}
-
-rtxt.decode = function (buf, offset) {
-  var s = str.decode(buf, offset + 2)
-  rtxt.decode.bytes = str.decode.bytes + 2
-  return s
-}
-
-rtxt.encodingLength = function (s) {
-  return str.encodingLength(s) + 2
-}
-
-var rhinfo = {}
-
-rhinfo.encode = function (data, buf, offset) {
-  var oldOffset = offset
-  offset += 2
-  str.encode(data.cpu, buf, offset)
-  offset += str.encode.bytes
-  str.encode(data.os, buf, offset)
-  offset += str.encode.bytes
-  buf.writeUInt32BE(offset - oldOffset - 2, oldOffset)
-  rhinfo.encode.bytes = offset - oldOffset
-  return buf
-}
-
-rhinfo.decode = function (buf, offset) {
-  var oldOffset = offset
-
-  var data = {}
-  offset += 2
-  data.cpu = str.decode(buf, offset)
-  offset += str.decode.bytes
-  data.os = str.decode(buf, offset)
-  offset += str.decode.bytes
-  rhinfo.decode.bytes = offset - oldOffset
-  return data
-}
-
-rhinfo.encodingLength = function (data) {
-  return str.encodingLength(data.cpu) + str.encodingLength(data.os) + 2
-}
-
-var rptr = {}
-
-rptr.encode = function (data, buf, offset) {
-  name.encode(data, buf, offset + 2)
-  buf.writeUInt16BE(name.encode.bytes, offset)
-  rptr.encode.bytes = name.encode.bytes + 2
-  return buf
-}
-
-rptr.decode = function (buf, offset) {
-  var data = name.decode(buf, offset + 2)
-  rptr.decode.bytes = name.decode.bytes + 2
-  return data
-}
-
-rptr.encodingLength = function (data) {
-  return name.encodingLength(data) + 2
-}
-
-var rsrv = {}
-
-rsrv.encode = function (data, buf, offset) {
-  buf.writeUInt16BE(data.priority || 0, offset + 2)
-  buf.writeUInt16BE(data.weight || 0, offset + 4)
-  buf.writeUInt16BE(data.port || 0, offset + 6)
-  name.encode(data.target, buf, offset + 8)
-
-  var len = name.encode.bytes + 6
-  buf.writeUInt16BE(len, offset)
-
-  rsrv.encode.bytes = len + 2
-  return buf
-}
-
-rsrv.decode = function (buf, offset) {
-  var len = buf.readUInt16BE(offset)
-
-  var data = {}
-  data.priority = buf.readUInt16BE(offset + 2)
-  data.weight = buf.readUInt16BE(offset + 4)
-  data.port = buf.readUInt16BE(offset + 6)
-  data.target = name.decode(buf, offset + 8)
-
-  rsrv.decode.bytes = len + 2
-  return data
-}
-
-rsrv.encodingLength = function (data) {
-  return 8 + name.encodingLength(data.target)
-}
-
-var ra = {}
-
-ra.encode = function (host, buf, offset) {
-  buf.writeUInt16BE(4, offset)
-  offset += 2
-
-  var nums = host.split('.')
-  for (var i = 0; i < 4; i++) buf[offset++] = Number(nums[i])
-
-  ra.encode.bytes = 6
-  return buf
-}
-
-ra.decode = function (buf, offset) {
-  offset += 2
-
-  var host = []
-  for (var i = 0; i < 4; i++) host.push(buf[offset++])
-
-  ra.decode.bytes = 6
-  return host.join('.')
-}
-
-ra.encodingLength = function (host) {
-  return 6
-}
-
-var raaaa = {}
-
-raaaa.encode = function (host, buf, offset) {
-  buf.writeUInt16BE(16, offset)
-  offset += 2
-
-  var nums = host.split(':')
-  var idx = nums.indexOf('')
-  var missing = 8 - nums.length
-  for (var i = 0; i < missing; i++) nums.splice(idx, 0, '0')
-  for (var j = 0; j < nums.length; j++) buf.writeUInt16BE(parseInt(nums[j] || 0, 16), offset + 2 * j)
-
-  raaaa.encode.bytes = 18
-  return buf
-}
-
-raaaa.decode = function (buf, offset) {
-  offset += 2
-
-  var host = []
-  for (var i = 0; i < 16; i += 2) host.push(buf.toString('hex', offset + i, offset + i + 2))
-
-  raaaa.decode.bytes = 18
-  return host.join(':').replace(/(:|^)0000(:0000)*(:|$)/, '$1$3').replace(/(^|:)0*(\d)/g, '$1$2')
-}
-
-raaaa.encodingLength = function (host) {
-  return 18
-}
-
-var answer = {}
-
-var renc = function (type) {
-  switch (type.toUpperCase()) {
-    case 'A': return ra
-    case 'PTR': return rptr
-    case 'TXT': return rtxt
-    case 'AAAA': return raaaa
-    case 'SRV': return rsrv
-    case 'HINFO': return rhinfo
-  }
-  return runknown
-}
-
-answer.decode = function (buf, offset) {
-  var a = {}
-  var oldOffset = offset
-
-  a.name = name.decode(buf, offset)
-  offset += name.decode.bytes
-  a.type = types.toString(buf.readUInt16BE(offset))
-  a.class = buf.readUInt16BE(offset + 2)
-  a.ttl = buf.readUInt32BE(offset + 4)
-
-  var enc = renc(a.type)
-  a.data = enc.decode(buf, offset + 8)
-  offset += 8 + enc.decode.bytes
-
-  answer.decode.bytes = offset - oldOffset
-  return a
-}
-
-answer.encode = function (a, buf, offset) {
-  var oldOffset = offset
-
-  name.encode(a.name, buf, offset)
-  offset += name.encode.bytes
-
-  buf.writeUInt16BE(types.toType(a.type), offset)
-  buf.writeUInt16BE(a.class === undefined ? 1 : a.class, offset + 2)
-  buf.writeUInt32BE(a.ttl || 0, offset + 4)
-
-  var enc = renc(a.type)
-  enc.encode(a.data, buf, offset + 8)
-  offset += 8 + enc.encode.bytes
-
-  answer.encode.bytes = offset - oldOffset
-  return buf
-}
-
-answer.encodingLength = function (a) {
-  return name.encodingLength(a.name) + 8 + renc(a.type).encodingLength(a.data)
-}
-
-var question = {}
-
-question.decode = function (buf, offset) {
-  var oldOffset = offset
-  var q = {}
-
-  q.name = name.decode(buf, offset)
-  offset += name.decode.bytes
-
-  q.type = types.toString(buf.readUInt16BE(offset))
-  offset += 2
-
-  q.class = buf.readUInt16BE(offset)
-  offset += 2
-
-  question.decode.bytes = offset - oldOffset
-  return q
-}
-
-question.encode = function (q, buf, offset) {
-  var oldOffset = offset
-
-  name.encode(q.name, buf, offset)
-  offset += name.encode.bytes
-
-  buf.writeUInt16BE(types.toType(q.type), offset)
-  offset += 2
-
-  buf.writeUInt16BE(q.class === undefined ? 1 : q.class, offset)
-  offset += 2
-
-  question.encode.bytes = offset - oldOffset
-  return q
-}
-
-question.encodingLength = function (q) {
-  return name.encodingLength(q.name) + 4
-}
-
-var encodeList = function (list, enc, buf, offset) {
-  for (var i = 0; i < list.length; i++) {
-    enc.encode(list[i], buf, offset)
-    offset += enc.encode.bytes
-  }
-  return offset
-}
-
-var encodingLengthList = function (list, enc) {
-  var len = 0
-  for (var i = 0; i < list.length; i++) len += enc.encodingLength(list[i])
-  return len
-}
-
-exports.encode = function (result) {
-  result.qdcount = result.questions ? result.questions.length : 0
-  result.ancount = result.answers ? result.answers.length : 0
-  result.nscount = result.authorities ? result.authorities.length : 0
-  result.arcount = result.additionals ? result.additionals.length : 0
-
-  var len = header.encodingLength(result)
-  len += encodingLengthList(result.questions || [], question)
-  len += encodingLengthList(result.answers || [], answer)
-  len += encodingLengthList(result.authorities || [], answer)
-  len += encodingLengthList(result.additionals || [], answer)
-
-  var buf = new Buffer(len)
-  header.encode(result, buf, 0)
-
-  var offset = header.encode.bytes
-  offset = encodeList(result.questions || [], question, buf, offset)
-  offset = encodeList(result.answers || [], answer, buf, offset)
-  offset = encodeList(result.authorities || [], answer, buf, offset)
-  offset = encodeList(result.additionals || [], answer, buf, offset)
-
-  return buf
-}
-
-var decodeList = function (list, enc, buf, offset) {
-  for (var i = 0; i < list.length; i++) {
-    list[i] = enc.decode(buf, offset)
-    offset += enc.decode.bytes
-  }
-  return offset
-}
-
-exports.decode = function (buf) {
-  var result = header.decode(buf, 0)
-  var offset = header.decode.bytes
-
-  offset = decodeList(result.questions = new Array(result.qdcount), question, buf, offset)
-  offset = decodeList(result.answers = new Array(result.ancount), answer, buf, offset)
-  offset = decodeList(result.authorities = new Array(result.nscount), answer, buf, offset)
-  offset = decodeList(result.additionals = new Array(result.arcount), answer, buf, offset)
-
-  return result
-}
-
-}).call(this,require("buffer").Buffer)
-},{"./types":69,"buffer":3}],69:[function(require,module,exports){
-exports.toString = function (type) {
-  switch (type) {
-    case 1: return 'A'
-    case 28: return 'AAAA'
-    case 18: return 'AFSDB'
-    case 42: return 'APL'
-    case 257: return 'CAA'
-    case 60: return 'CDNSKEY'
-    case 59: return 'CDS'
-    case 37: return 'CERT'
-    case 5: return 'CNAME'
-    case 49: return 'DHCID'
-    case 32769: return 'DLV'
-    case 39: return 'DNAME'
-    case 48: return 'DNSKEY'
-    case 43: return 'DS'
-    case 55: return 'HIP'
-    case 13: return 'HINFO'
-    case 45: return 'IPSECKEY'
-    case 25: return 'KEY'
-    case 36: return 'KX'
-    case 29: return 'LOC'
-    case 15: return 'MX'
-    case 35: return 'NAPTR'
-    case 2: return 'NS'
-    case 47: return 'NSEC'
-    case 50: return 'NSEC3'
-    case 51: return 'NSEC3PARAM'
-    case 12: return 'PTR'
-    case 46: return 'RRSIG'
-    case 17: return 'RP'
-    case 24: return 'SIG'
-    case 6: return 'SOA'
-    case 99: return 'SPF'
-    case 33: return 'SRV'
-    case 44: return 'SSHFP'
-    case 32768: return 'TA'
-    case 249: return 'TKEY'
-    case 52: return 'TLSA'
-    case 250: return 'TSIG'
-    case 16: return 'TXT'
-    case 252: return 'AXFR'
-    case 251: return 'IXFR'
-    case 41: return 'OPT'
-    case 255: return 'ANY'
-  }
-  return 'UNKNOWN-' + type
-}
-
-exports.toType = function (name) {
-  switch (name.toUpperCase()) {
-    case 'A': return 1
-    case 'AAAA': return 28
-    case 'AFSDB': return 18
-    case 'APL': return 42
-    case 'CAA': return 257
-    case 'CDNSKEY': return 60
-    case 'CDS': return 59
-    case 'CERT': return 37
-    case 'CNAME': return 5
-    case 'DHCID': return 49
-    case 'DLV': return 32769
-    case 'DNAME': return 39
-    case 'DNSKEY': return 48
-    case 'DS': return 43
-    case 'HIP': return 55
-    case 'HINFO': return 13
-    case 'IPSECKEY': return 45
-    case 'KEY': return 25
-    case 'KX': return 36
-    case 'LOC': return 29
-    case 'MX': return 15
-    case 'NAPTR': return 35
-    case 'NS': return 2
-    case 'NSEC': return 47
-    case 'NSEC3': return 50
-    case 'NSEC3PARAM': return 51
-    case 'PTR': return 12
-    case 'RRSIG': return 46
-    case 'RP': return 17
-    case 'SIG': return 24
-    case 'SOA': return 6
-    case 'SPF': return 99
-    case 'SRV': return 33
-    case 'SSHFP': return 44
-    case 'TA': return 32768
-    case 'TKEY': return 249
-    case 'TLSA': return 52
-    case 'TSIG': return 250
-    case 'TXT': return 16
-    case 'AXFR': return 252
-    case 'IXFR': return 251
-    case 'OPT': return 41
-    case 'ANY': return 255
-    case '*': return 255
-  }
-  return 0
-}
-
-},{}],70:[function(require,module,exports){
-chrome.app.runtime.onLaunched.addListener(function () { // eslint-disable-line
-  chrome.app.window.create('index.html', { // eslint-disable-line
-    'bounds': {
-      'width': 1000,
-      'height': 700
-    }
-  })
-})
-//var express = require('express');
-//var app = express();
-//
-//app.get('/', function (req, res) {
-//  console.log('connect')
-//  res.send('Hello World!');
-//  res.end();
-//});
-//
-//var server = app.listen(3000, '127.0.0.1', function () {
-//  var host = server.address().address;
-//  var port = server.address().port;
-//
-//  console.log('Example app listening at http://%s:%s', host, port);
-//});
-var http = require('http');
-http.createServer(function (req, res) {
-  res.writeHead(200, {'Content-Type': 'text/plain'});
-  res.end('Hello World\n');
-}).listen(3000, '127.0.0.1');
-console.log('Server running at http://127.0.0.1:3000/');
-
-
-var mdns = require('multicast-dns')()
-
-mdns.on('response', function(response) {
-  console.log('got a response packet:', response)
-})
-
-mdns.on('query', function(query) {
-  console.log('got a query packet:', query)
-})
-
-// lets query for an A record for 'brunhilde.local'
-mdns.query({
-  questions:[{
-    name: 'brunhilde.local',
-    type: 'A'
-  }]
-})
-},{"http":"http","multicast-dns":66}],"debug":[function(require,module,exports){
+},{"./support/isBuffer":76,"_process":56,"inherits":53}],"debug":[function(require,module,exports){
 
 /**
  * This is the web browser implementation of `debug()`.
@@ -12481,7 +15088,7 @@ function localstorage(){
   } catch (e) {}
 }
 
-},{"./debug":33,"localstorage-memory":34}],"depd":[function(require,module,exports){
+},{"./debug":1,"localstorage-memory":2}],"depd":[function(require,module,exports){
 (function (process){
 /*!
  * depd
@@ -13014,7 +15621,7 @@ function DeprecationError(namespace, message, stack) {
 }
 
 }).call(this,require('_process'))
-},{"./lib/compat":38,"_process":11,"events":8,"path":"path"}],"dgram":[function(require,module,exports){
+},{"./lib/compat":6,"_process":56,"events":52,"path":"path"}],"dgram":[function(require,module,exports){
 (function (Buffer){
 /*global chrome */
 
@@ -13446,7 +16053,7 @@ Socket.prototype.ref = function () {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":3,"events":8,"inherits":39,"run-series":40}],"fs":[function(require,module,exports){
+},{"buffer":47,"events":52,"inherits":7,"run-series":8}],"fs":[function(require,module,exports){
 (function (process){
 var util = require('util')
 var Buffer = require('buffer').Buffer
@@ -14702,7 +17309,7 @@ function flagToString (flag) {
 }
 
 }).call(this,require('_process'))
-},{"_process":11,"buffer":3,"constants":7,"path":"path","stream":27,"util":32}],"https":[function(require,module,exports){
+},{"_process":56,"buffer":47,"constants":51,"path":"path","stream":72,"util":77}],"https":[function(require,module,exports){
 var http = require('./http');
 
 var https = module.exports;
@@ -14716,7 +17323,7 @@ https.request = function (params, cb) {
     params.scheme = 'https';
     return http.request.call(this, params, cb);
 }
-},{"./http":45}],"http":[function(require,module,exports){
+},{"./http":13}],"http":[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -14836,7 +17443,7 @@ exports.createClient = util.deprecate(function(port, host) {
   return new Client(port, host);
 }, 'http.createClient is deprecated. Use `http.request` instead.');
 
-},{"./_http_agent":58,"./_http_client":59,"./_http_common":60,"./_http_incoming":61,"./_http_outgoing":62,"./_http_server":63,"events":8,"util":32}],"net":[function(require,module,exports){
+},{"./_http_agent":26,"./_http_client":27,"./_http_common":28,"./_http_incoming":29,"./_http_outgoing":30,"./_http_server":31,"events":52,"util":77}],"net":[function(require,module,exports){
 (function (process,Buffer){
 /*global chrome */
 
@@ -15995,7 +18602,7 @@ function errnoException (err, syscall) {
 }
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":11,"buffer":3,"core-util-is":56,"events":8,"inherits":57,"stream":27,"timers":29,"util":32}],"path":[function(require,module,exports){
+},{"_process":56,"buffer":47,"core-util-is":24,"events":52,"inherits":25,"stream":72,"timers":74,"util":77}],"path":[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -16250,7 +18857,7 @@ var substr = 'ab'.substr(-1) === 'b'
 ;
 
 }).call(this,require('_process'))
-},{"_process":11}],"util-deprecate":[function(require,module,exports){
+},{"_process":56}],"util-deprecate":[function(require,module,exports){
 
 /**
  * Module exports.
@@ -16311,4 +18918,4 @@ function config (name) {
   return false
 }
 
-},{}]},{},[70]);
+},{}]},{},[44]);
