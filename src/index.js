@@ -10,11 +10,39 @@ shares.all(function (err, data) {
   }
 })
 
-document.getElementById('btnAdd').addEventListener('click', function (evt) {
-  console.log('add clicked')
+document.getElementById('homepage').hidden = false
+document.getElementById('listpages').hidden = true
+document.getElementById('sharepages').hidden = true
+document.getElementById('wv').hidden = true
+  
+document.getElementById('btnCreate').addEventListener('click', function (evt) {
+  document.getElementById('homepage').hidden = true
+  document.getElementById('listpages').hidden = true
+  document.getElementById('sharepages').hidden = true
+  document.getElementById('createpage').hidden = false
   document.getElementById('wv').hidden = false
-  document.getElementById('wv').style.width = '100%'
-  document.getElementById('wv').style.height = '100%'
+  document.getElementById('wv').style.width = window.innerWidth + 'px'
+  document.getElementById('wv').style.height = window.innerHeight + 'px'
+  // document.getElementById('wv').style.left = '-100px'
+})
+document.getElementById('btnHome').addEventListener('click', function (evt) {
+  document.getElementById('homepage').hidden = false
+  document.getElementById('listpages').hidden = true
+  document.getElementById('sharepages').hidden = true
+  document.getElementById('wv').hidden = true
+})
+document.getElementById('btnAll').addEventListener('click', function (evt) {
+  document.getElementById('homepage').hidden = true
+  document.getElementById('listpages').hidden = false
+  document.getElementById('sharepages').hidden = true
+  document.getElementById('wv').hidden = true
+})
+
+document.getElementById('btnShare').addEventListener('click', function (evt) {
+  document.getElementById('homepage').hidden = true
+  document.getElementById('listpages').hidden = true
+  document.getElementById('sharepages').hidden = false
+  document.getElementById('wv').hidden = true
 })
 
 // document.getElementById('wv').setAttribute('src', '/editor/pageeditor.html')

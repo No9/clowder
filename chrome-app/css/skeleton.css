@@ -35,6 +35,13 @@
   margin: 0 auto;
   padding: 0 5px;
   box-sizing: border-box; }
+.editorcontainer {
+  position: relative;
+  width: 100%;
+  max-width: 2000px;
+  margin: 0 auto;
+  padding: 0 5px;
+  box-sizing: border-box; }
 .column,
 .columns {
   width: 100%;
@@ -46,11 +53,17 @@
   .container {
     width: 85%;
     padding: 0; }
+  .editorcontainer {
+    width: 100%;
+    padding: 0;
+  }
 }
 
 /* For devices larger than 550px */
 @media (min-width: 550px) {
   .container {
+    width: 80%; }
+  editorcontainer {
     width: 80%; }
   .column,
   .columns {
@@ -292,7 +305,7 @@ ul {
 ol {
   list-style: decimal inside; }
 ol, ul {
-  padding-left: 0;
+  padding-left: 1;
   margin-top: 0; }
 ul ul,
 ul ol,
