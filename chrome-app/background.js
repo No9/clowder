@@ -378,6 +378,7 @@ exports.SlowBuffer = SlowBuffer
 exports.INSPECT_MAX_BYTES = 50
 Buffer.poolSize = 8192 // not used by this implementation
 
+var kMaxLength = 0x3fffffff
 var rootParent = {}
 
 /**
@@ -388,45 +389,32 @@ var rootParent = {}
  * Browsers that support typed arrays are IE 10+, Firefox 4+, Chrome 7+, Safari 5.1+,
  * Opera 11.6+, iOS 4.2+.
  *
- * Due to various browser bugs, sometimes the Object implementation will be used even
- * when the browser supports typed arrays.
- *
  * Note:
  *
- *   - Firefox 4-29 lacks support for adding new properties to `Uint8Array` instances,
- *     See: https://bugzilla.mozilla.org/show_bug.cgi?id=695438.
+ * - Implementation must support adding new properties to `Uint8Array` instances.
+ *   Firefox 4-29 lacked support, fixed in Firefox 30+.
+ *   See: https://bugzilla.mozilla.org/show_bug.cgi?id=695438.
  *
- *   - Safari 5-7 lacks support for changing the `Object.prototype.constructor` property
- *     on objects.
+ *  - Chrome 9-10 is missing the `TypedArray.prototype.subarray` function.
  *
- *   - Chrome 9-10 is missing the `TypedArray.prototype.subarray` function.
+ *  - IE10 has a broken `TypedArray.prototype.subarray` function which returns arrays of
+ *    incorrect length in some situations.
  *
- *   - IE10 has a broken `TypedArray.prototype.subarray` function which returns arrays of
- *     incorrect length in some situations.
-
- * We detect these buggy browsers and set `Buffer.TYPED_ARRAY_SUPPORT` to `false` so they
- * get the Object implementation, which is slower but behaves correctly.
+ * We detect these buggy browsers and set `Buffer.TYPED_ARRAY_SUPPORT` to `false` so they will
+ * get the Object implementation, which is slower but will work correctly.
  */
 Buffer.TYPED_ARRAY_SUPPORT = (function () {
-  function Bar () {}
   try {
-    var arr = new Uint8Array(1)
+    var buf = new ArrayBuffer(0)
+    var arr = new Uint8Array(buf)
     arr.foo = function () { return 42 }
-    arr.constructor = Bar
     return arr.foo() === 42 && // typed array instances can be augmented
-        arr.constructor === Bar && // constructor can be set
         typeof arr.subarray === 'function' && // chrome 9-10 lack `subarray`
-        arr.subarray(1, 1).byteLength === 0 // ie10 has broken `subarray`
+        new Uint8Array(1).subarray(1, 1).byteLength === 0 // ie10 has broken `subarray`
   } catch (e) {
     return false
   }
 })()
-
-function kMaxLength () {
-  return Buffer.TYPED_ARRAY_SUPPORT
-    ? 0x7fffffff
-    : 0x3fffffff
-}
 
 /**
  * Class: Buffer
@@ -494,13 +482,8 @@ function fromObject (that, object) {
     throw new TypeError('must start with number, buffer, array or string')
   }
 
-  if (typeof ArrayBuffer !== 'undefined') {
-    if (object.buffer instanceof ArrayBuffer) {
-      return fromTypedArray(that, object)
-    }
-    if (object instanceof ArrayBuffer) {
-      return fromArrayBuffer(that, object)
-    }
+  if (typeof ArrayBuffer !== 'undefined' && object.buffer instanceof ArrayBuffer) {
+    return fromTypedArray(that, object)
   }
 
   if (object.length) return fromArrayLike(that, object)
@@ -533,18 +516,6 @@ function fromTypedArray (that, array) {
   // of the old Buffer constructor.
   for (var i = 0; i < length; i += 1) {
     that[i] = array[i] & 255
-  }
-  return that
-}
-
-function fromArrayBuffer (that, array) {
-  if (Buffer.TYPED_ARRAY_SUPPORT) {
-    // Return an augmented `Uint8Array` instance, for best performance
-    array.byteLength
-    that = Buffer._augment(new Uint8Array(array))
-  } else {
-    // Fallback: Return an object instance of the Buffer class
-    that = fromTypedArray(that, new Uint8Array(array))
   }
   return that
 }
@@ -595,9 +566,9 @@ function allocate (that, length) {
 function checked (length) {
   // Note: cannot use `length < kMaxLength` here because that fails when
   // length is NaN (which is otherwise coerced to zero.)
-  if (length >= kMaxLength()) {
+  if (length >= kMaxLength) {
     throw new RangeError('Attempt to allocate Buffer larger than maximum ' +
-                         'size: 0x' + kMaxLength().toString(16) + ' bytes')
+                         'size: 0x' + kMaxLength.toString(16) + ' bytes')
   }
   return length | 0
 }
@@ -666,6 +637,8 @@ Buffer.concat = function concat (list, length) {
 
   if (list.length === 0) {
     return new Buffer(0)
+  } else if (list.length === 1) {
+    return list[0]
   }
 
   var i
@@ -687,38 +660,29 @@ Buffer.concat = function concat (list, length) {
 }
 
 function byteLength (string, encoding) {
-  if (typeof string !== 'string') string = '' + string
+  if (typeof string !== 'string') string = String(string)
 
-  var len = string.length
-  if (len === 0) return 0
+  if (string.length === 0) return 0
 
-  // Use a for loop to avoid recursion
-  var loweredCase = false
-  for (;;) {
-    switch (encoding) {
-      case 'ascii':
-      case 'binary':
-      // Deprecated
-      case 'raw':
-      case 'raws':
-        return len
-      case 'utf8':
-      case 'utf-8':
-        return utf8ToBytes(string).length
-      case 'ucs2':
-      case 'ucs-2':
-      case 'utf16le':
-      case 'utf-16le':
-        return len * 2
-      case 'hex':
-        return len >>> 1
-      case 'base64':
-        return base64ToBytes(string).length
-      default:
-        if (loweredCase) return utf8ToBytes(string).length // assume utf8
-        encoding = ('' + encoding).toLowerCase()
-        loweredCase = true
-    }
+  switch (encoding || 'utf8') {
+    case 'ascii':
+    case 'binary':
+    case 'raw':
+      return string.length
+    case 'ucs2':
+    case 'ucs-2':
+    case 'utf16le':
+    case 'utf-16le':
+      return string.length * 2
+    case 'hex':
+      return string.length >>> 1
+    case 'utf8':
+    case 'utf-8':
+      return utf8ToBytes(string).length
+    case 'base64':
+      return base64ToBytes(string).length
+    default:
+      return string.length
   }
 }
 Buffer.byteLength = byteLength
@@ -727,7 +691,8 @@ Buffer.byteLength = byteLength
 Buffer.prototype.length = undefined
 Buffer.prototype.parent = undefined
 
-function slowToString (encoding, start, end) {
+// toString(encoding, start=0, end=buffer.length)
+Buffer.prototype.toString = function toString (encoding, start, end) {
   var loweredCase = false
 
   start = start | 0
@@ -768,13 +733,6 @@ function slowToString (encoding, start, end) {
         loweredCase = true
     }
   }
-}
-
-Buffer.prototype.toString = function toString () {
-  var length = this.length | 0
-  if (length === 0) return ''
-  if (arguments.length === 0) return utf8Slice(this, 0, length)
-  return slowToString.apply(this, arguments)
 }
 
 Buffer.prototype.equals = function equals (b) {
@@ -840,13 +798,13 @@ Buffer.prototype.indexOf = function indexOf (val, byteOffset) {
   throw new TypeError('val must be string, number or Buffer')
 }
 
-// `get` is deprecated
+// `get` will be removed in Node 0.13+
 Buffer.prototype.get = function get (offset) {
   console.log('.get() is deprecated. Access using array indexes instead.')
   return this.readUInt8(offset)
 }
 
-// `set` is deprecated
+// `set` will be removed in Node 0.13+
 Buffer.prototype.set = function set (v, offset) {
   console.log('.set() is deprecated. Access using array indexes instead.')
   return this.writeUInt8(v, offset)
@@ -987,99 +945,20 @@ function base64Slice (buf, start, end) {
 }
 
 function utf8Slice (buf, start, end) {
-  end = Math.min(buf.length, end)
-  var res = []
-
-  var i = start
-  while (i < end) {
-    var firstByte = buf[i]
-    var codePoint = null
-    var bytesPerSequence = (firstByte > 0xEF) ? 4
-      : (firstByte > 0xDF) ? 3
-      : (firstByte > 0xBF) ? 2
-      : 1
-
-    if (i + bytesPerSequence <= end) {
-      var secondByte, thirdByte, fourthByte, tempCodePoint
-
-      switch (bytesPerSequence) {
-        case 1:
-          if (firstByte < 0x80) {
-            codePoint = firstByte
-          }
-          break
-        case 2:
-          secondByte = buf[i + 1]
-          if ((secondByte & 0xC0) === 0x80) {
-            tempCodePoint = (firstByte & 0x1F) << 0x6 | (secondByte & 0x3F)
-            if (tempCodePoint > 0x7F) {
-              codePoint = tempCodePoint
-            }
-          }
-          break
-        case 3:
-          secondByte = buf[i + 1]
-          thirdByte = buf[i + 2]
-          if ((secondByte & 0xC0) === 0x80 && (thirdByte & 0xC0) === 0x80) {
-            tempCodePoint = (firstByte & 0xF) << 0xC | (secondByte & 0x3F) << 0x6 | (thirdByte & 0x3F)
-            if (tempCodePoint > 0x7FF && (tempCodePoint < 0xD800 || tempCodePoint > 0xDFFF)) {
-              codePoint = tempCodePoint
-            }
-          }
-          break
-        case 4:
-          secondByte = buf[i + 1]
-          thirdByte = buf[i + 2]
-          fourthByte = buf[i + 3]
-          if ((secondByte & 0xC0) === 0x80 && (thirdByte & 0xC0) === 0x80 && (fourthByte & 0xC0) === 0x80) {
-            tempCodePoint = (firstByte & 0xF) << 0x12 | (secondByte & 0x3F) << 0xC | (thirdByte & 0x3F) << 0x6 | (fourthByte & 0x3F)
-            if (tempCodePoint > 0xFFFF && tempCodePoint < 0x110000) {
-              codePoint = tempCodePoint
-            }
-          }
-      }
-    }
-
-    if (codePoint === null) {
-      // we did not generate a valid codePoint so insert a
-      // replacement char (U+FFFD) and advance only 1 byte
-      codePoint = 0xFFFD
-      bytesPerSequence = 1
-    } else if (codePoint > 0xFFFF) {
-      // encode to utf16 (surrogate pair dance)
-      codePoint -= 0x10000
-      res.push(codePoint >>> 10 & 0x3FF | 0xD800)
-      codePoint = 0xDC00 | codePoint & 0x3FF
-    }
-
-    res.push(codePoint)
-    i += bytesPerSequence
-  }
-
-  return decodeCodePointsArray(res)
-}
-
-// Based on http://stackoverflow.com/a/22747272/680742, the browser with
-// the lowest limit is Chrome, with 0x10000 args.
-// We go 1 magnitude less, for safety
-var MAX_ARGUMENTS_LENGTH = 0x1000
-
-function decodeCodePointsArray (codePoints) {
-  var len = codePoints.length
-  if (len <= MAX_ARGUMENTS_LENGTH) {
-    return String.fromCharCode.apply(String, codePoints) // avoid extra slice()
-  }
-
-  // Decode in chunks to avoid "call stack size exceeded".
   var res = ''
-  var i = 0
-  while (i < len) {
-    res += String.fromCharCode.apply(
-      String,
-      codePoints.slice(i, i += MAX_ARGUMENTS_LENGTH)
-    )
+  var tmp = ''
+  end = Math.min(buf.length, end)
+
+  for (var i = start; i < end; i++) {
+    if (buf[i] <= 0x7F) {
+      res += decodeUtf8Char(tmp) + String.fromCharCode(buf[i])
+      tmp = ''
+    } else {
+      tmp += '%' + buf[i].toString(16)
+    }
   }
-  return res
+
+  return res + decodeUtf8Char(tmp)
 }
 
 function asciiSlice (buf, start, end) {
@@ -1614,16 +1493,9 @@ Buffer.prototype.copy = function copy (target, targetStart, start, end) {
   }
 
   var len = end - start
-  var i
 
-  if (this === target && start < targetStart && targetStart < end) {
-    // descending copy from end
-    for (i = len - 1; i >= 0; i--) {
-      target[i + targetStart] = this[i + start]
-    }
-  } else if (len < 1000 || !Buffer.TYPED_ARRAY_SUPPORT) {
-    // ascending copy from start
-    for (i = 0; i < len; i++) {
+  if (len < 1000 || !Buffer.TYPED_ARRAY_SUPPORT) {
+    for (var i = 0; i < len; i++) {
       target[i + targetStart] = this[i + start]
     }
   } else {
@@ -1699,7 +1571,7 @@ Buffer._augment = function _augment (arr) {
   // save reference to original Uint8Array set method before overwriting
   arr._set = arr.set
 
-  // deprecated
+  // deprecated, will be removed in node 0.13+
   arr.get = BP.get
   arr.set = BP.set
 
@@ -1755,7 +1627,7 @@ Buffer._augment = function _augment (arr) {
   return arr
 }
 
-var INVALID_BASE64_RE = /[^+\/0-9A-Za-z-_]/g
+var INVALID_BASE64_RE = /[^+\/0-9A-z\-]/g
 
 function base64clean (str) {
   // Node strips out invalid characters like \n and \t from the string, base64-js does not
@@ -1785,15 +1657,28 @@ function utf8ToBytes (string, units) {
   var length = string.length
   var leadSurrogate = null
   var bytes = []
+  var i = 0
 
-  for (var i = 0; i < length; i++) {
+  for (; i < length; i++) {
     codePoint = string.charCodeAt(i)
 
     // is surrogate component
     if (codePoint > 0xD7FF && codePoint < 0xE000) {
       // last char was a lead
-      if (!leadSurrogate) {
+      if (leadSurrogate) {
+        // 2 leads in a row
+        if (codePoint < 0xDC00) {
+          if ((units -= 3) > -1) bytes.push(0xEF, 0xBF, 0xBD)
+          leadSurrogate = codePoint
+          continue
+        } else {
+          // valid surrogate pair
+          codePoint = leadSurrogate - 0xD800 << 10 | codePoint - 0xDC00 | 0x10000
+          leadSurrogate = null
+        }
+      } else {
         // no lead yet
+
         if (codePoint > 0xDBFF) {
           // unexpected trail
           if ((units -= 3) > -1) bytes.push(0xEF, 0xBF, 0xBD)
@@ -1802,29 +1687,17 @@ function utf8ToBytes (string, units) {
           // unpaired lead
           if ((units -= 3) > -1) bytes.push(0xEF, 0xBF, 0xBD)
           continue
+        } else {
+          // valid lead
+          leadSurrogate = codePoint
+          continue
         }
-
-        // valid lead
-        leadSurrogate = codePoint
-
-        continue
       }
-
-      // 2 leads in a row
-      if (codePoint < 0xDC00) {
-        if ((units -= 3) > -1) bytes.push(0xEF, 0xBF, 0xBD)
-        leadSurrogate = codePoint
-        continue
-      }
-
-      // valid surrogate pair
-      codePoint = leadSurrogate - 0xD800 << 10 | codePoint - 0xDC00 | 0x10000
     } else if (leadSurrogate) {
       // valid bmp char, but last char was a lead
       if ((units -= 3) > -1) bytes.push(0xEF, 0xBF, 0xBD)
+      leadSurrogate = null
     }
-
-    leadSurrogate = null
 
     // encode utf8
     if (codePoint < 0x80) {
@@ -1843,7 +1716,7 @@ function utf8ToBytes (string, units) {
         codePoint >> 0x6 & 0x3F | 0x80,
         codePoint & 0x3F | 0x80
       )
-    } else if (codePoint < 0x110000) {
+    } else if (codePoint < 0x200000) {
       if ((units -= 4) < 0) break
       bytes.push(
         codePoint >> 0x12 | 0xF0,
@@ -1894,6 +1767,14 @@ function blitBuffer (src, dst, offset, length) {
     dst[i + offset] = src[i]
   }
   return i
+}
+
+function decodeUtf8Char (str) {
+  try {
+    return decodeURIComponent(str)
+  } catch (err) {
+    return String.fromCharCode(0xFFFD) // UTF 8 invalid char
+  }
 }
 
 },{"base64-js":4,"ieee754":5,"is-array":6}],4:[function(require,module,exports){
@@ -2024,14 +1905,14 @@ var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 },{}],5:[function(require,module,exports){
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
-  var e, m
-  var eLen = nBytes * 8 - mLen - 1
-  var eMax = (1 << eLen) - 1
-  var eBias = eMax >> 1
-  var nBits = -7
-  var i = isLE ? (nBytes - 1) : 0
-  var d = isLE ? -1 : 1
-  var s = buffer[offset + i]
+  var e, m,
+      eLen = nBytes * 8 - mLen - 1,
+      eMax = (1 << eLen) - 1,
+      eBias = eMax >> 1,
+      nBits = -7,
+      i = isLE ? (nBytes - 1) : 0,
+      d = isLE ? -1 : 1,
+      s = buffer[offset + i]
 
   i += d
 
@@ -2057,14 +1938,14 @@ exports.read = function (buffer, offset, isLE, mLen, nBytes) {
 }
 
 exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
-  var e, m, c
-  var eLen = nBytes * 8 - mLen - 1
-  var eMax = (1 << eLen) - 1
-  var eBias = eMax >> 1
-  var rt = (mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0)
-  var i = isLE ? 0 : (nBytes - 1)
-  var d = isLE ? 1 : -1
-  var s = value < 0 || (value === 0 && 1 / value < 0) ? 1 : 0
+  var e, m, c,
+      eLen = nBytes * 8 - mLen - 1,
+      eMax = (1 << eLen) - 1,
+      eBias = eMax >> 1,
+      rt = (mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0),
+      i = isLE ? 0 : (nBytes - 1),
+      d = isLE ? 1 : -1,
+      s = value < 0 || (value === 0 && 1 / value < 0) ? 1 : 0
 
   value = Math.abs(value)
 
@@ -11696,6 +11577,691 @@ HTTPParser.prototype.BODY_SIZED = function () {
 });
 
 },{"assert":1}],66:[function(require,module,exports){
+var packets = require('./packets')
+var dgram = require('dgram')
+var thunky = require('thunky')
+var events = require('events')
+
+var noop = function () {}
+
+module.exports = function (opts) {
+  if (!opts) opts = {}
+
+  var that = new events.EventEmitter()
+  var port = opts.port || 5353
+  var type = opts.type || 'udp4'
+  var ip = opts.ip || opts.host || (type === 'udp4' ? '224.0.0.251' : null)
+
+  if (type === 'udp6' && (!ip || !opts.interface)) {
+    throw new Error('For IPv6 multicast you must specify `ip` and `interface`')
+  }
+
+  var createSocket = function () {
+    var socket = dgram.createSocket({
+      type: type,
+      reuseAddr: opts.reuseAddr !== false,
+      toString: function () {
+        return type
+      }
+    })
+
+    socket.on('error', function (err) {
+      that.emit('warning', err)
+    })
+
+    socket.on('message', function (message, rinfo) {
+      try {
+        message = packets.decode(message)
+      } catch (err) {
+        that.emit('warning', err)
+        return
+      }
+
+      that.emit('packet', message, rinfo)
+
+      if (message.type === 'query') that.emit('query', message, rinfo)
+      if (message.type === 'response') that.emit('response', message, rinfo)
+    })
+
+    socket.on('listening', function () {
+      if (opts.multicast !== false) {
+        socket.addMembership(ip, opts.interface)
+        socket.setMulticastTTL(opts.ttl || 255)
+        socket.setMulticastLoopback(opts.loopback !== false)
+      }
+    })
+
+    return socket
+  }
+
+  var receiveSocket = createSocket()
+  var sendSocket = createSocket()
+
+  var sendBind = thunky(function (cb) {
+    sendSocket.on('error', cb)
+    sendSocket.bind(0, function () {
+      sendSocket.removeListener('error', cb)
+      cb(null, sendSocket)
+    })
+  })
+
+  receiveSocket.bind(port, function () {
+    that.emit('ready')
+  })
+
+  that.send = function (packet, cb) {
+    if (!cb) cb = noop
+    sendBind(function (err, socket) {
+      if (err) return cb(err)
+      var message = packets.encode(packet)
+      sendSocket.send(message, 0, message.length, port, ip, cb)
+    })
+  }
+
+  that.response =
+  that.respond = function (res, cb) {
+    if (!cb) cb = noop
+    if (Array.isArray(res)) res = {answers: res}
+
+    res.type = 'response'
+    that.send(res, cb)
+  }
+
+  that.query = function (q, type, cb) {
+    if (typeof type === 'function') return that.query(q, null, type)
+    if (!cb) cb = noop
+
+    if (typeof q === 'string') q = [{name: q, type: type || 'A'}]
+    if (Array.isArray(q)) q = {type: 'query', questions: q}
+
+    q.type = 'query'
+    that.send(q, cb)
+  }
+
+  that.destroy = function (cb) {
+    if (!cb) cb = noop
+    sendSocket.once('close', function () {
+      receiveSocket.once('close', cb)
+      receiveSocket.close()
+    })
+    sendSocket.close()
+  }
+
+  return that
+}
+
+},{"./packets":68,"dgram":"dgram","events":8,"thunky":67}],67:[function(require,module,exports){
+var isError = function(err) { // inlined from util so this works in the browser
+	return Object.prototype.toString.call(err) === '[object Error]';
+};
+
+var thunky = function(fn) {
+	var run = function(callback) {
+		var stack = [callback];
+
+		state = function(callback) {
+			stack.push(callback);
+		};
+
+		fn(function(err) {
+			var args = arguments;
+			var apply = function(callback) {
+				if (callback) callback.apply(null, args);
+			};
+
+			state = isError(err) ? run : apply;
+			while (stack.length) apply(stack.shift());
+		});
+	};
+
+	var state = run;
+
+	return function(callback) {
+		state(callback);
+	};
+};
+
+module.exports = thunky;
+},{}],68:[function(require,module,exports){
+(function (Buffer){
+var types = require('./types')
+
+var name = {}
+
+name.decode = function (buf, offset) {
+  var list = []
+  var oldOffset = offset
+  var len = buf[offset++]
+
+  if (len >= 0xc0) {
+    var res = name.decode(buf, buf.readUInt16BE(offset - 1) - 0xc000)
+    name.decode.bytes = 2
+    return res
+  }
+
+  while (len) {
+    if (len >= 0xc0) {
+      list.push(name.decode(buf, buf.readUInt16BE(offset - 1) - 0xc000))
+      offset++
+      break
+    }
+
+    list.push(buf.toString('utf-8', offset, offset + len))
+    offset += len
+    len = buf[offset++]
+  }
+
+  name.decode.bytes = offset - oldOffset
+  return list.join('.')
+}
+
+name.encode = function (n, buf, offset) {
+  var list = n.split('.')
+  var oldOffset = offset
+
+  for (var i = 0; i < list.length; i++) {
+    var len = buf.write(list[i], offset + 1)
+    buf[offset] = len
+    offset += len + 1
+  }
+
+  buf[offset++] = 0
+
+  name.encode.bytes = offset - oldOffset
+  return buf
+}
+
+name.encodingLength = function (n) {
+  return Buffer.byteLength(n) + 2
+}
+
+var str = {}
+
+str.encode = function (s, buf, offset) {
+  var len = buf.write(s, offset + 1)
+  buf[offset] = len
+  str.encode.bytes = len + 1
+  return buf
+}
+
+str.decode = function (buf, offset) {
+  var len = buf[offset]
+  var s = buf.toString('utf-8', offset + 1, offset + 1 + len)
+  str.decode.bytes = len + 1
+  return s
+}
+
+str.encodingLength = function (s) {
+  return Buffer.byteLength(s) + 1
+}
+
+var QUERY_FLAG = 0x0000
+var RESPONSE_FLAG = 0x8400
+
+var header = {}
+
+header.decode = function (buf, offset) {
+  var flags = buf.readUInt16BE(offset + 2)
+  if (flags !== RESPONSE_FLAG && flags !== QUERY_FLAG) throw new Error('bad type: ' + flags)
+
+  header.decode.bytes = 12
+  return {
+    type: flags === RESPONSE_FLAG ? 'response' : 'query',
+    qdcount: buf.readUInt16BE(offset + 4),
+    ancount: buf.readUInt16BE(offset + 6),
+    nscount: buf.readUInt16BE(offset + 8),
+    arcount: buf.readUInt16BE(offset + 10)
+   }
+}
+
+header.encode = function (h, buf, offset) {
+  buf.writeUInt16BE(0, offset)
+  buf.writeUInt16BE(h.type === 'response' ? RESPONSE_FLAG : QUERY_FLAG, offset + 2)
+  buf.writeUInt16BE(h.qdcount, offset + 4)
+  buf.writeUInt16BE(h.ancount, offset + 6)
+  buf.writeUInt16BE(h.nscount, offset + 8)
+  buf.writeUInt16BE(h.arcount, offset + 10)
+
+  header.encode.bytes = 12
+  return buf
+}
+
+header.encodingLength = function (h) {
+  return 12
+}
+
+var runknown = {}
+
+runknown.encode = function (data, buf, offset) {
+  buf.writeUInt16BE(data.length, offset)
+  data.copy(buf, offset + 2)
+
+  runknown.encode.bytes = data.length + 2
+  return buf
+}
+
+runknown.decode = function (buf, offset) {
+  var len = buf.readUInt16BE(offset)
+  var data = buf.slice(offset + 2, offset + 2 + len)
+  runknown.decode.bytes = len + 2
+  return data
+}
+
+runknown.encodingLength = function (data) {
+  return data.length + 2
+}
+
+var rtxt = {}
+
+rtxt.encode = function (s, buf, offset) {
+  str.encode(s, buf, offset + 2)
+  buf.writeUInt16BE(str.encode.bytes, offset)
+  rtxt.encode.bytes = str.encode.bytes + 2
+  return buf
+}
+
+rtxt.decode = function (buf, offset) {
+  var s = str.decode(buf, offset + 2)
+  rtxt.decode.bytes = str.decode.bytes + 2
+  return s
+}
+
+rtxt.encodingLength = function (s) {
+  return str.encodingLength(s) + 2
+}
+
+var rhinfo = {}
+
+rhinfo.encode = function (data, buf, offset) {
+  var oldOffset = offset
+  offset += 2
+  str.encode(data.cpu, buf, offset)
+  offset += str.encode.bytes
+  str.encode(data.os, buf, offset)
+  offset += str.encode.bytes
+  buf.writeUInt32BE(offset - oldOffset - 2, oldOffset)
+  rhinfo.encode.bytes = offset - oldOffset
+  return buf
+}
+
+rhinfo.decode = function (buf, offset) {
+  var oldOffset = offset
+
+  var data = {}
+  offset += 2
+  data.cpu = str.decode(buf, offset)
+  offset += str.decode.bytes
+  data.os = str.decode(buf, offset)
+  offset += str.decode.bytes
+  rhinfo.decode.bytes = offset - oldOffset
+  return data
+}
+
+rhinfo.encodingLength = function (data) {
+  return str.encodingLength(data.cpu) + str.encodingLength(data.os) + 2
+}
+
+var rptr = {}
+
+rptr.encode = function (data, buf, offset) {
+  name.encode(data, buf, offset + 2)
+  buf.writeUInt16BE(name.encode.bytes, offset)
+  rptr.encode.bytes = name.encode.bytes + 2
+  return buf
+}
+
+rptr.decode = function (buf, offset) {
+  var data = name.decode(buf, offset + 2)
+  rptr.decode.bytes = name.decode.bytes + 2
+  return data
+}
+
+rptr.encodingLength = function (data) {
+  return name.encodingLength(data) + 2
+}
+
+var rsrv = {}
+
+rsrv.encode = function (data, buf, offset) {
+  buf.writeUInt16BE(data.priority || 0, offset + 2)
+  buf.writeUInt16BE(data.weight || 0, offset + 4)
+  buf.writeUInt16BE(data.port || 0, offset + 6)
+  name.encode(data.target, buf, offset + 8)
+
+  var len = name.encode.bytes + 6
+  buf.writeUInt16BE(len, offset)
+
+  rsrv.encode.bytes = len + 2
+  return buf
+}
+
+rsrv.decode = function (buf, offset) {
+  var len = buf.readUInt16BE(offset)
+
+  var data = {}
+  data.priority = buf.readUInt16BE(offset + 2)
+  data.weight = buf.readUInt16BE(offset + 4)
+  data.port = buf.readUInt16BE(offset + 6)
+  data.target = name.decode(buf, offset + 8)
+
+  rsrv.decode.bytes = len + 2
+  return data
+}
+
+rsrv.encodingLength = function (data) {
+  return 8 + name.encodingLength(data.target)
+}
+
+var ra = {}
+
+ra.encode = function (host, buf, offset) {
+  buf.writeUInt16BE(4, offset)
+  offset += 2
+
+  var nums = host.split('.')
+  for (var i = 0; i < 4; i++) buf[offset++] = Number(nums[i])
+
+  ra.encode.bytes = 6
+  return buf
+}
+
+ra.decode = function (buf, offset) {
+  offset += 2
+
+  var host = []
+  for (var i = 0; i < 4; i++) host.push(buf[offset++])
+
+  ra.decode.bytes = 6
+  return host.join('.')
+}
+
+ra.encodingLength = function (host) {
+  return 6
+}
+
+var raaaa = {}
+
+raaaa.encode = function (host, buf, offset) {
+  buf.writeUInt16BE(16, offset)
+  offset += 2
+
+  var nums = host.split(':')
+  var idx = nums.indexOf('')
+  var missing = 8 - nums.length
+  for (var i = 0; i < missing; i++) nums.splice(idx, 0, '0')
+  for (var j = 0; j < nums.length; j++) buf.writeUInt16BE(parseInt(nums[j] || 0, 16), offset + 2 * j)
+
+  raaaa.encode.bytes = 18
+  return buf
+}
+
+raaaa.decode = function (buf, offset) {
+  offset += 2
+
+  var host = []
+  for (var i = 0; i < 16; i += 2) host.push(buf.toString('hex', offset + i, offset + i + 2))
+
+  raaaa.decode.bytes = 18
+  return host.join(':').replace(/(:|^)0000(:0000)*(:|$)/, '$1$3').replace(/(^|:)0*(\d)/g, '$1$2')
+}
+
+raaaa.encodingLength = function (host) {
+  return 18
+}
+
+var answer = {}
+
+var renc = function (type) {
+  switch (type.toUpperCase()) {
+    case 'A': return ra
+    case 'PTR': return rptr
+    case 'TXT': return rtxt
+    case 'AAAA': return raaaa
+    case 'SRV': return rsrv
+    case 'HINFO': return rhinfo
+  }
+  return runknown
+}
+
+answer.decode = function (buf, offset) {
+  var a = {}
+  var oldOffset = offset
+
+  a.name = name.decode(buf, offset)
+  offset += name.decode.bytes
+  a.type = types.toString(buf.readUInt16BE(offset))
+  a.class = buf.readUInt16BE(offset + 2)
+  a.ttl = buf.readUInt32BE(offset + 4)
+
+  var enc = renc(a.type)
+  a.data = enc.decode(buf, offset + 8)
+  offset += 8 + enc.decode.bytes
+
+  answer.decode.bytes = offset - oldOffset
+  return a
+}
+
+answer.encode = function (a, buf, offset) {
+  var oldOffset = offset
+
+  name.encode(a.name, buf, offset)
+  offset += name.encode.bytes
+
+  buf.writeUInt16BE(types.toType(a.type), offset)
+  buf.writeUInt16BE(a.class === undefined ? 1 : a.class, offset + 2)
+  buf.writeUInt32BE(a.ttl || 0, offset + 4)
+
+  var enc = renc(a.type)
+  enc.encode(a.data, buf, offset + 8)
+  offset += 8 + enc.encode.bytes
+
+  answer.encode.bytes = offset - oldOffset
+  return buf
+}
+
+answer.encodingLength = function (a) {
+  return name.encodingLength(a.name) + 8 + renc(a.type).encodingLength(a.data)
+}
+
+var question = {}
+
+question.decode = function (buf, offset) {
+  var oldOffset = offset
+  var q = {}
+
+  q.name = name.decode(buf, offset)
+  offset += name.decode.bytes
+
+  q.type = types.toString(buf.readUInt16BE(offset))
+  offset += 2
+
+  q.class = buf.readUInt16BE(offset)
+  offset += 2
+
+  question.decode.bytes = offset - oldOffset
+  return q
+}
+
+question.encode = function (q, buf, offset) {
+  var oldOffset = offset
+
+  name.encode(q.name, buf, offset)
+  offset += name.encode.bytes
+
+  buf.writeUInt16BE(types.toType(q.type), offset)
+  offset += 2
+
+  buf.writeUInt16BE(q.class === undefined ? 1 : q.class, offset)
+  offset += 2
+
+  question.encode.bytes = offset - oldOffset
+  return q
+}
+
+question.encodingLength = function (q) {
+  return name.encodingLength(q.name) + 4
+}
+
+var encodeList = function (list, enc, buf, offset) {
+  for (var i = 0; i < list.length; i++) {
+    enc.encode(list[i], buf, offset)
+    offset += enc.encode.bytes
+  }
+  return offset
+}
+
+var encodingLengthList = function (list, enc) {
+  var len = 0
+  for (var i = 0; i < list.length; i++) len += enc.encodingLength(list[i])
+  return len
+}
+
+exports.encode = function (result) {
+  result.qdcount = result.questions ? result.questions.length : 0
+  result.ancount = result.answers ? result.answers.length : 0
+  result.nscount = result.authorities ? result.authorities.length : 0
+  result.arcount = result.additionals ? result.additionals.length : 0
+
+  var len = header.encodingLength(result)
+  len += encodingLengthList(result.questions || [], question)
+  len += encodingLengthList(result.answers || [], answer)
+  len += encodingLengthList(result.authorities || [], answer)
+  len += encodingLengthList(result.additionals || [], answer)
+
+  var buf = new Buffer(len)
+  header.encode(result, buf, 0)
+
+  var offset = header.encode.bytes
+  offset = encodeList(result.questions || [], question, buf, offset)
+  offset = encodeList(result.answers || [], answer, buf, offset)
+  offset = encodeList(result.authorities || [], answer, buf, offset)
+  offset = encodeList(result.additionals || [], answer, buf, offset)
+
+  return buf
+}
+
+var decodeList = function (list, enc, buf, offset) {
+  for (var i = 0; i < list.length; i++) {
+    list[i] = enc.decode(buf, offset)
+    offset += enc.decode.bytes
+  }
+  return offset
+}
+
+exports.decode = function (buf) {
+  var result = header.decode(buf, 0)
+  var offset = header.decode.bytes
+
+  offset = decodeList(result.questions = new Array(result.qdcount), question, buf, offset)
+  offset = decodeList(result.answers = new Array(result.ancount), answer, buf, offset)
+  offset = decodeList(result.authorities = new Array(result.nscount), answer, buf, offset)
+  offset = decodeList(result.additionals = new Array(result.arcount), answer, buf, offset)
+
+  return result
+}
+
+}).call(this,require("buffer").Buffer)
+},{"./types":69,"buffer":3}],69:[function(require,module,exports){
+exports.toString = function (type) {
+  switch (type) {
+    case 1: return 'A'
+    case 28: return 'AAAA'
+    case 18: return 'AFSDB'
+    case 42: return 'APL'
+    case 257: return 'CAA'
+    case 60: return 'CDNSKEY'
+    case 59: return 'CDS'
+    case 37: return 'CERT'
+    case 5: return 'CNAME'
+    case 49: return 'DHCID'
+    case 32769: return 'DLV'
+    case 39: return 'DNAME'
+    case 48: return 'DNSKEY'
+    case 43: return 'DS'
+    case 55: return 'HIP'
+    case 13: return 'HINFO'
+    case 45: return 'IPSECKEY'
+    case 25: return 'KEY'
+    case 36: return 'KX'
+    case 29: return 'LOC'
+    case 15: return 'MX'
+    case 35: return 'NAPTR'
+    case 2: return 'NS'
+    case 47: return 'NSEC'
+    case 50: return 'NSEC3'
+    case 51: return 'NSEC3PARAM'
+    case 12: return 'PTR'
+    case 46: return 'RRSIG'
+    case 17: return 'RP'
+    case 24: return 'SIG'
+    case 6: return 'SOA'
+    case 99: return 'SPF'
+    case 33: return 'SRV'
+    case 44: return 'SSHFP'
+    case 32768: return 'TA'
+    case 249: return 'TKEY'
+    case 52: return 'TLSA'
+    case 250: return 'TSIG'
+    case 16: return 'TXT'
+    case 252: return 'AXFR'
+    case 251: return 'IXFR'
+    case 41: return 'OPT'
+    case 255: return 'ANY'
+  }
+  return 'UNKNOWN-' + type
+}
+
+exports.toType = function (name) {
+  switch (name.toUpperCase()) {
+    case 'A': return 1
+    case 'AAAA': return 28
+    case 'AFSDB': return 18
+    case 'APL': return 42
+    case 'CAA': return 257
+    case 'CDNSKEY': return 60
+    case 'CDS': return 59
+    case 'CERT': return 37
+    case 'CNAME': return 5
+    case 'DHCID': return 49
+    case 'DLV': return 32769
+    case 'DNAME': return 39
+    case 'DNSKEY': return 48
+    case 'DS': return 43
+    case 'HIP': return 55
+    case 'HINFO': return 13
+    case 'IPSECKEY': return 45
+    case 'KEY': return 25
+    case 'KX': return 36
+    case 'LOC': return 29
+    case 'MX': return 15
+    case 'NAPTR': return 35
+    case 'NS': return 2
+    case 'NSEC': return 47
+    case 'NSEC3': return 50
+    case 'NSEC3PARAM': return 51
+    case 'PTR': return 12
+    case 'RRSIG': return 46
+    case 'RP': return 17
+    case 'SIG': return 24
+    case 'SOA': return 6
+    case 'SPF': return 99
+    case 'SRV': return 33
+    case 'SSHFP': return 44
+    case 'TA': return 32768
+    case 'TKEY': return 249
+    case 'TLSA': return 52
+    case 'TSIG': return 250
+    case 'TXT': return 16
+    case 'AXFR': return 252
+    case 'IXFR': return 251
+    case 'OPT': return 41
+    case 'ANY': return 255
+    case '*': return 255
+  }
+  return 0
+}
+
+},{}],70:[function(require,module,exports){
 chrome.app.runtime.onLaunched.addListener(function () { // eslint-disable-line
   chrome.app.window.create('index.html', { // eslint-disable-line
     'bounds': {
@@ -11725,7 +12291,26 @@ http.createServer(function (req, res) {
   res.end('Hello World\n');
 }).listen(3000, '127.0.0.1');
 console.log('Server running at http://127.0.0.1:3000/');
-},{"http":"http"}],"debug":[function(require,module,exports){
+
+
+var mdns = require('multicast-dns')()
+
+mdns.on('response', function(response) {
+  console.log('got a response packet:', response)
+})
+
+mdns.on('query', function(query) {
+  console.log('got a query packet:', query)
+})
+
+// lets query for an A record for 'brunhilde.local'
+mdns.query({
+  questions:[{
+    name: 'brunhilde.local',
+    type: 'A'
+  }]
+})
+},{"http":"http","multicast-dns":66}],"debug":[function(require,module,exports){
 
 /**
  * This is the web browser implementation of `debug()`.
@@ -15726,4 +16311,4 @@ function config (name) {
   return false
 }
 
-},{}]},{},[66]);
+},{}]},{},[70]);
