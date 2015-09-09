@@ -324,7 +324,7 @@ div.CodeMirror span.CodeMirror-nonmatchingbracket {
 }
 .features .editor .entry-markdown {
 	left: 0;
-	padding-left: 40px
+	/* padding-left: 40px */
 }
 .features .editor .entry-preview {
 	right: 0;
@@ -455,7 +455,7 @@ div.CodeMirror span.CodeMirror-nonmatchingbracket {
 }
 @media (min-width: 860px) and (min-width: 860px), (min-width: 860px) and (min-width: 860px) {
 .features .editor .entry-markdown .floatingheader {
-	padding-left: 40px
+	/* padding-left: 40px */
 }
 }
 .features .editor .entry-markdown-content textarea {

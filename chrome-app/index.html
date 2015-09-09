@@ -56,8 +56,17 @@
     </div>
   </div>
   <div class="editorcontainer" id="createpage">
+     <div class="row" style="padding-left:20px">
+      <div class="six columns">
+        <label for="titleInput">Title</label>
+        <input class="u-full-width" placeholder="Name Of Page" id="titleInput">
+      </div>
+      <div class="six columns" style="padding-top:20px">
+      <input class="button-primary" value="Save" type="button" id="btnSave">
+      </div>
+    </div>
     <div class="row" style="height:1000px">
-    <webview src="editor/pageeditor.html" id="wv" partition="pageeditor" hidden="true" autosize="true" minwidth="500" minheight="450"></webview>
+    <webview src="editor/pageeditor.html" id="wv" partition="pageeditor" autosize="true" minwidth="500" minheight="450"></webview>
     </div>
   </div>
 
