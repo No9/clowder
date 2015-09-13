@@ -16,5 +16,5 @@ This will run a simple watch application on the src folder
 If src/index.js is modified then the applucation will reload automatically. 
 
 
-## Attibution 
+## attibution 
 The connected disconnected icons are by https://www.iconfinder.com/paomedia 

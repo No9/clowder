@@ -7846,44 +7846,68 @@ chrome.app.runtime.onLaunched.addListener(function () { // eslint-disable-line
   })
 })
 
+
 var http = require('http')
 var Server = require('node-ssdp').Server
 var Client = require('node-ssdp').Client
+var httpServer = {}
 
-http.createServer(function (req, res) {
-  res.writeHead(200, {'Content-Type': 'text/plain'})
-  res.end('Hello World\n')
-}).listen(3000, '127.0.0.1')
-console.log('Server running at http://127.0.0.1:3000/')
-
-var server = new Server()
-server.addUSN('upnp:rootdevice')
-server.addUSN('urn:schemas-upnp-org:device:MediaServer:1')
-server.addUSN('urn:schemas-upnp-org:service:ContentDirectory:1')
-server.addUSN('urn:schemas-upnp-org:service:ConnectionManager:1')
-
-server.on('advertise-alive', function (headers) {
-  console.log('advertise-alive', headers)
+function startServices () {
+  httpServer = http.createServer(function (req, res) {
+    res.writeHead(200, {'Content-Type': 'text/plain'})
+    res.end('Hello World\n')
+  }).listen(3000, '127.0.0.1')
+  console.log('Server running at http://127.0.0.1:3000/')
+  
+  var server = new Server()
+  server.addUSN('upnp:rootdevice')
+  server.addUSN('urn:schemas-upnp-org:service:ContentDirectory:1')
+  
+  server.on('advertise-alive', function (headers) {
+    console.log('advertise-alive', headers)
   // Expire old devices from your cache.
   // Register advertising device somewhere (as designated in http headers heads)
+  })
+  
+  server.on('advertise-bye', function (headers) {
+    // Remove specified device from cache.
+  })
+  
+  // start the server
+  server.start()
+  
+  var client = new Client()
+  
+  client.on('response', function (headers, statusCode, rinfo) {
+    console.log('Got a response to an m-search.')
+    console.log(headers)
+    console.log(statusCode)
+    console.log(rinfo)
+  })
+  client.search('urn:schemas-upnp-org:service:ContentDirectory:1')
+}
+
+function stopServices () {
+}
+
+chrome.runtime.onMessage.addListener(function (event) {
+  console.log('Got message from webpage: ' + event)
+  var msg = JSON.parse(event)
+  if (msg.type === 'service') {
+    switch (msg.action) {
+      case 'start' :
+        startServices()
+        var msg = {}
+        msg.type = 'service'
+        msg.action = 'started'
+        chrome.runtime.sendMessage([JSON.stringify(msg)])
+        break
+      default :
+        break
+    }
+  }
 })
 
-server.on('advertise-bye', function (headers) {
-  // Remove specified device from cache.
-})
-
-// start the server
-server.start()
-
-var client = new Client();
-
-    client.on('response', function (headers, statusCode, rinfo) {
-      console.log('Got a response to an m-search.');
-      console.log(headers)
-      console.log(statusCode)
-      console.log(rinfo)
-    });
-    client.search('urn:schemas-upnp-org:service:ContentDirectory:1')
 },{"http":"http","node-ssdp":34}],45:[function(require,module,exports){
 // http://wiki.commonjs.org/wiki/Unit_Testing/1.0
 //

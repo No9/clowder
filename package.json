@@ -7,6 +7,7 @@
     "test": "standard && tape test/*.js",
     "build-client": "chromiumify src/index.js -o chrome-app/index.js",
     "build-server": "chromiumify src/background.js -o chrome-app/background.js",
+    "build" : "chromiumify src/index.js -o chrome-app/index.js && chromiumify src/background.js -o chrome-app/background.js",
     "start": "chromiumify run chrome-app",
     "watch": "node tools/kovacs && chromiumify run chrome-app",
     "postinstall": "node postinstall/postinstall.js chrome-app"
