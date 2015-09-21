@@ -8,8 +8,8 @@
 //     )
 //   }
 // })
-
-var connection = require('./connection')
+var Connection = require('./connection')
+var connection = new Connection()
 
 function updateWebviews () {
   var webview = document.getElementById('wv')
@@ -28,23 +28,40 @@ document.getElementById('sharepages').hidden = true
 document.getElementById('createpage').hidden = true
 
 document.getElementById('btnConnection').addEventListener('click', function (evt) {
-  if (connection.status === connection.DISCONNECTED) {
+  if (connection.status === Connection.DISCONNECTED) {
     var msg = {}
     msg.type = 'service'
     msg.action = 'start'
     chrome.runtime.sendMessage([JSON.stringify(msg)])
-    connection.status = connection.CONNECTING
+    connection.status = Connection.CONNECTING
+    document.getElementById('btnConnection').src = 'images/connecting.png'
+    
+    // Set icon to yellow
+  } else if (connection.status === Connection.CONNECTED) {
+    var msg = {}
+    msg.type = 'service'
+    msg.action = 'stop'
+    chrome.runtime.sendMessage([JSON.stringify(msg)])
+    connection.status = Connection.CONNECTING
+    document.getElementById('btnConnection').src = 'images/connecting.png'
     // Set icon to yellow
   }
 })
 
 chrome.runtime.onMessage.addListener(function (event) {
-  console.log('Got message from webpage: ' + event)
+  console.log('chrome-event: ' + event)
   var msg = JSON.parse(event)
   if (msg.type === 'service') {
     switch (msg.action) {
       case 'started' :
+        document.getElementById('btnConnection').src = 'images/connected.png'
+        connection.status = Connection.CONNECTED
         // set the icon to green
+        break
+      case 'stopped' :
+        document.getElementById('btnConnection').src = 'images/disconnected.png'
+        connection.status = Connection.DISCONNECTED
+        // set the icon to red
         break
       default :
         break

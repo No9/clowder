@@ -7,7 +7,7 @@
     "test": "standard && tape test/*.js",
     "build-client": "chromiumify src/index.js -o chrome-app/index.js",
     "build-server": "chromiumify src/background.js -o chrome-app/background.js",
-    "build" : "chromiumify src/index.js -o chrome-app/index.js && chromiumify src/background.js -o chrome-app/background.js",
+    "build": "chromiumify src/index.js -o chrome-app/index.js && chromiumify src/background.js -o chrome-app/background.js",
     "start": "chromiumify run chrome-app",
     "watch": "node tools/kovacs && chromiumify run chrome-app",
     "postinstall": "node postinstall/postinstall.js chrome-app"
@@ -34,17 +34,15 @@
     "chrome-dgram": "^2.1.7",
     "chrome-fs": "^9.2.1",
     "chrome-https": "^2.0.0",
-    "chrome-net": "^3.0.0",
+    "chrome-net": "3.0.1",
     "chrome-path": "^1.0.0",
     "chrome-util-deprecate": "^1.0.0",
     "es3ify": "^0.1.4",
-    "express": "^4.13.3",
-    "express-pouchdb": "^0.15.0",
     "http-node": "0.0.2",
     "hyperscript": "^1.4.6",
     "launch-chrome-app": "^1.0.1",
+    "level-browserify": "^1.0.1",
     "node-ssdp": "git+https://github.com/No9/node-ssdp.git",
-    "pouchdb": "^4.0.0",
     "querystring": "^0.2.0"
   },
   "devDependencies": {

@@ -1,17348 +1,4 @@
 require=(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
-
-/**
- * This is the common logic for both the Node.js and web browser
- * implementations of `debug()`.
- *
- * Expose `debug()` as the module.
- */
-
-exports = module.exports = debug;
-exports.coerce = coerce;
-exports.disable = disable;
-exports.enable = enable;
-exports.enabled = enabled;
-exports.humanize = require('ms');
-
-/**
- * The currently active debug mode names, and names to skip.
- */
-
-exports.names = [];
-exports.skips = [];
-
-/**
- * Map of special "%n" handling functions, for the debug "format" argument.
- *
- * Valid key names are a single, lowercased letter, i.e. "n".
- */
-
-exports.formatters = {};
-
-/**
- * Previously assigned color.
- */
-
-var prevColor = 0;
-
-/**
- * Previous log timestamp.
- */
-
-var prevTime;
-
-/**
- * Select a color.
- *
- * @return {Number}
- * @api private
- */
-
-function selectColor() {
-  return exports.colors[prevColor++ % exports.colors.length];
-}
-
-/**
- * Create a debugger with the given `namespace`.
- *
- * @param {String} namespace
- * @return {Function}
- * @api public
- */
-
-function debug(namespace) {
-
-  // define the `disabled` version
-  function disabled() {
-  }
-  disabled.enabled = false;
-
-  // define the `enabled` version
-  function enabled() {
-
-    var self = enabled;
-
-    // set `diff` timestamp
-    var curr = +new Date();
-    var ms = curr - (prevTime || curr);
-    self.diff = ms;
-    self.prev = prevTime;
-    self.curr = curr;
-    prevTime = curr;
-
-    // add the `color` if not set
-    if (null == self.useColors) self.useColors = exports.useColors();
-    if (null == self.color && self.useColors) self.color = selectColor();
-
-    var args = Array.prototype.slice.call(arguments);
-
-    args[0] = exports.coerce(args[0]);
-
-    if ('string' !== typeof args[0]) {
-      // anything else let's inspect with %o
-      args = ['%o'].concat(args);
-    }
-
-    // apply any `formatters` transformations
-    var index = 0;
-    args[0] = args[0].replace(/%([a-z%])/g, function(match, format) {
-      // if we encounter an escaped % then don't increase the array index
-      if (match === '%%') return match;
-      index++;
-      var formatter = exports.formatters[format];
-      if ('function' === typeof formatter) {
-        var val = args[index];
-        match = formatter.call(self, val);
-
-        // now we need to remove `args[index]` since it's inlined in the `format`
-        args.splice(index, 1);
-        index--;
-      }
-      return match;
-    });
-
-    if ('function' === typeof exports.formatArgs) {
-      args = exports.formatArgs.apply(self, args);
-    }
-    var logFn = console.log.bind(console);
-    logFn.apply(self, args);
-  }
-  enabled.enabled = true;
-
-  var fn = exports.enabled(namespace) ? enabled : disabled;
-
-  fn.namespace = namespace;
-
-  return fn;
-}
-
-/**
- * Enables a debug mode by namespaces. This can include modes
- * separated by a colon and wildcards.
- *
- * @param {String} namespaces
- * @api public
- */
-
-function enable(namespaces) {
-  exports.save(namespaces);
-
-  var split = (namespaces || '').split(/[\s,]+/);
-  var len = split.length;
-
-  for (var i = 0; i < len; i++) {
-    if (!split[i]) continue; // ignore empty strings
-    namespaces = split[i].replace(/\*/g, '.*?');
-    if (namespaces[0] === '-') {
-      exports.skips.push(new RegExp('^' + namespaces.substr(1) + '$'));
-    } else {
-      exports.names.push(new RegExp('^' + namespaces + '$'));
-    }
-  }
-}
-
-/**
- * Disable debug output.
- *
- * @api public
- */
-
-function disable() {
-  exports.enable('');
-}
-
-/**
- * Returns true if the given mode name is enabled, false otherwise.
- *
- * @param {String} name
- * @return {Boolean}
- * @api public
- */
-
-function enabled(name) {
-  var i, len;
-  for (i = 0, len = exports.skips.length; i < len; i++) {
-    if (exports.skips[i].test(name)) {
-      return false;
-    }
-  }
-  for (i = 0, len = exports.names.length; i < len; i++) {
-    if (exports.names[i].test(name)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Coerce `val`.
- *
- * @param {Mixed} val
- * @return {Mixed}
- * @api private
- */
-
-function coerce(val) {
-  if (val instanceof Error) return val.stack || val.message;
-  return val;
-}
-
-},{"ms":3}],2:[function(require,module,exports){
-(function(root) {
-  var localStorageMemory = {};
-  var cache = {};
-
-  /**
-   * number of stored items.
-   */
-  localStorageMemory.length = 0;
-
-  /**
-   * returns item for passed key, or null
-   *
-   * @para {String} key
-   *       name of item to be returned
-   * @returns {String|null}
-   */
-  localStorageMemory.getItem = function(key) {
-    return cache[key] || null;
-  };
-
-  /**
-   * sets item for key to passed value, as String
-   *
-   * @para {String} key
-   *       name of item to be set
-   * @para {String} value
-   *       value, will always be turned into a String
-   * @returns {undefined}
-   */
-  localStorageMemory.setItem = function(key, value) {
-    if (typeof value === 'undefined') {
-      localStorageMemory.removeItem(key);
-    } else {
-      cache[key] = '' + value;
-      localStorageMemory.length++;
-    }
-  };
-
-  /**
-   * removes item for passed key
-   *
-   * @para {String} key
-   *       name of item to be removed
-   * @returns {undefined}
-   */
-  localStorageMemory.removeItem = function(key) {
-    delete cache[key];
-    localStorageMemory.length--;
-  };
-
-  /**
-   * returns name of key at passed index
-   *
-   * @para {Number} index
-   *       Position for key to be returned (starts at 0)
-   * @returns {String|null}
-   */
-  localStorageMemory.key = function(index) {
-    return Object.keys(cache)[index] || null;
-  };
-
-  /**
-   * removes all stored items and sets length to 0
-   *
-   * @returns {undefined}
-   */
-  localStorageMemory.clear = function() {
-    cache = {};
-    localStorageMemory.length = 0;
-  };
-
-  if (typeof exports === 'object') {
-    module.exports = localStorageMemory;
-  } else {
-    root.localStorageMemory = localStorageMemory;
-  }
-})(this);
-
-
-
-},{}],3:[function(require,module,exports){
-/**
- * Helpers.
- */
-
-var s = 1000;
-var m = s * 60;
-var h = m * 60;
-var d = h * 24;
-var y = d * 365.25;
-
-/**
- * Parse or format the given `val`.
- *
- * Options:
- *
- *  - `long` verbose formatting [false]
- *
- * @param {String|Number} val
- * @param {Object} options
- * @return {String|Number}
- * @api public
- */
-
-module.exports = function(val, options){
-  options = options || {};
-  if ('string' == typeof val) return parse(val);
-  return options.long
-    ? long(val)
-    : short(val);
-};
-
-/**
- * Parse the given `str` and return milliseconds.
- *
- * @param {String} str
- * @return {Number}
- * @api private
- */
-
-function parse(str) {
-  str = '' + str;
-  if (str.length > 10000) return;
-  var match = /^((?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|years?|yrs?|y)?$/i.exec(str);
-  if (!match) return;
-  var n = parseFloat(match[1]);
-  var type = (match[2] || 'ms').toLowerCase();
-  switch (type) {
-    case 'years':
-    case 'year':
-    case 'yrs':
-    case 'yr':
-    case 'y':
-      return n * y;
-    case 'days':
-    case 'day':
-    case 'd':
-      return n * d;
-    case 'hours':
-    case 'hour':
-    case 'hrs':
-    case 'hr':
-    case 'h':
-      return n * h;
-    case 'minutes':
-    case 'minute':
-    case 'mins':
-    case 'min':
-    case 'm':
-      return n * m;
-    case 'seconds':
-    case 'second':
-    case 'secs':
-    case 'sec':
-    case 's':
-      return n * s;
-    case 'milliseconds':
-    case 'millisecond':
-    case 'msecs':
-    case 'msec':
-    case 'ms':
-      return n;
-  }
-}
-
-/**
- * Short format for `ms`.
- *
- * @param {Number} ms
- * @return {String}
- * @api private
- */
-
-function short(ms) {
-  if (ms >= d) return Math.round(ms / d) + 'd';
-  if (ms >= h) return Math.round(ms / h) + 'h';
-  if (ms >= m) return Math.round(ms / m) + 'm';
-  if (ms >= s) return Math.round(ms / s) + 's';
-  return ms + 'ms';
-}
-
-/**
- * Long format for `ms`.
- *
- * @param {Number} ms
- * @return {String}
- * @api private
- */
-
-function long(ms) {
-  return plural(ms, d, 'day')
-    || plural(ms, h, 'hour')
-    || plural(ms, m, 'minute')
-    || plural(ms, s, 'second')
-    || ms + ' ms';
-}
-
-/**
- * Pluralization helper.
- */
-
-function plural(ms, n, name) {
-  if (ms < n) return;
-  if (ms < n * 1.5) return Math.floor(ms / n) + ' ' + name;
-  return Math.ceil(ms / n) + ' ' + name + 's';
-}
-
-},{}],4:[function(require,module,exports){
-(function (Buffer){
-/*!
- * depd
- * Copyright(c) 2014 Douglas Christopher Wilson
- * MIT Licensed
- */
-
-/**
- * Module exports.
- */
-
-module.exports = bufferConcat
-
-/**
- * Concatenate an array of Buffers.
- */
-
-function bufferConcat(bufs) {
-  var length = 0
-
-  for (var i = 0, len = bufs.length; i < len; i++) {
-    length += bufs[i].length
-  }
-
-  var buf = new Buffer(length)
-  var pos = 0
-
-  for (var i = 0, len = bufs.length; i < len; i++) {
-    bufs[i].copy(buf, pos)
-    pos += bufs[i].length
-  }
-
-  return buf
-}
-
-}).call(this,require("buffer").Buffer)
-},{"buffer":127}],5:[function(require,module,exports){
-/*!
- * depd
- * Copyright(c) 2014 Douglas Christopher Wilson
- * MIT Licensed
- */
-
-/**
- * Module exports.
- */
-
-module.exports = callSiteToString
-
-/**
- * Format a CallSite file location to a string.
- */
-
-function callSiteFileLocation(callSite) {
-  var fileName
-  var fileLocation = ''
-
-  if (callSite.isNative()) {
-    fileLocation = 'native'
-  } else if (callSite.isEval()) {
-    fileName = callSite.getScriptNameOrSourceURL()
-    if (!fileName) {
-      fileLocation = callSite.getEvalOrigin()
-    }
-  } else {
-    fileName = callSite.getFileName()
-  }
-
-  if (fileName) {
-    fileLocation += fileName
-
-    var lineNumber = callSite.getLineNumber()
-    if (lineNumber != null) {
-      fileLocation += ':' + lineNumber
-
-      var columnNumber = callSite.getColumnNumber()
-      if (columnNumber) {
-        fileLocation += ':' + columnNumber
-      }
-    }
-  }
-
-  return fileLocation || 'unknown source'
-}
-
-/**
- * Format a CallSite to a string.
- */
-
-function callSiteToString(callSite) {
-  var addSuffix = true
-  var fileLocation = callSiteFileLocation(callSite)
-  var functionName = callSite.getFunctionName()
-  var isConstructor = callSite.isConstructor()
-  var isMethodCall = !(callSite.isToplevel() || isConstructor)
-  var line = ''
-
-  if (isMethodCall) {
-    var methodName = callSite.getMethodName()
-    var typeName = getConstructorName(callSite)
-
-    if (functionName) {
-      if (typeName && functionName.indexOf(typeName) !== 0) {
-        line += typeName + '.'
-      }
-
-      line += functionName
-
-      if (methodName && functionName.lastIndexOf('.' + methodName) !== functionName.length - methodName.length - 1) {
-        line += ' [as ' + methodName + ']'
-      }
-    } else {
-      line += typeName + '.' + (methodName || '<anonymous>')
-    }
-  } else if (isConstructor) {
-    line += 'new ' + (functionName || '<anonymous>')
-  } else if (functionName) {
-    line += functionName
-  } else {
-    addSuffix = false
-    line += fileLocation
-  }
-
-  if (addSuffix) {
-    line += ' (' + fileLocation + ')'
-  }
-
-  return line
-}
-
-/**
- * Get constructor name of reviver.
- */
-
-function getConstructorName(obj) {
-  var receiver = obj.receiver
-  return (receiver.constructor && receiver.constructor.name) || null
-}
-
-},{}],6:[function(require,module,exports){
-(function (Buffer){
-/*!
- * depd
- * Copyright(c) 2014 Douglas Christopher Wilson
- * MIT Licensed
- */
-
-/**
- * Module exports.
- */
-
-lazyProperty(module.exports, 'bufferConcat', function bufferConcat() {
-  return Buffer.concat || require('./buffer-concat')
-})
-
-lazyProperty(module.exports, 'callSiteToString', function callSiteToString() {
-  var limit = Error.stackTraceLimit
-  var obj = {}
-  var prep = Error.prepareStackTrace
-
-  function prepareObjectStackTrace(obj, stack) {
-    return stack
-  }
-
-  Error.prepareStackTrace = prepareObjectStackTrace
-  Error.stackTraceLimit = 2
-
-  // capture the stack
-  Error.captureStackTrace(obj)
-
-  // slice the stack
-  var stack = obj.stack.slice()
-
-  Error.prepareStackTrace = prep
-  Error.stackTraceLimit = limit
-
-  return stack[0].toString ? toString : require('./callsite-tostring')
-})
-
-/**
- * Define a lazy property.
- */
-
-function lazyProperty(obj, prop, getter) {
-  function get() {
-    var val = getter()
-
-    Object.defineProperty(obj, prop, {
-      configurable: true,
-      enumerable: true,
-      value: val
-    })
-
-    return val
-  }
-
-  Object.defineProperty(obj, prop, {
-    configurable: true,
-    enumerable: true,
-    get: get
-  })
-}
-
-/**
- * Call toString() on the obj
- */
-
-function toString(obj) {
-  return obj.toString()
-}
-
-}).call(this,require("buffer").Buffer)
-},{"./buffer-concat":4,"./callsite-tostring":5,"buffer":127}],7:[function(require,module,exports){
-if (typeof Object.create === 'function') {
-  // implementation from standard node.js 'util' module
-  module.exports = function inherits(ctor, superCtor) {
-    ctor.super_ = superCtor
-    ctor.prototype = Object.create(superCtor.prototype, {
-      constructor: {
-        value: ctor,
-        enumerable: false,
-        writable: true,
-        configurable: true
-      }
-    });
-  };
-} else {
-  // old school shim for old browsers
-  module.exports = function inherits(ctor, superCtor) {
-    ctor.super_ = superCtor
-    var TempCtor = function () {}
-    TempCtor.prototype = superCtor.prototype
-    ctor.prototype = new TempCtor()
-    ctor.prototype.constructor = ctor
-  }
-}
-
-},{}],8:[function(require,module,exports){
-var dezalgo = require('dezalgo')
-
-module.exports = function (tasks, cb) {
-  var current = 0
-  var results = []
-  if (cb) cb = dezalgo(cb)
-
-  function done (err, result) {
-    results.push(result)
-    if (++current >= tasks.length || err) {
-      if (cb) cb(err, results)
-    } else {
-      tasks[current](done)
-    }
-  }
-
-  if (tasks.length) {
-    tasks[0](done)
-  } else {
-    if (cb) cb(null, results)
-  }
-}
-
-},{"dezalgo":9}],9:[function(require,module,exports){
-var wrappy = require('wrappy')
-module.exports = wrappy(dezalgo)
-
-var asap = require('asap')
-
-function dezalgo (cb) {
-  var sync = true
-  asap(function () {
-    sync = false
-  })
-
-  return function zalgoSafe() {
-    var args = arguments
-    var me = this
-    if (sync)
-      asap(function() {
-        cb.apply(me, args)
-      })
-    else
-      cb.apply(me, args)
-  }
-}
-
-},{"asap":10,"wrappy":12}],10:[function(require,module,exports){
-"use strict";
-
-// rawAsap provides everything we need except exception management.
-var rawAsap = require("./raw");
-// RawTasks are recycled to reduce GC churn.
-var freeTasks = [];
-// We queue errors to ensure they are thrown in right order (FIFO).
-// Array-as-queue is good enough here, since we are just dealing with exceptions.
-var pendingErrors = [];
-var requestErrorThrow = rawAsap.makeRequestCallFromTimer(throwFirstError);
-
-function throwFirstError() {
-    if (pendingErrors.length) {
-        throw pendingErrors.shift();
-    }
-}
-
-/**
- * Calls a task as soon as possible after returning, in its own event, with priority
- * over other events like animation, reflow, and repaint. An error thrown from an
- * event will not interrupt, nor even substantially slow down the processing of
- * other events, but will be rather postponed to a lower priority event.
- * @param {{call}} task A callable object, typically a function that takes no
- * arguments.
- */
-module.exports = asap;
-function asap(task) {
-    var rawTask;
-    if (freeTasks.length) {
-        rawTask = freeTasks.pop();
-    } else {
-        rawTask = new RawTask();
-    }
-    rawTask.task = task;
-    rawAsap(rawTask);
-}
-
-// We wrap tasks with recyclable task objects.  A task object implements
-// `call`, just like a function.
-function RawTask() {
-    this.task = null;
-}
-
-// The sole purpose of wrapping the task is to catch the exception and recycle
-// the task object after its single use.
-RawTask.prototype.call = function () {
-    try {
-        this.task.call();
-    } catch (error) {
-        if (asap.onerror) {
-            // This hook exists purely for testing purposes.
-            // Its name will be periodically randomized to break any code that
-            // depends on its existence.
-            asap.onerror(error);
-        } else {
-            // In a web browser, exceptions are not fatal. However, to avoid
-            // slowing down the queue of pending tasks, we rethrow the error in a
-            // lower priority turn.
-            pendingErrors.push(error);
-            requestErrorThrow();
-        }
-    } finally {
-        this.task = null;
-        freeTasks[freeTasks.length] = this;
-    }
-};
-
-},{"./raw":11}],11:[function(require,module,exports){
-(function (global){
-"use strict";
-
-// Use the fastest means possible to execute a task in its own turn, with
-// priority over other events including IO, animation, reflow, and redraw
-// events in browsers.
-//
-// An exception thrown by a task will permanently interrupt the processing of
-// subsequent tasks. The higher level `asap` function ensures that if an
-// exception is thrown by a task, that the task queue will continue flushing as
-// soon as possible, but if you use `rawAsap` directly, you are responsible to
-// either ensure that no exceptions are thrown from your task, or to manually
-// call `rawAsap.requestFlush` if an exception is thrown.
-module.exports = rawAsap;
-function rawAsap(task) {
-    if (!queue.length) {
-        requestFlush();
-        flushing = true;
-    }
-    // Equivalent to push, but avoids a function call.
-    queue[queue.length] = task;
-}
-
-var queue = [];
-// Once a flush has been requested, no further calls to `requestFlush` are
-// necessary until the next `flush` completes.
-var flushing = false;
-// `requestFlush` is an implementation-specific method that attempts to kick
-// off a `flush` event as quickly as possible. `flush` will attempt to exhaust
-// the event queue before yielding to the browser's own event loop.
-var requestFlush;
-// The position of the next task to execute in the task queue. This is
-// preserved between calls to `flush` so that it can be resumed if
-// a task throws an exception.
-var index = 0;
-// If a task schedules additional tasks recursively, the task queue can grow
-// unbounded. To prevent memory exhaustion, the task queue will periodically
-// truncate already-completed tasks.
-var capacity = 1024;
-
-// The flush function processes all tasks that have been scheduled with
-// `rawAsap` unless and until one of those tasks throws an exception.
-// If a task throws an exception, `flush` ensures that its state will remain
-// consistent and will resume where it left off when called again.
-// However, `flush` does not make any arrangements to be called again if an
-// exception is thrown.
-function flush() {
-    while (index < queue.length) {
-        var currentIndex = index;
-        // Advance the index before calling the task. This ensures that we will
-        // begin flushing on the next task the task throws an error.
-        index = index + 1;
-        queue[currentIndex].call();
-        // Prevent leaking memory for long chains of recursive calls to `asap`.
-        // If we call `asap` within tasks scheduled by `asap`, the queue will
-        // grow, but to avoid an O(n) walk for every task we execute, we don't
-        // shift tasks off the queue after they have been executed.
-        // Instead, we periodically shift 1024 tasks off the queue.
-        if (index > capacity) {
-            // Manually shift all values starting at the index back to the
-            // beginning of the queue.
-            for (var scan = 0, newLength = queue.length - index; scan < newLength; scan++) {
-                queue[scan] = queue[scan + index];
-            }
-            queue.length -= index;
-            index = 0;
-        }
-    }
-    queue.length = 0;
-    index = 0;
-    flushing = false;
-}
-
-// `requestFlush` is implemented using a strategy based on data collected from
-// every available SauceLabs Selenium web driver worker at time of writing.
-// https://docs.google.com/spreadsheets/d/1mG-5UYGup5qxGdEMWkhP6BWCz053NUb2E1QoUTU16uA/edit#gid=783724593
-
-// Safari 6 and 6.1 for desktop, iPad, and iPhone are the only browsers that
-// have WebKitMutationObserver but not un-prefixed MutationObserver.
-// Must use `global` instead of `window` to work in both frames and web
-// workers. `global` is a provision of Browserify, Mr, Mrs, or Mop.
-var BrowserMutationObserver = global.MutationObserver || global.WebKitMutationObserver;
-
-// MutationObservers are desirable because they have high priority and work
-// reliably everywhere they are implemented.
-// They are implemented in all modern browsers.
-//
-// - Android 4-4.3
-// - Chrome 26-34
-// - Firefox 14-29
-// - Internet Explorer 11
-// - iPad Safari 6-7.1
-// - iPhone Safari 7-7.1
-// - Safari 6-7
-if (typeof BrowserMutationObserver === "function") {
-    requestFlush = makeRequestCallFromMutationObserver(flush);
-
-// MessageChannels are desirable because they give direct access to the HTML
-// task queue, are implemented in Internet Explorer 10, Safari 5.0-1, and Opera
-// 11-12, and in web workers in many engines.
-// Although message channels yield to any queued rendering and IO tasks, they
-// would be better than imposing the 4ms delay of timers.
-// However, they do not work reliably in Internet Explorer or Safari.
-
-// Internet Explorer 10 is the only browser that has setImmediate but does
-// not have MutationObservers.
-// Although setImmediate yields to the browser's renderer, it would be
-// preferrable to falling back to setTimeout since it does not have
-// the minimum 4ms penalty.
-// Unfortunately there appears to be a bug in Internet Explorer 10 Mobile (and
-// Desktop to a lesser extent) that renders both setImmediate and
-// MessageChannel useless for the purposes of ASAP.
-// https://github.com/kriskowal/q/issues/396
-
-// Timers are implemented universally.
-// We fall back to timers in workers in most engines, and in foreground
-// contexts in the following browsers.
-// However, note that even this simple case requires nuances to operate in a
-// broad spectrum of browsers.
-//
-// - Firefox 3-13
-// - Internet Explorer 6-9
-// - iPad Safari 4.3
-// - Lynx 2.8.7
-} else {
-    requestFlush = makeRequestCallFromTimer(flush);
-}
-
-// `requestFlush` requests that the high priority event queue be flushed as
-// soon as possible.
-// This is useful to prevent an error thrown in a task from stalling the event
-// queue if the exception handled by Node.js’s
-// `process.on("uncaughtException")` or by a domain.
-rawAsap.requestFlush = requestFlush;
-
-// To request a high priority event, we induce a mutation observer by toggling
-// the text of a text node between "1" and "-1".
-function makeRequestCallFromMutationObserver(callback) {
-    var toggle = 1;
-    var observer = new BrowserMutationObserver(callback);
-    var node = document.createTextNode("");
-    observer.observe(node, {characterData: true});
-    return function requestCall() {
-        toggle = -toggle;
-        node.data = toggle;
-    };
-}
-
-// The message channel technique was discovered by Malte Ubl and was the
-// original foundation for this library.
-// http://www.nonblocking.io/2011/06/windownexttick.html
-
-// Safari 6.0.5 (at least) intermittently fails to create message ports on a
-// page's first load. Thankfully, this version of Safari supports
-// MutationObservers, so we don't need to fall back in that case.
-
-// function makeRequestCallFromMessageChannel(callback) {
-//     var channel = new MessageChannel();
-//     channel.port1.onmessage = callback;
-//     return function requestCall() {
-//         channel.port2.postMessage(0);
-//     };
-// }
-
-// For reasons explained above, we are also unable to use `setImmediate`
-// under any circumstances.
-// Even if we were, there is another bug in Internet Explorer 10.
-// It is not sufficient to assign `setImmediate` to `requestFlush` because
-// `setImmediate` must be called *by name* and therefore must be wrapped in a
-// closure.
-// Never forget.
-
-// function makeRequestCallFromSetImmediate(callback) {
-//     return function requestCall() {
-//         setImmediate(callback);
-//     };
-// }
-
-// Safari 6.0 has a problem where timers will get lost while the user is
-// scrolling. This problem does not impact ASAP because Safari 6.0 supports
-// mutation observers, so that implementation is used instead.
-// However, if we ever elect to use timers in Safari, the prevalent work-around
-// is to add a scroll event listener that calls for a flush.
-
-// `setTimeout` does not call the passed callback if the delay is less than
-// approximately 7 in web workers in Firefox 8 through 18, and sometimes not
-// even then.
-
-function makeRequestCallFromTimer(callback) {
-    return function requestCall() {
-        // We dispatch a timeout with a specified delay of 0 for engines that
-        // can reliably accommodate that request. This will usually be snapped
-        // to a 4 milisecond delay, but once we're flushing, there's no delay
-        // between events.
-        var timeoutHandle = setTimeout(handleTimer, 0);
-        // However, since this timer gets frequently dropped in Firefox
-        // workers, we enlist an interval handle that will try to fire
-        // an event 20 times per second until it succeeds.
-        var intervalHandle = setInterval(handleTimer, 50);
-
-        function handleTimer() {
-            // Whichever timer succeeds will cancel both timers and
-            // execute the callback.
-            clearTimeout(timeoutHandle);
-            clearInterval(intervalHandle);
-            callback();
-        }
-    };
-}
-
-// This is for `asap.js` only.
-// Its name will be periodically randomized to break any code that depends on
-// its existence.
-rawAsap.makeRequestCallFromTimer = makeRequestCallFromTimer;
-
-// ASAP was originally a nextTick shim included in Q. This was factored out
-// into this ASAP package. It was later adapted to RSVP which made further
-// amendments. These decisions, particularly to marginalize MessageChannel and
-// to capture the MutationObserver implementation in a closure, were integrated
-// back into ASAP proper.
-// https://github.com/tildeio/rsvp.js/blob/cddf7232546a9cf858524b75cde6f9edf72620a7/lib/rsvp/asap.js
-
-}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],12:[function(require,module,exports){
-// Returns a wrapper function that returns a wrapped callback
-// The wrapper function should do some stuff, and return a
-// presumably different callback function.
-// This makes sure that own properties are retained, so that
-// decorations and such are not lost along the way.
-module.exports = wrappy
-function wrappy (fn, cb) {
-  if (fn && cb) return wrappy(fn)(cb)
-
-  if (typeof fn !== 'function')
-    throw new TypeError('need wrapper function')
-
-  Object.keys(fn).forEach(function (k) {
-    wrapper[k] = fn[k]
-  })
-
-  return wrapper
-
-  function wrapper() {
-    var args = new Array(arguments.length)
-    for (var i = 0; i < args.length; i++) {
-      args[i] = arguments[i]
-    }
-    var ret = fn.apply(this, args)
-    var cb = args[args.length-1]
-    if (typeof ret === 'function' && ret !== cb) {
-      Object.keys(cb).forEach(function (k) {
-        ret[k] = cb[k]
-      })
-    }
-    return ret
-  }
-}
-
-},{}],13:[function(require,module,exports){
-var ClientRequest = require('./lib/request')
-var extend = require('xtend')
-var statusCodes = require('builtin-status-codes')
-var url = require('url')
-
-var http = exports
-
-http.request = function (opts, cb) {
-	if (typeof opts === 'string')
-		opts = url.parse(opts)
-	else
-		opts = extend(opts)
-
-	// Split opts.host into its components
-	var hostHostname = opts.host ? opts.host.split(':')[0] : null
-	var hostPort = opts.host ? parseInt(opts.host.split(':')[1], 10) : null
-
-	opts.method = opts.method || 'GET'
-	opts.headers = opts.headers || {}
-	opts.path = opts.path || '/'
-	opts.protocol = opts.protocol || window.location.protocol
-	// If the hostname is provided, use the default port for the protocol. If
-	// the url is instead relative, use window.location.port
-	var defaultPort = (opts.hostname || hostHostname) ? (opts.protocol === 'https:' ? 443 : 80) : window.location.port
-	opts.hostname = opts.hostname || hostHostname || window.location.hostname
-	opts.port = opts.port || hostPort || defaultPort
-
-	// Also valid opts.auth, opts.mode
-
-	var req = new ClientRequest(opts)
-	if (cb)
-		req.on('response', cb)
-	return req
-}
-
-http.get = function get (opts, cb) {
-	var req = http.request(opts, cb)
-	req.end()
-	return req
-}
-
-http.Agent = function () {}
-http.Agent.defaultMaxSockets = 4
-
-http.STATUS_CODES = statusCodes
-
-http.METHODS = [
-	'GET',
-	'POST',
-	'PUT',
-	'DELETE' // TODO: include the methods from RFC 2616 and 2518?
-]
-},{"./lib/request":15,"builtin-status-codes":17,"url":154,"xtend":23}],14:[function(require,module,exports){
-exports.fetch = isFunction(window.fetch) && isFunction(window.ReadableByteStream)
-
-exports.blobConstructor = false
-try {
-	new Blob([new ArrayBuffer(1)])
-	exports.blobConstructor = true
-} catch (e) {}
-
-var xhr = new window.XMLHttpRequest()
-xhr.open('GET', '/')
-
-function checkTypeSupport (type) {
-	try {
-		xhr.responseType = type
-		return xhr.responseType === type
-	} catch (e) {}
-	return false
-}
-
-var haveArrayBuffer = isFunction(window.ArrayBuffer)
-var haveSlice = haveArrayBuffer && isFunction(window.ArrayBuffer.prototype.slice)
-
-exports.arraybuffer = haveArrayBuffer && checkTypeSupport('arraybuffer')
-exports.msstream = haveSlice && checkTypeSupport('ms-stream')
-exports.mozchunkedarraybuffer = haveArrayBuffer && checkTypeSupport('moz-chunked-arraybuffer')
-exports.overrideMimeType = isFunction(xhr.overrideMimeType)
-exports.vbArray = isFunction(window.VBArray)
-
-function isFunction (value) {
-  return typeof value === 'function'
-}
-
-xhr = null // Help gc
-},{}],15:[function(require,module,exports){
-(function (process,Buffer){
-var capability = require('./capability')
-var foreach = require('foreach')
-var indexOf = require('indexof')
-var inherits = require('inherits')
-var keys = require('object-keys')
-var response = require('./response')
-var stream = require('stream')
-
-var IncomingMessage = response.IncomingMessage
-var rStates = response.readyStates
-
-function decideMode (preferBinary) {
-	if (capability.fetch) {
-		return 'fetch'
-	} else if (capability.mozchunkedarraybuffer) {
-		return 'moz-chunked-arraybuffer'
-	} else if (capability.msstream) {
-		return 'ms-stream'
-	} else if (capability.arraybuffer && preferBinary) {
-		return 'arraybuffer'
-	} else if (capability.vbArray && preferBinary) {
-		return 'text:vbarray'
-	} else {
-		return 'text'
-	}
-}
-
-var ClientRequest = module.exports = function (opts) {
-	var self = this
-	stream.Writable.call(self)
-
-	self._opts = opts
-	self._url = opts.protocol + '//' + opts.hostname + ':' + opts.port + opts.path
-	self._body = []
-	self._headers = {}
-	if (opts.auth)
-		self.setHeader('Authorization', 'Basic ' + new Buffer(opts.auth).toString('base64'))
-	foreach(keys(opts.headers), function (name) {
-		self.setHeader(name, opts.headers[name])
-	})
-
-	var preferBinary
-	if (opts.mode === 'prefer-streaming') {
-		// If streaming is a high priority but binary compatibility isn't
-		preferBinary = false
-	} else if (opts.mode === 'prefer-fast') {
-		// If binary is preferred for speed
-		preferBinary = true
-	} else if (!opts.mode || opts.mode === 'default') {
-		// By default, use binary if text streaming may corrupt data
-		preferBinary = !capability.overrideMimeType
-	} else {
-		throw new Error('Invalid value for opts.mode')
-	}
-	self._mode = decideMode(preferBinary)
-
-	self.on('finish', function () {
-		self._onFinish()
-	})
-}
-
-inherits(ClientRequest, stream.Writable)
-
-ClientRequest.prototype.setHeader = function (name, value) {
-	var self = this
-	var lowerName = name.toLowerCase()
-	// This check is not necessary, but it prevents warnings from browsers about setting unsafe
-	// headers. To be honest I'm not entirely sure hiding these warnings is a good thing, but
-	// http-browserify did it, so I will too.
-	if (indexOf(unsafeHeaders, lowerName) !== -1)
-		return
-
-	self._headers[lowerName] = {
-		name: name,
-		value: value
-	}
-}
-
-ClientRequest.prototype.getHeader = function (name) {
-	var self = this
-	return self._headers[name.toLowerCase()].value
-}
-
-ClientRequest.prototype.removeHeader = function (name) {
-	var self = this
-	delete self._headers[name.toLowerCase()]
-}
-
-ClientRequest.prototype._onFinish = function () {
-	var self = this
-
-	if (self._destroyed)
-		return
-	var opts = self._opts
-
-	var headersObj = self._headers
-	var body
-	if (opts.method === 'POST' || opts.method === 'PUT') {
-		if (capability.blobConstructor) {
-			body = new window.Blob(self._body.map(function (buffer) {
-				return buffer.toArrayBuffer()
-			}), {
-				type: (headersObj['content-type'] || {}).value || ''
-			})
-		} else {
-			// get utf8 string
-			body = Buffer.concat(self._body).toString()
-		}
-	}
-
-	if (self._mode === 'fetch') {
-		var headers = keys(headersObj).map(function (name) {
-			return [headersObj[name].name, headersObj[name].value]
-		})
-
-		window.fetch(self._url, {
-			method: self._opts.method,
-			headers: headers,
-			body: body,
-			mode: 'cors',
-			credentials: opts.withCredentials ? 'include' : 'same-origin'
-		}).then(function (response) {
-			self._fetchResponse = response
-			self._connect()
-		}).then(undefined, function (reason) {
-			self.emit('error', reason)
-		})
-	} else {
-		var xhr = self._xhr = new window.XMLHttpRequest()
-		try {
-			xhr.open(self._opts.method, self._url, true)
-		} catch (err) {
-			process.nextTick(function () {
-				self.emit('error', err)
-			})
-			return
-		}
-
-		// Can't set responseType on really old browsers
-		if ('responseType' in xhr)
-			xhr.responseType = self._mode.split(':')[0]
-
-		if ('withCredentials' in xhr)
-			xhr.withCredentials = !!opts.withCredentials
-
-		if (self._mode === 'text' && 'overrideMimeType' in xhr)
-			xhr.overrideMimeType('text/plain; charset=x-user-defined')
-
-		foreach(keys(headersObj), function (name) {
-			xhr.setRequestHeader(headersObj[name].name, headersObj[name].value)
-		})
-
-		self._response = null
-		xhr.onreadystatechange = function () {
-			switch (xhr.readyState) {
-				case rStates.LOADING:
-				case rStates.DONE:
-					self._onXHRProgress()
-					break
-			}
-		}
-		// Necessary for streaming in Firefox, since xhr.response is ONLY defined
-		// in onprogress, not in onreadystatechange with xhr.readyState = 3
-		if (self._mode === 'moz-chunked-arraybuffer') {
-			xhr.onprogress = function () {
-				self._onXHRProgress()
-			}
-		}
-
-		xhr.onerror = function () {
-			if (self._destroyed)
-				return
-			self.emit('error', new Error('XHR error'))
-		}
-
-		try {
-			xhr.send(body)
-		} catch (err) {
-			process.nextTick(function () {
-				self.emit('error', err)
-			})
-			return
-		}
-	}
-}
-
-/**
- * Checks if xhr.status is readable. Even though the spec says it should
- * be available in readyState 3, accessing it throws an exception in IE8
- */
-function statusValid (xhr) {
-	try {
-		return (xhr.status !== null)
-	} catch (e) {
-		return false
-	}
-}
-
-ClientRequest.prototype._onXHRProgress = function () {
-	var self = this
-
-	if (!statusValid(self._xhr) || self._destroyed)
-		return
-
-	if (!self._response)
-		self._connect()
-
-	self._response._onXHRProgress()
-}
-
-ClientRequest.prototype._connect = function () {
-	var self = this
-
-	if (self._destroyed)
-		return
-
-	self._response = new IncomingMessage(self._xhr, self._fetchResponse, self._mode)
-	self.emit('response', self._response)
-}
-
-ClientRequest.prototype._write = function (chunk, encoding, cb) {
-	var self = this
-
-	self._body.push(chunk)
-	cb()
-}
-
-ClientRequest.prototype.abort = ClientRequest.prototype.destroy = function () {
-	var self = this
-	self._destroyed = true
-	if (self._response)
-		self._response._destroyed = true
-	if (self._xhr)
-		self._xhr.abort()
-	// Currently, there isn't a way to truly abort a fetch.
-	// If you like bikeshedding, see https://github.com/whatwg/fetch/issues/27
-}
-
-ClientRequest.prototype.end = function (data, encoding, cb) {
-	var self = this
-	if (typeof data === 'function') {
-		cb = data
-		data = undefined
-	}
-
-	if (data)
-		stream.Writable.push.call(self, data, encoding)
-
-	stream.Writable.prototype.end.call(self, cb)
-}
-
-ClientRequest.prototype.flushHeaders = function () {}
-ClientRequest.prototype.setTimeout = function () {}
-ClientRequest.prototype.setNoDelay = function () {}
-ClientRequest.prototype.setSocketKeepAlive = function () {}
-
-// Taken from http://www.w3.org/TR/XMLHttpRequest/#the-setrequestheader%28%29-method
-var unsafeHeaders = [
-	'accept-charset',
-	'accept-encoding',
-	'access-control-request-headers',
-	'access-control-request-method',
-	'connection',
-	'content-length',
-	'cookie',
-	'cookie2',
-	'date',
-	'dnt',
-	'expect',
-	'host',
-	'keep-alive',
-	'origin',
-	'referer',
-	'te',
-	'trailer',
-	'transfer-encoding',
-	'upgrade',
-	'user-agent',
-	'via'
-]
-
-}).call(this,require('_process'),require("buffer").Buffer)
-},{"./capability":14,"./response":16,"_process":135,"buffer":127,"foreach":18,"indexof":19,"inherits":20,"object-keys":21,"stream":151}],16:[function(require,module,exports){
-(function (process,Buffer){
-var capability = require('./capability')
-var foreach = require('foreach')
-var inherits = require('inherits')
-var stream = require('stream')
-
-var rStates = exports.readyStates = {
-	UNSENT: 0,
-	OPENED: 1,
-	HEADERS_RECEIVED: 2,
-	LOADING: 3,
-	DONE: 4
-}
-
-var IncomingMessage = exports.IncomingMessage = function (xhr, response, mode) {
-	var self = this
-	stream.Readable.call(self)
-
-	self._mode = mode
-	self.headers = {}
-	self.rawHeaders = []
-	self.trailers = {}
-	self.rawTrailers = []
-
-	// Fake the 'close' event, but only once 'end' fires
-	self.on('end', function () {
-		// The nextTick is necessary to prevent the 'request' module from causing an infinite loop
-		process.nextTick(function () {
-			self.emit('close')
-		})
-	})
-
-	if (mode === 'fetch') {
-		self._fetchResponse = response
-
-		self.statusCode = response.status
-		self.statusMessage = response.statusText
-		// backwards compatible version of for (<item> of <iterable>):
-		// for (var <item>,_i,_it = <iterable>[Symbol.iterator](); <item> = (_i = _it.next()).value,!_i.done;)
-		for (var header, _i, _it = response.headers[Symbol.iterator](); header = (_i = _it.next()).value, !_i.done;) {
-			self.headers[header[0].toLowerCase()] = header[1]
-			self.rawHeaders.push(header[0], header[1])
-		}
-
-		// TODO: this doesn't respect backpressure. Once WritableStream is available, this can be fixed
-		var reader = response.body.getReader()
-		function read () {
-			reader.read().then(function (result) {
-				if (self._destroyed)
-					return
-				if (result.done) {
-					self.push(null)
-					return
-				}
-				self.push(new Buffer(result.value))
-				read()
-			})
-		}
-		read()
-
-	} else {
-		self._xhr = xhr
-		self._pos = 0
-
-		self.statusCode = xhr.status
-		self.statusMessage = xhr.statusText
-		var headers = xhr.getAllResponseHeaders().split(/\r?\n/)
-		foreach(headers, function (header) {
-			var matches = header.match(/^([^:]+):\s*(.*)/)
-			if (matches) {
-				var key = matches[1].toLowerCase()
-				if (self.headers[key] !== undefined)
-					self.headers[key] += ', ' + matches[2]
-				else
-					self.headers[key] = matches[2]
-				self.rawHeaders.push(matches[1], matches[2])
-			}
-		})
-
-		self._charset = 'x-user-defined'
-		if (!capability.overrideMimeType) {
-			var mimeType = self.rawHeaders['mime-type']
-			if (mimeType) {
-				var charsetMatch = mimeType.match(/;\s*charset=([^;])(;|$)/)
-				if (charsetMatch) {
-					self._charset = charsetMatch[1].toLowerCase()
-				}
-			}
-			if (!self._charset)
-				self._charset = 'utf-8' // best guess
-		}
-	}
-}
-
-inherits(IncomingMessage, stream.Readable)
-
-IncomingMessage.prototype._read = function () {}
-
-IncomingMessage.prototype._onXHRProgress = function () {
-	var self = this
-
-	var xhr = self._xhr
-
-	var response = null
-	switch (self._mode) {
-		case 'text:vbarray': // For IE9
-			if (xhr.readyState !== rStates.DONE)
-				break
-			try {
-				// This fails in IE8
-				response = new window.VBArray(xhr.responseBody).toArray()
-			} catch (e) {}
-			if (response !== null) {
-				self.push(new Buffer(response))
-				break
-			}
-			// Falls through in IE8	
-		case 'text':
-			try { // This will fail when readyState = 3 in IE9. Switch mode and wait for readyState = 4
-				response = xhr.responseText
-			} catch (e) {
-				self._mode = 'text:vbarray'
-				break
-			}
-			if (response.length > self._pos) {
-				var newData = response.substr(self._pos)
-				if (self._charset === 'x-user-defined') {
-					var buffer = new Buffer(newData.length)
-					for (var i = 0; i < newData.length; i++)
-						buffer[i] = newData.charCodeAt(i) & 0xff
-
-					self.push(buffer)
-				} else {
-					self.push(newData, self._charset)
-				}
-				self._pos = response.length
-			}
-			break
-		case 'arraybuffer':
-			if (xhr.readyState !== rStates.DONE)
-				break
-			response = xhr.response
-			self.push(new Buffer(new Uint8Array(response)))
-			break
-		case 'moz-chunked-arraybuffer': // take whole
-			response = xhr.response
-			if (xhr.readyState !== rStates.LOADING || !response)
-				break
-			self.push(new Buffer(new Uint8Array(response)))
-			break
-		case 'ms-stream':
-			response = xhr.response
-			if (xhr.readyState !== rStates.LOADING)
-				break
-			var reader = new window.MSStreamReader()
-			reader.onprogress = function () {
-				if (reader.result.byteLength > self._pos) {
-					self.push(new Buffer(new Uint8Array(reader.result.slice(self._pos))))
-					self._pos = reader.result.byteLength
-				}
-			}
-			reader.onload = function () {
-				self.push(null)
-			}
-			// reader.onerror = ??? // TODO: this
-			reader.readAsArrayBuffer(response)
-			break
-	}
-
-	// The ms-stream case handles end separately in reader.onload()
-	if (self._xhr.readyState === rStates.DONE && self._mode !== 'ms-stream') {
-		self.push(null)
-	}
-}
-
-}).call(this,require('_process'),require("buffer").Buffer)
-},{"./capability":14,"_process":135,"buffer":127,"foreach":18,"inherits":20,"stream":151}],17:[function(require,module,exports){
-module.exports = {
-  "100": "Continue",
-  "101": "Switching Protocols",
-  "102": "Processing",
-  "200": "OK",
-  "201": "Created",
-  "202": "Accepted",
-  "203": "Non-Authoritative Information",
-  "204": "No Content",
-  "205": "Reset Content",
-  "206": "Partial Content",
-  "207": "Multi-Status",
-  "300": "Multiple Choices",
-  "301": "Moved Permanently",
-  "302": "Moved Temporarily",
-  "303": "See Other",
-  "304": "Not Modified",
-  "305": "Use Proxy",
-  "307": "Temporary Redirect",
-  "308": "Permanent Redirect",
-  "400": "Bad Request",
-  "401": "Unauthorized",
-  "402": "Payment Required",
-  "403": "Forbidden",
-  "404": "Not Found",
-  "405": "Method Not Allowed",
-  "406": "Not Acceptable",
-  "407": "Proxy Authentication Required",
-  "408": "Request Time-out",
-  "409": "Conflict",
-  "410": "Gone",
-  "411": "Length Required",
-  "412": "Precondition Failed",
-  "413": "Request Entity Too Large",
-  "414": "Request-URI Too Large",
-  "415": "Unsupported Media Type",
-  "416": "Requested Range Not Satisfiable",
-  "417": "Expectation Failed",
-  "418": "I'm a teapot",
-  "422": "Unprocessable Entity",
-  "423": "Locked",
-  "424": "Failed Dependency",
-  "425": "Unordered Collection",
-  "426": "Upgrade Required",
-  "428": "Precondition Required",
-  "429": "Too Many Requests",
-  "431": "Request Header Fields Too Large",
-  "500": "Internal Server Error",
-  "501": "Not Implemented",
-  "502": "Bad Gateway",
-  "503": "Service Unavailable",
-  "504": "Gateway Time-out",
-  "505": "HTTP Version Not Supported",
-  "506": "Variant Also Negotiates",
-  "507": "Insufficient Storage",
-  "509": "Bandwidth Limit Exceeded",
-  "510": "Not Extended",
-  "511": "Network Authentication Required"
-}
-
-},{}],18:[function(require,module,exports){
-
-var hasOwn = Object.prototype.hasOwnProperty;
-var toString = Object.prototype.toString;
-
-module.exports = function forEach (obj, fn, ctx) {
-    if (toString.call(fn) !== '[object Function]') {
-        throw new TypeError('iterator must be a function');
-    }
-    var l = obj.length;
-    if (l === +l) {
-        for (var i = 0; i < l; i++) {
-            fn.call(ctx, obj[i], i, obj);
-        }
-    } else {
-        for (var k in obj) {
-            if (hasOwn.call(obj, k)) {
-                fn.call(ctx, obj[k], k, obj);
-            }
-        }
-    }
-};
-
-
-},{}],19:[function(require,module,exports){
-
-var indexOf = [].indexOf;
-
-module.exports = function(arr, obj){
-  if (indexOf) return arr.indexOf(obj);
-  for (var i = 0; i < arr.length; ++i) {
-    if (arr[i] === obj) return i;
-  }
-  return -1;
-};
-},{}],20:[function(require,module,exports){
-arguments[4][7][0].apply(exports,arguments)
-},{"dup":7}],21:[function(require,module,exports){
-'use strict';
-
-// modified from https://github.com/es-shims/es5-shim
-var has = Object.prototype.hasOwnProperty;
-var toStr = Object.prototype.toString;
-var slice = Array.prototype.slice;
-var isArgs = require('./isArguments');
-var hasDontEnumBug = !({ 'toString': null }).propertyIsEnumerable('toString');
-var hasProtoEnumBug = function () {}.propertyIsEnumerable('prototype');
-var dontEnums = [
-	'toString',
-	'toLocaleString',
-	'valueOf',
-	'hasOwnProperty',
-	'isPrototypeOf',
-	'propertyIsEnumerable',
-	'constructor'
-];
-
-var keysShim = function keys(object) {
-	var isObject = object !== null && typeof object === 'object';
-	var isFunction = toStr.call(object) === '[object Function]';
-	var isArguments = isArgs(object);
-	var isString = isObject && toStr.call(object) === '[object String]';
-	var theKeys = [];
-
-	if (!isObject && !isFunction && !isArguments) {
-		throw new TypeError('Object.keys called on a non-object');
-	}
-
-	var skipProto = hasProtoEnumBug && isFunction;
-	if (isString && object.length > 0 && !has.call(object, 0)) {
-		for (var i = 0; i < object.length; ++i) {
-			theKeys.push(String(i));
-		}
-	}
-
-	if (isArguments && object.length > 0) {
-		for (var j = 0; j < object.length; ++j) {
-			theKeys.push(String(j));
-		}
-	} else {
-		for (var name in object) {
-			if (!(skipProto && name === 'prototype') && has.call(object, name)) {
-				theKeys.push(String(name));
-			}
-		}
-	}
-
-	if (hasDontEnumBug) {
-		var ctor = object.constructor;
-		var skipConstructor = ctor && ctor.prototype === object;
-
-		for (var k = 0; k < dontEnums.length; ++k) {
-			if (!(skipConstructor && dontEnums[k] === 'constructor') && has.call(object, dontEnums[k])) {
-				theKeys.push(dontEnums[k]);
-			}
-		}
-	}
-	return theKeys;
-};
-
-keysShim.shim = function shimObjectKeys() {
-	if (!Object.keys) {
-		Object.keys = keysShim;
-	} else {
-		var keysWorksWithArguments = (function () {
-			// Safari 5.0 bug
-			return (Object.keys(arguments) || '').length === 2;
-		}(1, 2));
-		if (!keysWorksWithArguments) {
-			var originalKeys = Object.keys;
-			Object.keys = function keys(object) {
-				if (isArgs(object)) {
-					return originalKeys(slice.call(object));
-				} else {
-					return originalKeys(object);
-				}
-			};
-		}
-	}
-	return Object.keys || keysShim;
-};
-
-module.exports = keysShim;
-
-},{"./isArguments":22}],22:[function(require,module,exports){
-'use strict';
-
-var toStr = Object.prototype.toString;
-
-module.exports = function isArguments(value) {
-	var str = toStr.call(value);
-	var isArgs = str === '[object Arguments]';
-	if (!isArgs) {
-		isArgs = str !== '[object Array]' &&
-			value !== null &&
-			typeof value === 'object' &&
-			typeof value.length === 'number' &&
-			value.length >= 0 &&
-			toStr.call(value.callee) === '[object Function]';
-	}
-	return isArgs;
-};
-
-},{}],23:[function(require,module,exports){
-module.exports = extend
-
-function extend() {
-    var target = {}
-
-    for (var i = 0; i < arguments.length; i++) {
-        var source = arguments[i]
-
-        for (var key in source) {
-            if (source.hasOwnProperty(key)) {
-                target[key] = source[key]
-            }
-        }
-    }
-
-    return target
-}
-
-},{}],24:[function(require,module,exports){
-(function (Buffer){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-// NOTE: These type checking functions intentionally don't use `instanceof`
-// because it is fragile and can be easily faked with `Object.create()`.
-function isArray(ar) {
-  return Array.isArray(ar);
-}
-exports.isArray = isArray;
-
-function isBoolean(arg) {
-  return typeof arg === 'boolean';
-}
-exports.isBoolean = isBoolean;
-
-function isNull(arg) {
-  return arg === null;
-}
-exports.isNull = isNull;
-
-function isNullOrUndefined(arg) {
-  return arg == null;
-}
-exports.isNullOrUndefined = isNullOrUndefined;
-
-function isNumber(arg) {
-  return typeof arg === 'number';
-}
-exports.isNumber = isNumber;
-
-function isString(arg) {
-  return typeof arg === 'string';
-}
-exports.isString = isString;
-
-function isSymbol(arg) {
-  return typeof arg === 'symbol';
-}
-exports.isSymbol = isSymbol;
-
-function isUndefined(arg) {
-  return arg === void 0;
-}
-exports.isUndefined = isUndefined;
-
-function isRegExp(re) {
-  return isObject(re) && objectToString(re) === '[object RegExp]';
-}
-exports.isRegExp = isRegExp;
-
-function isObject(arg) {
-  return typeof arg === 'object' && arg !== null;
-}
-exports.isObject = isObject;
-
-function isDate(d) {
-  return isObject(d) && objectToString(d) === '[object Date]';
-}
-exports.isDate = isDate;
-
-function isError(e) {
-  return isObject(e) &&
-      (objectToString(e) === '[object Error]' || e instanceof Error);
-}
-exports.isError = isError;
-
-function isFunction(arg) {
-  return typeof arg === 'function';
-}
-exports.isFunction = isFunction;
-
-function isPrimitive(arg) {
-  return arg === null ||
-         typeof arg === 'boolean' ||
-         typeof arg === 'number' ||
-         typeof arg === 'string' ||
-         typeof arg === 'symbol' ||  // ES6 symbol
-         typeof arg === 'undefined';
-}
-exports.isPrimitive = isPrimitive;
-
-function isBuffer(arg) {
-  return Buffer.isBuffer(arg);
-}
-exports.isBuffer = isBuffer;
-
-function objectToString(o) {
-  return Object.prototype.toString.call(o);
-}
-}).call(this,require("buffer").Buffer)
-},{"buffer":127}],25:[function(require,module,exports){
-arguments[4][7][0].apply(exports,arguments)
-},{"dup":7}],26:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var net = require('net');
-var util = require('util');
-var EventEmitter = require('events').EventEmitter;
-var debug = util.debuglog('http');
-
-// New Agent code.
-
-// The largest departure from the previous implementation is that
-// an Agent instance holds connections for a variable number of host:ports.
-// Surprisingly, this is still API compatible as far as third parties are
-// concerned. The only code that really notices the difference is the
-// request object.
-
-// Another departure is that all code related to HTTP parsing is in
-// ClientRequest.onSocket(). The Agent is now *strictly*
-// concerned with managing a connection pool.
-
-function Agent(options) {
-  if (!(this instanceof Agent))
-    return new Agent(options);
-
-  EventEmitter.call(this);
-
-  var self = this;
-
-  self.defaultPort = 80;
-  self.protocol = 'http:';
-
-  self.options = util._extend({}, options);
-
-  // don't confuse net and make it think that we're connecting to a pipe
-  self.options.path = null;
-  self.requests = {};
-  self.sockets = {};
-  self.freeSockets = {};
-  self.keepAliveMsecs = self.options.keepAliveMsecs || 1000;
-  self.keepAlive = self.options.keepAlive || false;
-  self.maxSockets = self.options.maxSockets || Agent.defaultMaxSockets;
-  self.maxFreeSockets = self.options.maxFreeSockets || 256;
-
-  self.on('free', function(socket, options) {
-    var name = self.getName(options);
-    debug('agent.on(free)', name);
-
-    if (!socket.destroyed &&
-        self.requests[name] && self.requests[name].length) {
-      self.requests[name].shift().onSocket(socket);
-      if (self.requests[name].length === 0) {
-        // don't leak
-        delete self.requests[name];
-      }
-    } else {
-      // If there are no pending requests, then put it in
-      // the freeSockets pool, but only if we're allowed to do so.
-      var req = socket._httpMessage;
-      if (req &&
-          req.shouldKeepAlive &&
-          !socket.destroyed &&
-          self.options.keepAlive) {
-        var freeSockets = self.freeSockets[name];
-        var freeLen = freeSockets ? freeSockets.length : 0;
-        var count = freeLen;
-        if (self.sockets[name])
-          count += self.sockets[name].length;
-
-        if (count >= self.maxSockets || freeLen >= self.maxFreeSockets) {
-          self.removeSocket(socket, options);
-          socket.destroy();
-        } else {
-          freeSockets = freeSockets || [];
-          self.freeSockets[name] = freeSockets;
-          socket.setKeepAlive(true, self.keepAliveMsecs);
-          socket.unref();
-          socket._httpMessage = null;
-          self.removeSocket(socket, options);
-          freeSockets.push(socket);
-        }
-      } else {
-        self.removeSocket(socket, options);
-        socket.destroy();
-      }
-    }
-  });
-}
-
-util.inherits(Agent, EventEmitter);
-exports.Agent = Agent;
-
-Agent.defaultMaxSockets = Infinity;
-
-Agent.prototype.createConnection = net.createConnection;
-
-// Get the key for a given set of request options
-Agent.prototype.getName = function(options) {
-  var name = '';
-
-  if (options.host)
-    name += options.host;
-  else
-    name += 'localhost';
-
-  name += ':';
-  if (options.port)
-    name += options.port;
-  name += ':';
-  if (options.localAddress)
-    name += options.localAddress;
-  name += ':';
-  return name;
-};
-
-Agent.prototype.addRequest = function(req, options) {
-  // Legacy API: addRequest(req, host, port, path)
-  if (typeof options === 'string') {
-    options = {
-      host: options,
-      port: arguments[2],
-      path: arguments[3]
-    };
-  }
-
-  var name = this.getName(options);
-  if (!this.sockets[name]) {
-    this.sockets[name] = [];
-  }
-
-  var freeLen = this.freeSockets[name] ? this.freeSockets[name].length : 0;
-  var sockLen = freeLen + this.sockets[name].length;
-
-  if (freeLen) {
-    // we have a free socket, so use that.
-    var socket = this.freeSockets[name].shift();
-    debug('have free socket');
-
-    // don't leak
-    if (!this.freeSockets[name].length)
-      delete this.freeSockets[name];
-
-    socket.ref();
-    req.onSocket(socket);
-    this.sockets[name].push(socket);
-  } else if (sockLen < this.maxSockets) {
-    debug('call onSocket', sockLen, freeLen);
-    // If we are under maxSockets create a new one.
-    req.onSocket(this.createSocket(req, options));
-  } else {
-    debug('wait for socket');
-    // We are over limit so we'll add it to the queue.
-    if (!this.requests[name]) {
-      this.requests[name] = [];
-    }
-    this.requests[name].push(req);
-  }
-};
-
-Agent.prototype.createSocket = function(req, options) {
-  var self = this;
-  options = util._extend({}, options);
-  options = util._extend(options, self.options);
-
-  options.servername = options.host;
-  if (req) {
-    var hostHeader = req.getHeader('host');
-    if (hostHeader) {
-      options.servername = hostHeader.replace(/:.*$/, '');
-    }
-  }
-
-  var name = self.getName(options);
-
-  debug('createConnection', name, options);
-  options.encoding = null;
-  var s = self.createConnection(options);
-  if (!self.sockets[name]) {
-    self.sockets[name] = [];
-  }
-  this.sockets[name].push(s);
-  debug('sockets', name, this.sockets[name].length);
-
-  function onFree() {
-    self.emit('free', s, options);
-  }
-  s.on('free', onFree);
-
-  function onClose(err) {
-    debug('CLIENT socket onClose');
-    // This is the only place where sockets get removed from the Agent.
-    // If you want to remove a socket from the pool, just close it.
-    // All socket errors end in a close event anyway.
-    self.removeSocket(s, options);
-  }
-  s.on('close', onClose);
-
-  function onRemove() {
-    // We need this function for cases like HTTP 'upgrade'
-    // (defined by WebSockets) where we need to remove a socket from the
-    // pool because it'll be locked up indefinitely
-    debug('CLIENT socket onRemove');
-    self.removeSocket(s, options);
-    s.removeListener('close', onClose);
-    s.removeListener('free', onFree);
-    s.removeListener('agentRemove', onRemove);
-  }
-  s.on('agentRemove', onRemove);
-  return s;
-};
-
-Agent.prototype.removeSocket = function(s, options) {
-  var name = this.getName(options);
-  debug('removeSocket', name, 'destroyed:', s.destroyed);
-  var sets = [this.sockets];
-
-  // If the socket was destroyed, remove it from the free buffers too.
-  if (s.destroyed)
-    sets.push(this.freeSockets);
-
-  for (var sk = 0; sk < sets.length; sk++) {
-    var sockets = sets[sk];
-
-    if (sockets[name]) {
-      var index = sockets[name].indexOf(s);
-      if (index !== -1) {
-        sockets[name].splice(index, 1);
-        // Don't leak
-        if (sockets[name].length === 0)
-          delete sockets[name];
-      }
-    }
-  }
-
-  if (this.requests[name] && this.requests[name].length) {
-    debug('removeSocket, have a request, make a socket');
-    var req = this.requests[name][0];
-    // If we have pending requests and a socket gets closed make a new one
-    this.createSocket(req, options).emit('free');
-  }
-};
-
-Agent.prototype.destroy = function() {
-  var sets = [this.freeSockets, this.sockets];
-  for (var s = 0; s < sets.length; s++) {
-    var set = sets[s];
-    var keys = Object.keys(set);
-    for (var v = 0; v < keys.length; v++) {
-      var setName = set[keys[v]];
-      for (var n = 0; n < setName.length; n++) {
-        setName[n].destroy();
-      }
-    }
-  }
-};
-
-exports.globalAgent = new Agent();
-
-},{"events":132,"net":"net","util":156}],27:[function(require,module,exports){
-(function (process){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var util = require('util');
-var net = require('net');
-var url = require('url');
-var EventEmitter = require('events').EventEmitter;
-var HTTPParser = require('http-parser-js').HTTPParser;
-var assert = require('assert').ok;
-var Buffer = require('buffer').Buffer;
-
-var common = require('./_http_common');
-
-var httpSocketSetup = common.httpSocketSetup;
-var parsers = common.parsers;
-var freeParser = common.freeParser;
-var debug = common.debug;
-
-var OutgoingMessage = require('./_http_outgoing').OutgoingMessage;
-
-var Agent = require('./_http_agent');
-
-
-function ClientRequest(options, cb) {
-  var self = this;
-  OutgoingMessage.call(self);
-
-  if (util.isString(options)) {
-    options = url.parse(options);
-  } else {
-    options = util._extend({}, options);
-  }
-
-  var agent = options.agent;
-  var defaultAgent = options._defaultAgent || Agent.globalAgent;
-  if (agent === false) {
-    agent = new defaultAgent.constructor();
-  } else if (util.isNullOrUndefined(agent) && !options.createConnection) {
-    agent = defaultAgent;
-  }
-  self.agent = agent;
-
-  var protocol = options.protocol || defaultAgent.protocol;
-  var expectedProtocol = defaultAgent.protocol;
-  if (self.agent && self.agent.protocol)
-    expectedProtocol = self.agent.protocol;
-
-  if (options.path && / /.test(options.path)) {
-    // The actual regex is more like /[^A-Za-z0-9\-._~!$&'()*+,;=/:@]/
-    // with an additional rule for ignoring percentage-escaped characters
-    // but that's a) hard to capture in a regular expression that performs
-    // well, and b) possibly too restrictive for real-world usage. That's
-    // why it only scans for spaces because those are guaranteed to create
-    // an invalid request.
-    throw new TypeError('Request path contains unescaped characters.');
-  } else if (protocol !== expectedProtocol) {
-    throw new Error('Protocol "' + protocol + '" not supported. ' +
-                    'Expected "' + expectedProtocol + '".');
-  }
-
-  var defaultPort = options.defaultPort || self.agent && self.agent.defaultPort;
-
-  var port = options.port = options.port || defaultPort || 80;
-  var host = options.host = options.hostname || options.host || 'localhost';
-
-  if (util.isUndefined(options.setHost)) {
-    var setHost = true;
-  }
-
-  self.socketPath = options.socketPath;
-
-  var method = self.method = (options.method || 'GET').toUpperCase();
-  self.path = options.path || '/';
-  if (cb) {
-    self.once('response', cb);
-  }
-
-  if (!util.isArray(options.headers)) {
-    if (options.headers) {
-      var keys = Object.keys(options.headers);
-      for (var i = 0, l = keys.length; i < l; i++) {
-        var key = keys[i];
-        self.setHeader(key, options.headers[key]);
-      }
-    }
-    if (host && !this.getHeader('host') && setHost) {
-      var hostHeader = host;
-      if (port && +port !== defaultPort) {
-        hostHeader += ':' + port;
-      }
-      this.setHeader('Host', hostHeader);
-    }
-  }
-
-  if (options.auth && !this.getHeader('Authorization')) {
-    //basic auth
-    this.setHeader('Authorization', 'Basic ' +
-                   new Buffer(options.auth).toString('base64'));
-  }
-
-  if (method === 'GET' ||
-      method === 'HEAD' ||
-      method === 'DELETE' ||
-      method === 'OPTIONS' ||
-      method === 'CONNECT') {
-    self.useChunkedEncodingByDefault = false;
-  } else {
-    self.useChunkedEncodingByDefault = true;
-  }
-
-  if (util.isArray(options.headers)) {
-    self._storeHeader(self.method + ' ' + self.path + ' HTTP/1.1\r\n',
-                      options.headers);
-  } else if (self.getHeader('expect')) {
-    self._storeHeader(self.method + ' ' + self.path + ' HTTP/1.1\r\n',
-                      self._renderHeaders());
-  }
-
-  if (self.socketPath) {
-    self._last = true;
-    self.shouldKeepAlive = false;
-    var conn = self.agent.createConnection({ path: self.socketPath });
-    self.onSocket(conn);
-  } else if (self.agent) {
-    // If there is an agent we should default to Connection:keep-alive,
-    // but only if the Agent will actually reuse the connection!
-    // If it's not a keepAlive agent, and the maxSockets==Infinity, then
-    // there's never a case where this socket will actually be reused
-    if (!self.agent.keepAlive && !Number.isFinite(self.agent.maxSockets)) {
-      self._last = true;
-      self.shouldKeepAlive = false;
-    } else {
-      self._last = false;
-      self.shouldKeepAlive = true;
-    }
-    self.agent.addRequest(self, options);
-  } else {
-    // No agent, default to Connection:close.
-    self._last = true;
-    self.shouldKeepAlive = false;
-    if (options.createConnection) {
-      var conn = options.createConnection(options);
-    } else {
-      debug('CLIENT use net.createConnection', options);
-      var conn = net.createConnection(options);
-    }
-    self.onSocket(conn);
-  }
-
-  self._deferToConnect(null, null, function() {
-    self._flush();
-    self = null;
-  });
-}
-
-util.inherits(ClientRequest, OutgoingMessage);
-
-exports.ClientRequest = ClientRequest;
-
-ClientRequest.prototype.aborted = undefined;
-
-ClientRequest.prototype._finish = function() {
-  // DTRACE_HTTP_CLIENT_REQUEST(this, this.connection);
-  // COUNTER_HTTP_CLIENT_REQUEST();
-  OutgoingMessage.prototype._finish.call(this);
-};
-
-ClientRequest.prototype._implicitHeader = function() {
-  this._storeHeader(this.method + ' ' + this.path + ' HTTP/1.1\r\n',
-                    this._renderHeaders());
-};
-
-ClientRequest.prototype.abort = function() {
-  // Mark as aborting so we can avoid sending queued request data
-  // This is used as a truthy flag elsewhere. The use of Date.now is for
-  // debugging purposes only.
-  this.aborted = Date.now();
-
-  // If we're aborting, we don't care about any more response data.
-  if (this.res)
-    this.res._dump();
-  else
-    this.once('response', function(res) {
-      res._dump();
-    });
-
-  // In the event that we don't have a socket, we will pop out of
-  // the request queue through handling in onSocket.
-  if (this.socket) {
-    // in-progress
-    this.socket.destroy();
-  }
-};
-
-
-function createHangUpError() {
-  var error = new Error('socket hang up');
-  error.code = 'ECONNRESET';
-  return error;
-}
-
-
-function socketCloseListener() {
-  var socket = this;
-  var req = socket._httpMessage;
-  debug('HTTP socket close');
-
-  // Pull through final chunk, if anything is buffered.
-  // the ondata function will handle it properly, and this
-  // is a no-op if no final chunk remains.
-  socket.read();
-
-  // NOTE: Its important to get parser here, because it could be freed by
-  // the `socketOnData`.
-  var parser = socket.parser;
-  req.emit('close');
-  if (req.res && req.res.readable) {
-    // Socket closed before we emitted 'end' below.
-    req.res.emit('aborted');
-    var res = req.res;
-    res.on('end', function() {
-      res.emit('close');
-    });
-    res.push(null);
-  } else if (!req.res && !req.socket._hadError) {
-    // This socket error fired before we started to
-    // receive a response. The error needs to
-    // fire on the request.
-    req.emit('error', createHangUpError());
-    req.socket._hadError = true;
-  }
-
-  // Too bad.  That output wasn't getting written.
-  // This is pretty terrible that it doesn't raise an error.
-  // Fixed better in v0.10
-  if (req.output)
-    req.output.length = 0;
-  if (req.outputEncodings)
-    req.outputEncodings.length = 0;
-
-  if (parser) {
-    parser.finish();
-    freeParser(parser, req, socket);
-  }
-}
-
-function socketErrorListener(err) {
-  var socket = this;
-  var req = socket._httpMessage;
-  debug('SOCKET ERROR:', err.message, err.stack);
-
-  if (req) {
-    req.emit('error', err);
-    // For Safety. Some additional errors might fire later on
-    // and we need to make sure we don't double-fire the error event.
-    req.socket._hadError = true;
-  }
-
-  // Handle any pending data
-  socket.read();
-
-  var parser = socket.parser;
-  if (parser) {
-    parser.finish();
-    freeParser(parser, req, socket);
-  }
-
-  // Ensure that no further data will come out of the socket
-  socket.removeListener('data', socketOnData);
-  socket.removeListener('end', socketOnEnd);
-  socket.destroy();
-}
-
-function socketOnEnd() {
-  var socket = this;
-  var req = this._httpMessage;
-  var parser = this.parser;
-
-  if (!req.res && !req.socket._hadError) {
-    // If we don't have a response then we know that the socket
-    // ended prematurely and we need to emit an error on the request.
-    req.emit('error', createHangUpError());
-    req.socket._hadError = true;
-  }
-  if (parser) {
-    parser.finish();
-    freeParser(parser, req, socket);
-  }
-  socket.destroy();
-}
-
-function socketOnData(d) {
-  var socket = this;
-  var req = this._httpMessage;
-  var parser = this.parser;
-
-  assert(parser && parser.socket === socket);
-
-  var ret = parser.execute(d);
-  if (ret instanceof Error) {
-    debug('parse error');
-    freeParser(parser, req, socket);
-    socket.destroy();
-    req.emit('error', ret);
-    req.socket._hadError = true;
-  } else if (parser.incoming && parser.incoming.upgrade) {
-    // Upgrade or CONNECT
-    var bytesParsed = ret;
-    var res = parser.incoming;
-    req.res = res;
-
-    socket.removeListener('data', socketOnData);
-    socket.removeListener('end', socketOnEnd);
-    parser.finish();
-
-    var bodyHead = d.slice(bytesParsed, d.length);
-
-    var eventName = req.method === 'CONNECT' ? 'connect' : 'upgrade';
-    if (EventEmitter.listenerCount(req, eventName) > 0) {
-      req.upgradeOrConnect = true;
-
-      // detach the socket
-      socket.emit('agentRemove');
-      socket.removeListener('close', socketCloseListener);
-      socket.removeListener('error', socketErrorListener);
-
-      // TODO(isaacs): Need a way to reset a stream to fresh state
-      // IE, not flowing, and not explicitly paused.
-      socket._readableState.flowing = null;
-
-      req.emit(eventName, res, socket, bodyHead);
-      req.emit('close');
-    } else {
-      // Got Upgrade header or CONNECT method, but have no handler.
-      socket.destroy();
-    }
-    freeParser(parser, req, socket);
-  } else if (parser.incoming && parser.incoming.complete &&
-             // When the status code is 100 (Continue), the server will
-             // send a final response after this client sends a request
-             // body. So, we must not free the parser.
-             parser.incoming.statusCode !== 100) {
-    socket.removeListener('data', socketOnData);
-    socket.removeListener('end', socketOnEnd);
-    freeParser(parser, req, socket);
-  }
-}
-
-
-// client
-function parserOnIncomingClient(res, shouldKeepAlive) {
-  var socket = this.socket;
-  var req = socket._httpMessage;
-
-
-  // propogate "domain" setting...
-  if (req.domain && !res.domain) {
-    debug('setting "res.domain"');
-    res.domain = req.domain;
-  }
-
-  debug('AGENT incoming response!');
-
-  if (req.res) {
-    // We already have a response object, this means the server
-    // sent a double response.
-    socket.destroy();
-    return;
-  }
-  req.res = res;
-
-  // Responses to CONNECT request is handled as Upgrade.
-  if (req.method === 'CONNECT') {
-    res.upgrade = true;
-    return true; // skip body
-  }
-
-  // Responses to HEAD requests are crazy.
-  // HEAD responses aren't allowed to have an entity-body
-  // but *can* have a content-length which actually corresponds
-  // to the content-length of the entity-body had the request
-  // been a GET.
-  var isHeadResponse = req.method === 'HEAD';
-  debug('AGENT isHeadResponse', isHeadResponse);
-
-  if (res.statusCode === 100) {
-    // restart the parser, as this is a continue message.
-    delete req.res; // Clear res so that we don't hit double-responses.
-    req.emit('continue');
-    return true;
-  }
-
-  if (req.shouldKeepAlive && !shouldKeepAlive && !req.upgradeOrConnect) {
-    // Server MUST respond with Connection:keep-alive for us to enable it.
-    // If we've been upgraded (via WebSockets) we also shouldn't try to
-    // keep the connection open.
-    req.shouldKeepAlive = false;
-  }
-
-
-  // DTRACE_HTTP_CLIENT_RESPONSE(socket, req);
-  // COUNTER_HTTP_CLIENT_RESPONSE();
-  req.res = res;
-  res.req = req;
-
-  // add our listener first, so that we guarantee socket cleanup
-  res.on('end', responseOnEnd);
-  var handled = req.emit('response', res);
-
-  // If the user did not listen for the 'response' event, then they
-  // can't possibly read the data, so we ._dump() it into the void
-  // so that the socket doesn't hang there in a paused state.
-  if (!handled)
-    res._dump();
-
-  return isHeadResponse;
-}
-
-// client
-function responseOnEnd() {
-  var res = this;
-  var req = res.req;
-  var socket = req.socket;
-
-  if (!req.shouldKeepAlive) {
-    if (socket.writable) {
-      debug('AGENT socket.destroySoon()');
-      socket.destroySoon();
-    }
-    assert(!socket.writable);
-  } else {
-    debug('AGENT socket keep-alive');
-    if (req.timeoutCb) {
-      socket.setTimeout(0, req.timeoutCb);
-      req.timeoutCb = null;
-    }
-    socket.removeListener('close', socketCloseListener);
-    socket.removeListener('error', socketErrorListener);
-    // Mark this socket as available, AFTER user-added end
-    // handlers have a chance to run.
-    process.nextTick(function() {
-      socket.emit('free');
-    });
-  }
-}
-
-function tickOnSocket(req, socket) {
-  var parser = parsers.alloc();
-  req.socket = socket;
-  req.connection = socket;
-  parser.reinitialize(HTTPParser.RESPONSE);
-  parser.socket = socket;
-  parser.incoming = null;
-  req.parser = parser;
-
-  socket.parser = parser;
-  socket._httpMessage = req;
-
-  // Setup "drain" propogation.
-  httpSocketSetup(socket);
-
-  // Propagate headers limit from request object to parser
-  if (util.isNumber(req.maxHeadersCount)) {
-    parser.maxHeaderPairs = req.maxHeadersCount << 1;
-  } else {
-    // Set default value because parser may be reused from FreeList
-    parser.maxHeaderPairs = 2000;
-  }
-
-  parser.onIncoming = parserOnIncomingClient;
-  socket.on('error', socketErrorListener);
-  socket.on('data', socketOnData);
-  socket.on('end', socketOnEnd);
-  socket.on('close', socketCloseListener);
-  req.emit('socket', socket);
-}
-
-ClientRequest.prototype.onSocket = function(socket) {
-  var req = this;
-
-  process.nextTick(function() {
-    if (req.aborted) {
-      // If we were aborted while waiting for a socket, skip the whole thing.
-      socket.emit('free');
-    } else {
-      tickOnSocket(req, socket);
-    }
-  });
-};
-
-ClientRequest.prototype._deferToConnect = function(method, arguments_, cb) {
-  // This function is for calls that need to happen once the socket is
-  // connected and writable. It's an important promisy thing for all the socket
-  // calls that happen either now (when a socket is assigned) or
-  // in the future (when a socket gets assigned out of the pool and is
-  // eventually writable).
-  var self = this;
-  var onSocket = function() {
-    if (self.socket.writable) {
-      if (method) {
-        self.socket[method].apply(self.socket, arguments_);
-      }
-      if (cb) { cb(); }
-    } else {
-      self.socket.once('connect', function() {
-        if (method) {
-          self.socket[method].apply(self.socket, arguments_);
-        }
-        if (cb) { cb(); }
-      });
-    }
-  }
-  if (!self.socket) {
-    self.once('socket', onSocket);
-  } else {
-    onSocket();
-  }
-};
-
-ClientRequest.prototype.setTimeout = function(msecs, callback) {
-  if (callback) this.once('timeout', callback);
-
-  var self = this;
-  function emitTimeout() {
-    self.emit('timeout');
-  }
-
-  if (this.socket && this.socket.writable) {
-    if (this.timeoutCb)
-      this.socket.setTimeout(0, this.timeoutCb);
-    this.timeoutCb = emitTimeout;
-    this.socket.setTimeout(msecs, emitTimeout);
-    return;
-  }
-
-  // Set timeoutCb so that it'll get cleaned up on request end
-  this.timeoutCb = emitTimeout;
-  if (this.socket) {
-    var sock = this.socket;
-    this.socket.once('connect', function() {
-      sock.setTimeout(msecs, emitTimeout);
-    });
-    return;
-  }
-
-  this.once('socket', function(sock) {
-    sock.setTimeout(msecs, emitTimeout);
-  });
-};
-
-ClientRequest.prototype.setNoDelay = function() {
-  this._deferToConnect('setNoDelay', arguments);
-};
-ClientRequest.prototype.setSocketKeepAlive = function() {
-  this._deferToConnect('setKeepAlive', arguments);
-};
-
-ClientRequest.prototype.clearTimeout = function(cb) {
-  this.setTimeout(0, cb);
-};
-
-}).call(this,require('_process'))
-},{"./_http_agent":26,"./_http_common":28,"./_http_outgoing":30,"_process":135,"assert":125,"buffer":127,"events":132,"http-parser-js":33,"net":"net","url":154,"util":156}],28:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var FreeList = require('freelist').FreeList;
-var HTTPParser = require('http-parser-js').HTTPParser;
-
-var incoming = require('./_http_incoming');
-var IncomingMessage = incoming.IncomingMessage;
-var readStart = incoming.readStart;
-var readStop = incoming.readStop;
-
-var isNumber = require('util').isNumber;
-var debug = require('util').debuglog('http');
-exports.debug = debug;
-
-exports.CRLF = '\r\n';
-exports.chunkExpression = /chunk/i;
-exports.continueExpression = /100-continue/i;
-exports.methods = HTTPParser.methods;
-
-var kOnHeaders = HTTPParser.kOnHeaders | 0;
-var kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
-var kOnBody = HTTPParser.kOnBody | 0;
-var kOnMessageComplete = HTTPParser.kOnMessageComplete | 0;
-
-// Only called in the slow case where slow means
-// that the request headers were either fragmented
-// across multiple TCP packets or too large to be
-// processed in a single run. This method is also
-// called to process trailing HTTP headers.
-function parserOnHeaders(headers, url) {
-  // Once we exceeded headers limit - stop collecting them
-  if (this.maxHeaderPairs <= 0 ||
-      this._headers.length < this.maxHeaderPairs) {
-    this._headers = this._headers.concat(headers);
-  }
-  this._url += url;
-}
-
-// info.headers and info.url are set only if .onHeaders()
-// has not been called for this request.
-//
-// info.url is not set for response parsers but that's not
-// applicable here since all our parsers are request parsers.
-function parserOnHeadersComplete(info) {
-  debug('parserOnHeadersComplete', info);
-  var parser = this;
-  var headers = info.headers;
-  var url = info.url;
-
-  if (!headers) {
-    headers = parser._headers;
-    parser._headers = [];
-  }
-
-  if (!url) {
-    url = parser._url;
-    parser._url = '';
-  }
-
-  parser.incoming = new IncomingMessage(parser.socket);
-  parser.incoming.httpVersionMajor = info.versionMajor;
-  parser.incoming.httpVersionMinor = info.versionMinor;
-  parser.incoming.httpVersion = info.versionMajor + '.' + info.versionMinor;
-  parser.incoming.url = url;
-
-  var n = headers.length;
-
-  // If parser.maxHeaderPairs <= 0 - assume that there're no limit
-  if (parser.maxHeaderPairs > 0) {
-    n = Math.min(n, parser.maxHeaderPairs);
-  }
-
-  parser.incoming._addHeaderLines(headers, n);
-
-  if (isNumber(info.method)) {
-    // server only
-    parser.incoming.method = HTTPParser.methods[info.method];
-  } else {
-    // client only
-    parser.incoming.statusCode = info.statusCode;
-    parser.incoming.statusMessage = info.statusMessage;
-  }
-
-  parser.incoming.upgrade = info.upgrade;
-
-  var skipBody = false; // response to HEAD or CONNECT
-
-  if (!info.upgrade) {
-    // For upgraded connections and CONNECT method request,
-    // we'll emit this after parser.execute
-    // so that we can capture the first part of the new protocol
-    skipBody = parser.onIncoming(parser.incoming, info.shouldKeepAlive);
-  }
-
-  return skipBody;
-}
-
-// XXX This is a mess.
-// TODO: http.Parser should be a Writable emits request/response events.
-function parserOnBody(b, start, len) {
-  var parser = this;
-  var stream = parser.incoming;
-
-  // if the stream has already been removed, then drop it.
-  if (!stream)
-    return;
-
-  var socket = stream.socket;
-
-  // pretend this was the result of a stream._read call.
-  if (len > 0 && !stream._dumped) {
-    var slice = b.slice(start, start + len);
-    var ret = stream.push(slice);
-    if (!ret)
-      readStop(socket);
-  }
-}
-
-function parserOnMessageComplete() {
-  var parser = this;
-  var stream = parser.incoming;
-
-  if (stream) {
-    stream.complete = true;
-    // Emit any trailing headers.
-    var headers = parser._headers;
-    if (headers) {
-      parser.incoming._addHeaderLines(headers, headers.length);
-      parser._headers = [];
-      parser._url = '';
-    }
-
-    if (!stream.upgrade)
-      // For upgraded connections, also emit this after parser.execute
-      stream.push(null);
-  }
-
-  if (stream && !parser.incoming._pendings.length) {
-    // For emit end event
-    stream.push(null);
-  }
-
-  // force to read the next incoming message
-  readStart(parser.socket);
-}
-
-
-var parsers = new FreeList('parsers', 1000, function() {
-  var parser = new HTTPParser(HTTPParser.REQUEST);
-
-  parser._headers = [];
-  parser._url = '';
-
-  // Only called in the slow case where slow means
-  // that the request headers were either fragmented
-  // across multiple TCP packets or too large to be
-  // processed in a single run. This method is also
-  // called to process trailing HTTP headers.
-  parser[kOnHeaders] = parserOnHeaders;
-  parser[kOnHeadersComplete] = parserOnHeadersComplete;
-  parser[kOnBody] = parserOnBody;
-  parser[kOnMessageComplete] = parserOnMessageComplete;
-
-  return parser;
-});
-exports.parsers = parsers;
-
-
-// Free the parser and also break any links that it
-// might have to any other things.
-// TODO: All parser data should be attached to a
-// single object, so that it can be easily cleaned
-// up by doing `parser.data = {}`, which should
-// be done in FreeList.free.  `parsers.free(parser)`
-// should be all that is needed.
-function freeParser(parser, req, socket) {
-  if (parser) {
-    parser._headers = [];
-    parser.onIncoming = null;
-    if (parser.socket)
-      parser.socket.parser = null;
-    parser.socket = null;
-    parser.incoming = null;
-    if (parsers.free(parser) === false)
-      parser.close();
-    parser = null;
-  }
-  if (req) {
-    req.parser = null;
-  }
-  if (socket) {
-    socket.parser = null;
-  }
-}
-exports.freeParser = freeParser;
-
-
-function ondrain() {
-  if (this._httpMessage) this._httpMessage.emit('drain');
-}
-
-
-function httpSocketSetup(socket) {
-  socket.removeListener('drain', ondrain);
-  socket.on('drain', ondrain);
-}
-exports.httpSocketSetup = httpSocketSetup;
-
-},{"./_http_incoming":29,"freelist":32,"http-parser-js":33,"util":156}],29:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var util = require('util');
-var Stream = require('stream');
-
-function readStart(socket) {
-  if (socket && !socket._paused && socket.readable)
-    socket.resume();
-}
-exports.readStart = readStart;
-
-function readStop(socket) {
-  if (socket)
-    socket.pause();
-}
-exports.readStop = readStop;
-
-
-/* Abstract base class for ServerRequest and ClientResponse. */
-function IncomingMessage(socket) {
-  Stream.Readable.call(this);
-
-  // XXX This implementation is kind of all over the place
-  // When the parser emits body chunks, they go in this list.
-  // _read() pulls them out, and when it finds EOF, it ends.
-
-  this.socket = socket;
-  this.connection = socket;
-
-  this.httpVersionMajor = null;
-  this.httpVersionMinor = null;
-  this.httpVersion = null;
-  this.complete = false;
-  this.headers = {};
-  this.rawHeaders = [];
-  this.trailers = {};
-  this.rawTrailers = [];
-
-  this.readable = true;
-
-  this._pendings = [];
-  this._pendingIndex = 0;
-  this.upgrade = null;
-
-  // request (server) only
-  this.url = '';
-  this.method = null;
-
-  // response (client) only
-  this.statusCode = null;
-  this.statusMessage = null;
-  this.client = this.socket;
-
-  // flag for backwards compatibility grossness.
-  this._consuming = false;
-
-  // flag for when we decide that this message cannot possibly be
-  // read by the user, so there's no point continuing to handle it.
-  this._dumped = false;
-}
-util.inherits(IncomingMessage, Stream.Readable);
-
-
-exports.IncomingMessage = IncomingMessage;
-
-
-IncomingMessage.prototype.setTimeout = function(msecs, callback) {
-  if (callback)
-    this.on('timeout', callback);
-  this.socket.setTimeout(msecs);
-};
-
-
-IncomingMessage.prototype.read = function(n) {
-  this._consuming = true;
-  this.read = Stream.Readable.prototype.read;
-  return this.read(n);
-};
-
-
-IncomingMessage.prototype._read = function(n) {
-  // We actually do almost nothing here, because the parserOnBody
-  // function fills up our internal buffer directly.  However, we
-  // do need to unpause the underlying socket so that it flows.
-  if (this.socket.readable)
-    readStart(this.socket);
-};
-
-
-// It's possible that the socket will be destroyed, and removed from
-// any messages, before ever calling this.  In that case, just skip
-// it, since something else is destroying this connection anyway.
-IncomingMessage.prototype.destroy = function(error) {
-  if (this.socket)
-    this.socket.destroy(error);
-};
-
-
-IncomingMessage.prototype._addHeaderLines = function(headers, n) {
-  if (headers && headers.length) {
-    var raw, dest;
-    if (this.complete) {
-      raw = this.rawTrailers;
-      dest = this.trailers;
-    } else {
-      raw = this.rawHeaders;
-      dest = this.headers;
-    }
-
-    for (var i = 0; i < n; i += 2) {
-      var k = headers[i];
-      var v = headers[i + 1];
-      raw.push(k);
-      raw.push(v);
-      this._addHeaderLine(k, v, dest);
-    }
-  }
-};
-
-
-// Add the given (field, value) pair to the message
-//
-// Per RFC2616, section 4.2 it is acceptable to join multiple instances of the
-// same header with a ', ' if the header in question supports specification of
-// multiple values this way. If not, we declare the first instance the winner
-// and drop the second. Extended header fields (those beginning with 'x-') are
-// always joined.
-IncomingMessage.prototype._addHeaderLine = function(field, value, dest) {
-  field = field.toLowerCase();
-  switch (field) {
-    // Array headers:
-    case 'set-cookie':
-      if (!util.isUndefined(dest[field])) {
-        dest[field].push(value);
-      } else {
-        dest[field] = [value];
-      }
-      break;
-
-    // list is taken from:
-    // https://mxr.mozilla.org/mozilla/source/netwerk/protocol/http/src/nsHttpHeaderArray.cpp
-    case 'content-type':
-    case 'content-length':
-    case 'user-agent':
-    case 'referer':
-    case 'host':
-    case 'authorization':
-    case 'proxy-authorization':
-    case 'if-modified-since':
-    case 'if-unmodified-since':
-    case 'from':
-    case 'location':
-    case 'max-forwards':
-      // drop duplicates
-      if (util.isUndefined(dest[field]))
-        dest[field] = value;
-      break;
-
-    default:
-      // make comma-separated list
-      if (!util.isUndefined(dest[field]))
-        dest[field] += ', ' + value;
-      else {
-        dest[field] = value;
-      }
-  }
-};
-
-
-// Call this instead of resume() if we want to just
-// dump all the data to /dev/null
-IncomingMessage.prototype._dump = function() {
-  if (!this._dumped) {
-    this._dumped = true;
-    this.resume();
-  }
-};
-
-},{"stream":151,"util":156}],30:[function(require,module,exports){
-(function (process){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var assert = require('assert').ok;
-var Stream = require('stream');
-var timers = require('timers');
-var util = require('util');
-var Buffer = require('buffer').Buffer;
-var common = require('./_http_common');
-
-// fix if cork methods aren't available
-if (!Stream.Writable.prototype.cork) {
-  Stream.Writable.prototype.cork = Stream.Writable.prototype.uncork = function() {};
-}
-if (!Stream.Duplex.prototype.cork) {
-  Stream.Duplex.prototype.cork = Stream.Duplex.prototype.uncork = function() {};
-}
-
-var CRLF = common.CRLF;
-var chunkExpression = common.chunkExpression;
-var debug = common.debug;
-
-
-var connectionExpression = /Connection/i;
-var transferEncodingExpression = /Transfer-Encoding/i;
-var closeExpression = /close/i;
-var contentLengthExpression = /Content-Length/i;
-var dateExpression = /Date/i;
-var expectExpression = /Expect/i;
-
-var automaticHeaders = {
-  connection: true,
-  'content-length': true,
-  'transfer-encoding': true,
-  date: true
-};
-
-
-var dateCache;
-function utcDate() {
-  if (!dateCache) {
-    var d = new Date();
-    dateCache = d.toUTCString();
-    timers.enroll(utcDate, 1000 - d.getMilliseconds());
-    timers._unrefActive(utcDate);
-  }
-  return dateCache;
-}
-utcDate._onTimeout = function() {
-  dateCache = undefined;
-};
-
-
-function OutgoingMessage() {
-  Stream.call(this);
-
-  this.output = [];
-  this.outputEncodings = [];
-  this.outputCallbacks = [];
-
-  this.writable = true;
-
-  this._last = false;
-  this.chunkedEncoding = false;
-  this.shouldKeepAlive = true;
-  this.useChunkedEncodingByDefault = true;
-  this.sendDate = false;
-  this._removedHeader = {};
-
-  this._hasBody = true;
-  this._trailer = '';
-
-  this.finished = false;
-  this._hangupClose = false;
-  this._headerSent = false;
-
-  this.socket = null;
-  this.connection = null;
-  this._header = null;
-  this._headers = null;
-  this._headerNames = {};
-}
-util.inherits(OutgoingMessage, Stream);
-
-
-exports.OutgoingMessage = OutgoingMessage;
-
-
-OutgoingMessage.prototype.setTimeout = function(msecs, callback) {
-  if (callback)
-    this.on('timeout', callback);
-  if (!this.socket) {
-    this.once('socket', function(socket) {
-      socket.setTimeout(msecs);
-    });
-  } else
-    this.socket.setTimeout(msecs);
-};
-
-
-// It's possible that the socket will be destroyed, and removed from
-// any messages, before ever calling this.  In that case, just skip
-// it, since something else is destroying this connection anyway.
-OutgoingMessage.prototype.destroy = function(error) {
-  if (this.socket)
-    this.socket.destroy(error);
-  else
-    this.once('socket', function(socket) {
-      socket.destroy(error);
-    });
-};
-
-
-// This abstract either writing directly to the socket or buffering it.
-OutgoingMessage.prototype._send = function(data, encoding, callback) {
-  // This is a shameful hack to get the headers and first body chunk onto
-  // the same packet. Future versions of Node are going to take care of
-  // this at a lower level and in a more general way.
-  if (!this._headerSent) {
-    if (util.isString(data) &&
-        encoding !== 'hex' &&
-        encoding !== 'base64') {
-      data = this._header + data;
-    } else {
-      this.output.unshift(this._header);
-      this.outputEncodings.unshift('binary');
-      this.outputCallbacks.unshift(null);
-    }
-    this._headerSent = true;
-  }
-  return this._writeRaw(data, encoding, callback);
-};
-
-
-OutgoingMessage.prototype._writeRaw = function(data, encoding, callback) {
-  if (util.isFunction(encoding)) {
-    callback = encoding;
-    encoding = null;
-  }
-
-  if (data.length === 0) {
-    if (util.isFunction(callback))
-      process.nextTick(callback);
-    return true;
-  }
-
-  if (this.connection &&
-      this.connection._httpMessage === this &&
-      this.connection.writable &&
-      !this.connection.destroyed) {
-    // There might be pending data in the this.output buffer.
-    while (this.output.length) {
-      if (!this.connection.writable) {
-        this._buffer(data, encoding, callback);
-        return false;
-      }
-      var c = this.output.shift();
-      var e = this.outputEncodings.shift();
-      var cb = this.outputCallbacks.shift();
-      this.connection.write(c, e, cb);
-    }
-
-    // Directly write to socket.
-    return this.connection.write(data, encoding, callback);
-  } else if (this.connection && this.connection.destroyed) {
-    // The socket was destroyed.  If we're still trying to write to it,
-    // then we haven't gotten the 'close' event yet.
-    return false;
-  } else {
-    // buffer, as long as we're not destroyed.
-    this._buffer(data, encoding, callback);
-    return false;
-  }
-};
-
-
-OutgoingMessage.prototype._buffer = function(data, encoding, callback) {
-  this.output.push(data);
-  this.outputEncodings.push(encoding);
-  this.outputCallbacks.push(callback);
-  return false;
-};
-
-
-OutgoingMessage.prototype._storeHeader = function(firstLine, headers) {
-  // firstLine in the case of request is: 'GET /index.html HTTP/1.1\r\n'
-  // in the case of response it is: 'HTTP/1.1 200 OK\r\n'
-  var state = {
-    sentConnectionHeader: false,
-    sentContentLengthHeader: false,
-    sentTransferEncodingHeader: false,
-    sentDateHeader: false,
-    sentExpect: false,
-    messageHeader: firstLine
-  };
-
-  var field, value;
-
-  if (headers) {
-    var keys = Object.keys(headers);
-    var isArray = util.isArray(headers);
-    var field, value;
-
-    for (var i = 0, l = keys.length; i < l; i++) {
-      var key = keys[i];
-      if (isArray) {
-        field = headers[key][0];
-        value = headers[key][1];
-      } else {
-        field = key;
-        value = headers[key];
-      }
-
-      if (util.isArray(value)) {
-        for (var j = 0; j < value.length; j++) {
-          storeHeader(this, state, field, value[j]);
-        }
-      } else {
-        storeHeader(this, state, field, value);
-      }
-    }
-  }
-
-  // Date header
-  if (this.sendDate === true && state.sentDateHeader === false) {
-    state.messageHeader += 'Date: ' + utcDate() + CRLF;
-  }
-
-  // Force the connection to close when the response is a 204 No Content or
-  // a 304 Not Modified and the user has set a "Transfer-Encoding: chunked"
-  // header.
-  //
-  // RFC 2616 mandates that 204 and 304 responses MUST NOT have a body but
-  // node.js used to send out a zero chunk anyway to accommodate clients
-  // that don't have special handling for those responses.
-  //
-  // It was pointed out that this might confuse reverse proxies to the point
-  // of creating security liabilities, so suppress the zero chunk and force
-  // the connection to close.
-  var statusCode = this.statusCode;
-  if ((statusCode === 204 || statusCode === 304) &&
-      this.chunkedEncoding === true) {
-    debug(statusCode + ' response should not use chunked encoding,' +
-          ' closing connection.');
-    this.chunkedEncoding = false;
-    this.shouldKeepAlive = false;
-  }
-
-  // keep-alive logic
-  if (this._removedHeader.connection) {
-    this._last = true;
-    this.shouldKeepAlive = false;
-  } else if (state.sentConnectionHeader === false) {
-    var shouldSendKeepAlive = this.shouldKeepAlive &&
-        (state.sentContentLengthHeader ||
-         this.useChunkedEncodingByDefault ||
-         this.agent);
-    if (shouldSendKeepAlive) {
-      state.messageHeader += 'Connection: keep-alive\r\n';
-    } else {
-      this._last = true;
-      state.messageHeader += 'Connection: close\r\n';
-    }
-  }
-
-  if (state.sentContentLengthHeader === false &&
-      state.sentTransferEncodingHeader === false) {
-    if (this._hasBody && !this._removedHeader['transfer-encoding']) {
-      if (this.useChunkedEncodingByDefault) {
-        state.messageHeader += 'Transfer-Encoding: chunked\r\n';
-        this.chunkedEncoding = true;
-      } else {
-        this._last = true;
-      }
-    } else {
-      // Make sure we don't end the 0\r\n\r\n at the end of the message.
-      this.chunkedEncoding = false;
-    }
-  }
-
-  this._header = state.messageHeader + CRLF;
-  this._headerSent = false;
-
-  // wait until the first body chunk, or close(), is sent to flush,
-  // UNLESS we're sending Expect: 100-continue.
-  if (state.sentExpect) this._send('');
-};
-
-function storeHeader(self, state, field, value) {
-  // Protect against response splitting. The if statement is there to
-  // minimize the performance impact in the common case.
-  if (/[\r\n]/.test(value))
-    value = value.replace(/[\r\n]+[ \t]*/g, '');
-
-  state.messageHeader += field + ': ' + value + CRLF;
-
-  if (connectionExpression.test(field)) {
-    state.sentConnectionHeader = true;
-    if (closeExpression.test(value)) {
-      self._last = true;
-    } else {
-      self.shouldKeepAlive = true;
-    }
-
-  } else if (transferEncodingExpression.test(field)) {
-    state.sentTransferEncodingHeader = true;
-    if (chunkExpression.test(value)) self.chunkedEncoding = true;
-
-  } else if (contentLengthExpression.test(field)) {
-    state.sentContentLengthHeader = true;
-  } else if (dateExpression.test(field)) {
-    state.sentDateHeader = true;
-  } else if (expectExpression.test(field)) {
-    state.sentExpect = true;
-  }
-}
-
-
-OutgoingMessage.prototype.setHeader = function(name, value) {
-  if (typeof name !== 'string')
-    throw new TypeError('"name" should be a string');
-  if (value === undefined)
-    throw new Error('"name" and "value" are required for setHeader().');
-  if (this._header)
-    throw new Error('Can\'t set headers after they are sent.');
-
-  if (this._headers === null)
-    this._headers = {};
-
-  var key = name.toLowerCase();
-  this._headers[key] = value;
-  this._headerNames[key] = name;
-
-  if (automaticHeaders[key])
-    this._removedHeader[key] = false;
-};
-
-
-OutgoingMessage.prototype.getHeader = function(name) {
-  if (arguments.length < 1) {
-    throw new Error('`name` is required for getHeader().');
-  }
-
-  if (!this._headers) return;
-
-  var key = name.toLowerCase();
-  return this._headers[key];
-};
-
-
-OutgoingMessage.prototype.removeHeader = function(name) {
-  if (arguments.length < 1) {
-    throw new Error('`name` is required for removeHeader().');
-  }
-
-  if (this._header) {
-    throw new Error('Can\'t remove headers after they are sent.');
-  }
-
-  var key = name.toLowerCase();
-
-  if (key === 'date')
-    this.sendDate = false;
-  else if (automaticHeaders[key])
-    this._removedHeader[key] = true;
-
-  if (this._headers) {
-    delete this._headers[key];
-    delete this._headerNames[key];
-  }
-};
-
-
-OutgoingMessage.prototype._renderHeaders = function() {
-  if (this._header) {
-    throw new Error('Can\'t render headers after they are sent to the client.');
-  }
-
-  if (!this._headers) return {};
-
-  var headers = {};
-  var keys = Object.keys(this._headers);
-
-  for (var i = 0, l = keys.length; i < l; i++) {
-    var key = keys[i];
-    headers[this._headerNames[key]] = this._headers[key];
-  }
-  return headers;
-};
-
-
-Object.defineProperty(OutgoingMessage.prototype, 'headersSent', {
-  configurable: true,
-  enumerable: true,
-  get: function() { return !!this._header; }
-});
-
-
-OutgoingMessage.prototype.write = function(chunk, encoding, callback) {
-  var self = this;
-
-  if (this.finished) {
-    var err = new Error('write after end');
-    process.nextTick(function() {
-      self.emit('error', err);
-      if (callback) callback(err);
-    });
-
-    return true;
-  }
-
-  if (!this._header) {
-    this._implicitHeader();
-  }
-
-  if (!this._hasBody) {
-    debug('This type of response MUST NOT have a body. ' +
-          'Ignoring write() calls.');
-    return true;
-  }
-
-  if (!util.isString(chunk) && !util.isBuffer(chunk)) {
-    throw new TypeError('first argument must be a string or Buffer');
-  }
-
-
-  // If we get an empty string or buffer, then just do nothing, and
-  // signal the user to keep writing.
-  if (chunk.length === 0) return true;
-
-  var len, ret;
-  if (this.chunkedEncoding) {
-    if (util.isString(chunk) &&
-        encoding !== 'hex' &&
-        encoding !== 'base64' &&
-        encoding !== 'binary') {
-      len = Buffer.byteLength(chunk, encoding);
-      chunk = len.toString(16) + CRLF + chunk + CRLF;
-      ret = this._send(chunk, encoding, callback);
-    } else {
-      // buffer, or a non-toString-friendly encoding
-      if (util.isString(chunk))
-        len = Buffer.byteLength(chunk, encoding);
-      else
-        len = chunk.length;
-
-      if (this.connection && !this.connection.corked) {
-        this.connection.cork();
-        var conn = this.connection;
-        process.nextTick(function connectionCork() {
-          if (conn)
-            conn.uncork();
-        });
-      }
-      this._send(len.toString(16), 'binary', null);
-      this._send(crlf_buf, null, null);
-      this._send(chunk, encoding, null);
-      ret = this._send(crlf_buf, null, callback);
-    }
-  } else {
-    ret = this._send(chunk, encoding, callback);
-  }
-
-  debug('write ret = ' + ret);
-  return ret;
-};
-
-
-OutgoingMessage.prototype.addTrailers = function(headers) {
-  this._trailer = '';
-  var keys = Object.keys(headers);
-  var isArray = util.isArray(headers);
-  var field, value;
-  for (var i = 0, l = keys.length; i < l; i++) {
-    var key = keys[i];
-    if (isArray) {
-      field = headers[key][0];
-      value = headers[key][1];
-    } else {
-      field = key;
-      value = headers[key];
-    }
-
-    this._trailer += field + ': ' + value + CRLF;
-  }
-};
-
-
-var crlf_buf = new Buffer('\r\n');
-
-
-OutgoingMessage.prototype.end = function(data, encoding, callback) {
-  if (util.isFunction(data)) {
-    callback = data;
-    data = null;
-  } else if (util.isFunction(encoding)) {
-    callback = encoding;
-    encoding = null;
-  }
-
-  if (data && !util.isString(data) && !util.isBuffer(data)) {
-    throw new TypeError('first argument must be a string or Buffer');
-  }
-
-  if (this.finished) {
-    return false;
-  }
-
-  var self = this;
-  function finish() {
-    self.emit('finish');
-  }
-
-  if (util.isFunction(callback))
-    this.once('finish', callback);
-
-
-  if (!this._header) {
-    this._implicitHeader();
-  }
-
-  if (data && !this._hasBody) {
-    debug('This type of response MUST NOT have a body. ' +
-          'Ignoring data passed to end().');
-    data = null;
-  }
-
-  if (this.connection && data)
-    this.connection.cork();
-
-  var ret;
-  if (data) {
-    // Normal body write.
-    ret = this.write(data, encoding);
-  }
-
-  if (this._hasBody && this.chunkedEncoding) {
-    ret = this._send('0\r\n' + this._trailer + '\r\n', 'binary', finish);
-  } else {
-    // Force a flush, HACK.
-    ret = this._send('', 'binary', finish);
-  }
-
-  if (this.connection && data)
-    this.connection.uncork();
-
-  this.finished = true;
-
-  // There is the first message on the outgoing queue, and we've sent
-  // everything to the socket.
-  debug('outgoing message end.');
-  if (this.output.length === 0 && this.connection._httpMessage === this) {
-    this._finish();
-  }
-
-  return ret;
-};
-
-
-OutgoingMessage.prototype._finish = function() {
-  assert(this.connection);
-  this.emit('prefinish');
-};
-
-
-// This logic is probably a bit confusing. Let me explain a bit:
-//
-// In both HTTP servers and clients it is possible to queue up several
-// outgoing messages. This is easiest to imagine in the case of a client.
-// Take the following situation:
-//
-//    req1 = client.request('GET', '/');
-//    req2 = client.request('POST', '/');
-//
-// When the user does
-//
-//   req2.write('hello world\n');
-//
-// it's possible that the first request has not been completely flushed to
-// the socket yet. Thus the outgoing messages need to be prepared to queue
-// up data internally before sending it on further to the socket's queue.
-//
-// This function, outgoingFlush(), is called by both the Server and Client
-// to attempt to flush any pending messages out to the socket.
-OutgoingMessage.prototype._flush = function() {
-  if (this.socket && this.socket.writable) {
-    var ret;
-    while (this.output.length) {
-      var data = this.output.shift();
-      var encoding = this.outputEncodings.shift();
-      var cb = this.outputCallbacks.shift();
-      ret = this.socket.write(data, encoding, cb);
-    }
-
-    if (this.finished) {
-      // This is a queue to the server or client to bring in the next this.
-      this._finish();
-    } else if (ret) {
-      // This is necessary to prevent https from breaking
-      this.emit('drain');
-    }
-  }
-};
-
-
-OutgoingMessage.prototype.flushHeaders = function outgoingFlushHeaders() {
-  if (!this._header) {
-    // Force-flush the headers.
-    this._implicitHeader();
-    this._send('');
-  }
-};
-
-}).call(this,require('_process'))
-},{"./_http_common":28,"_process":135,"assert":125,"buffer":127,"stream":151,"timers":153,"util":156}],31:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var util = require('util');
-var net = require('net');
-var EventEmitter = require('events').EventEmitter;
-var HTTPParser = require('http-parser-js').HTTPParser;
-var assert = require('assert').ok;
-
-var common = require('./_http_common');
-var parsers = common.parsers;
-var freeParser = common.freeParser;
-var debug = common.debug;
-var CRLF = common.CRLF;
-var continueExpression = common.continueExpression;
-var chunkExpression = common.chunkExpression;
-var httpSocketSetup = common.httpSocketSetup;
-
-var OutgoingMessage = require('./_http_outgoing').OutgoingMessage;
-
-
-var STATUS_CODES = exports.STATUS_CODES = {
-  100 : 'Continue',
-  101 : 'Switching Protocols',
-  102 : 'Processing',                 // RFC 2518, obsoleted by RFC 4918
-  200 : 'OK',
-  201 : 'Created',
-  202 : 'Accepted',
-  203 : 'Non-Authoritative Information',
-  204 : 'No Content',
-  205 : 'Reset Content',
-  206 : 'Partial Content',
-  207 : 'Multi-Status',               // RFC 4918
-  300 : 'Multiple Choices',
-  301 : 'Moved Permanently',
-  302 : 'Moved Temporarily',
-  303 : 'See Other',
-  304 : 'Not Modified',
-  305 : 'Use Proxy',
-  307 : 'Temporary Redirect',
-  308 : 'Permanent Redirect',         // RFC 7238
-  400 : 'Bad Request',
-  401 : 'Unauthorized',
-  402 : 'Payment Required',
-  403 : 'Forbidden',
-  404 : 'Not Found',
-  405 : 'Method Not Allowed',
-  406 : 'Not Acceptable',
-  407 : 'Proxy Authentication Required',
-  408 : 'Request Time-out',
-  409 : 'Conflict',
-  410 : 'Gone',
-  411 : 'Length Required',
-  412 : 'Precondition Failed',
-  413 : 'Request Entity Too Large',
-  414 : 'Request-URI Too Large',
-  415 : 'Unsupported Media Type',
-  416 : 'Requested Range Not Satisfiable',
-  417 : 'Expectation Failed',
-  418 : 'I\'m a teapot',              // RFC 2324
-  422 : 'Unprocessable Entity',       // RFC 4918
-  423 : 'Locked',                     // RFC 4918
-  424 : 'Failed Dependency',          // RFC 4918
-  425 : 'Unordered Collection',       // RFC 4918
-  426 : 'Upgrade Required',           // RFC 2817
-  428 : 'Precondition Required',      // RFC 6585
-  429 : 'Too Many Requests',          // RFC 6585
-  431 : 'Request Header Fields Too Large',// RFC 6585
-  500 : 'Internal Server Error',
-  501 : 'Not Implemented',
-  502 : 'Bad Gateway',
-  503 : 'Service Unavailable',
-  504 : 'Gateway Time-out',
-  505 : 'HTTP Version Not Supported',
-  506 : 'Variant Also Negotiates',    // RFC 2295
-  507 : 'Insufficient Storage',       // RFC 4918
-  509 : 'Bandwidth Limit Exceeded',
-  510 : 'Not Extended',               // RFC 2774
-  511 : 'Network Authentication Required' // RFC 6585
-};
-
-
-function ServerResponse(req) {
-  OutgoingMessage.call(this);
-
-  if (req.method === 'HEAD') this._hasBody = false;
-
-  this.sendDate = true;
-
-  if (req.httpVersionMajor < 1 || req.httpVersionMinor < 1) {
-    this.useChunkedEncodingByDefault = chunkExpression.test(req.headers.te);
-    this.shouldKeepAlive = false;
-  }
-}
-util.inherits(ServerResponse, OutgoingMessage);
-
-ServerResponse.prototype._finish = function() {
-  // DTRACE_HTTP_SERVER_RESPONSE(this.connection);
-  // COUNTER_HTTP_SERVER_RESPONSE();
-  OutgoingMessage.prototype._finish.call(this);
-};
-
-
-
-exports.ServerResponse = ServerResponse;
-
-ServerResponse.prototype.statusCode = 200;
-ServerResponse.prototype.statusMessage = undefined;
-
-function onServerResponseClose() {
-  // EventEmitter.emit makes a copy of the 'close' listeners array before
-  // calling the listeners. detachSocket() unregisters onServerResponseClose
-  // but if detachSocket() is called, directly or indirectly, by a 'close'
-  // listener, onServerResponseClose is still in that copy of the listeners
-  // array. That is, in the example below, b still gets called even though
-  // it's been removed by a:
-  //
-  //   var obj = new events.EventEmitter;
-  //   obj.on('event', a);
-  //   obj.on('event', b);
-  //   function a() { obj.removeListener('event', b) }
-  //   function b() { throw "BAM!" }
-  //   obj.emit('event');  // throws
-  //
-  // Ergo, we need to deal with stale 'close' events and handle the case
-  // where the ServerResponse object has already been deconstructed.
-  // Fortunately, that requires only a single if check. :-)
-  if (this._httpMessage) this._httpMessage.emit('close');
-}
-
-ServerResponse.prototype.assignSocket = function(socket) {
-  assert(!socket._httpMessage);
-  socket._httpMessage = this;
-  socket.on('close', onServerResponseClose);
-  this.socket = socket;
-  this.connection = socket;
-  this.emit('socket', socket);
-  this._flush();
-};
-
-ServerResponse.prototype.detachSocket = function(socket) {
-  assert(socket._httpMessage === this);
-  socket.removeListener('close', onServerResponseClose);
-  socket._httpMessage = null;
-  this.socket = this.connection = null;
-};
-
-ServerResponse.prototype.writeContinue = function(cb) {
-  this._writeRaw('HTTP/1.1 100 Continue' + CRLF + CRLF, 'ascii', cb);
-  this._sent100 = true;
-};
-
-ServerResponse.prototype._implicitHeader = function() {
-  this.writeHead(this.statusCode);
-};
-
-ServerResponse.prototype.writeHead = function(statusCode, reason, obj) {
-  var headers;
-
-  if (util.isString(reason)) {
-    // writeHead(statusCode, reasonPhrase[, headers])
-    this.statusMessage = reason;
-  } else {
-    // writeHead(statusCode[, headers])
-    this.statusMessage =
-        this.statusMessage || STATUS_CODES[statusCode] || 'unknown';
-    obj = reason;
-  }
-  this.statusCode = statusCode;
-
-  if (this._headers) {
-    // Slow-case: when progressive API and header fields are passed.
-    if (obj) {
-      var keys = Object.keys(obj);
-      for (var i = 0; i < keys.length; i++) {
-        var k = keys[i];
-        if (k) this.setHeader(k, obj[k]);
-      }
-    }
-    // only progressive api is used
-    headers = this._renderHeaders();
-  } else {
-    // only writeHead() called
-    headers = obj;
-  }
-
-  var statusLine = 'HTTP/1.1 ' + statusCode.toString() + ' ' +
-                   this.statusMessage + CRLF;
-
-  if (statusCode === 204 || statusCode === 304 ||
-      (100 <= statusCode && statusCode <= 199)) {
-    // RFC 2616, 10.2.5:
-    // The 204 response MUST NOT include a message-body, and thus is always
-    // terminated by the first empty line after the header fields.
-    // RFC 2616, 10.3.5:
-    // The 304 response MUST NOT contain a message-body, and thus is always
-    // terminated by the first empty line after the header fields.
-    // RFC 2616, 10.1 Informational 1xx:
-    // This class of status code indicates a provisional response,
-    // consisting only of the Status-Line and optional headers, and is
-    // terminated by an empty line.
-    this._hasBody = false;
-  }
-
-  // don't keep alive connections where the client expects 100 Continue
-  // but we sent a final status; they may put extra bytes on the wire.
-  if (this._expect_continue && !this._sent100) {
-    this.shouldKeepAlive = false;
-  }
-
-  this._storeHeader(statusLine, headers);
-};
-
-ServerResponse.prototype.writeHeader = function() {
-  this.writeHead.apply(this, arguments);
-};
-
-
-function Server(requestListener) {
-  if (!(this instanceof Server)) return new Server(requestListener);
-  net.Server.call(this, { allowHalfOpen: true });
-
-  if (requestListener) {
-    this.addListener('request', requestListener);
-  }
-
-  // Similar option to this. Too lazy to write my own docs.
-  // http://www.squid-cache.org/Doc/config/half_closed_clients/
-  // http://wiki.squid-cache.org/SquidFaq/InnerWorkings#What_is_a_half-closed_filedescriptor.3F
-  this.httpAllowHalfOpen = false;
-
-  this.addListener('connection', connectionListener);
-
-  this.addListener('clientError', function(err, conn) {
-    conn.destroy(err);
-  });
-
-  this.timeout = 2 * 60 * 1000;
-}
-util.inherits(Server, net.Server);
-
-
-Server.prototype.setTimeout = function(msecs, callback) {
-  this.timeout = msecs;
-  if (callback)
-    this.on('timeout', callback);
-};
-
-
-exports.Server = Server;
-
-
-function connectionListener(socket) {
-  var self = this;
-  var outgoing = [];
-  var incoming = [];
-
-  function abortIncoming() {
-    while (incoming.length) {
-      var req = incoming.shift();
-      req.emit('aborted');
-      req.emit('close');
-    }
-    // abort socket._httpMessage ?
-  }
-
-  function serverSocketCloseListener() {
-    debug('server socket close');
-    // mark this parser as reusable
-    if (this.parser) {
-      freeParser(this.parser, null, this);
-    }
-
-    abortIncoming();
-  }
-
-  debug('SERVER new http connection');
-
-  httpSocketSetup(socket);
-
-  // If the user has added a listener to the server,
-  // request, or response, then it's their responsibility.
-  // otherwise, destroy on timeout by default
-  if (self.timeout)
-    socket.setTimeout(self.timeout);
-  socket.on('timeout', function() {
-    var req = socket.parser && socket.parser.incoming;
-    var reqTimeout = req && !req.complete && req.emit('timeout', socket);
-    var res = socket._httpMessage;
-    var resTimeout = res && res.emit('timeout', socket);
-    var serverTimeout = self.emit('timeout', socket);
-
-    if (!reqTimeout && !resTimeout && !serverTimeout)
-      socket.destroy();
-  });
-
-  var parser = parsers.alloc();
-  parser.reinitialize(HTTPParser.REQUEST);
-  parser.socket = socket;
-  socket.parser = parser;
-  parser.incoming = null;
-
-  // Propagate headers limit from server instance to parser
-  if (util.isNumber(this.maxHeadersCount)) {
-    parser.maxHeaderPairs = this.maxHeadersCount << 1;
-  } else {
-    // Set default value because parser may be reused from FreeList
-    parser.maxHeaderPairs = 2000;
-  }
-
-  socket.addListener('error', socketOnError);
-  socket.addListener('close', serverSocketCloseListener);
-  parser.onIncoming = parserOnIncoming;
-  socket.on('end', socketOnEnd);
-  socket.on('data', socketOnData);
-
-  // TODO(isaacs): Move all these functions out of here
-  function socketOnError(e) {
-    self.emit('clientError', e, this);
-  }
-
-  function socketOnData(d) {
-    assert(!socket._paused);
-    debug('SERVER socketOnData %d', d.length);
-    var ret = parser.execute(d);
-    if (ret instanceof Error) {
-      debug('parse error');
-      socket.destroy(ret);
-    } else if (parser.incoming && parser.incoming.upgrade) {
-      // Upgrade or CONNECT
-      var bytesParsed = ret;
-      var req = parser.incoming;
-      debug('SERVER upgrade or connect', req.method);
-
-      socket.removeListener('data', socketOnData);
-      socket.removeListener('end', socketOnEnd);
-      socket.removeListener('close', serverSocketCloseListener);
-      parser.finish();
-      freeParser(parser, req, null);
-      parser = null;
-
-      var eventName = req.method === 'CONNECT' ? 'connect' : 'upgrade';
-      if (EventEmitter.listenerCount(self, eventName) > 0) {
-        debug('SERVER have listener for %s', eventName);
-        var bodyHead = d.slice(bytesParsed, d.length);
-
-        // TODO(isaacs): Need a way to reset a stream to fresh state
-        // IE, not flowing, and not explicitly paused.
-        socket._readableState.flowing = null;
-        self.emit(eventName, req, socket, bodyHead);
-      } else {
-        // Got upgrade header or CONNECT method, but have no handler.
-        socket.destroy();
-      }
-    }
-
-    if (socket._paused) {
-      // onIncoming paused the socket, we should pause the parser as well
-      debug('pause parser');
-      socket.parser.pause();
-    }
-  }
-
-  function socketOnEnd() {
-    var socket = this;
-    var ret = parser.finish();
-
-    if (ret instanceof Error) {
-      debug('parse error');
-      socket.destroy(ret);
-      return;
-    }
-
-    if (!self.httpAllowHalfOpen) {
-      abortIncoming();
-      if (socket.writable) socket.end();
-    } else if (outgoing.length) {
-      outgoing[outgoing.length - 1]._last = true;
-    } else if (socket._httpMessage) {
-      socket._httpMessage._last = true;
-    } else {
-      if (socket.writable) socket.end();
-    }
-  }
-
-
-  // The following callback is issued after the headers have been read on a
-  // new message. In this callback we setup the response object and pass it
-  // to the user.
-
-  socket._paused = false;
-  function socketOnDrain() {
-    // If we previously paused, then start reading again.
-    if (socket._paused) {
-      socket._paused = false;
-      socket.parser.resume();
-      socket.resume();
-    }
-  }
-  socket.on('drain', socketOnDrain);
-
-  function parserOnIncoming(req, shouldKeepAlive) {
-    incoming.push(req);
-
-    // If the writable end isn't consuming, then stop reading
-    // so that we don't become overwhelmed by a flood of
-    // pipelined requests that may never be resolved.
-    if (!socket._paused) {
-      var needPause = socket._writableState.needDrain;
-      if (needPause) {
-        socket._paused = true;
-        // We also need to pause the parser, but don't do that until after
-        // the call to execute, because we may still be processing the last
-        // chunk.
-        socket.pause();
-      }
-    }
-
-    var res = new ServerResponse(req);
-
-    res.shouldKeepAlive = shouldKeepAlive;
-    // DTRACE_HTTP_SERVER_REQUEST(req, socket);
-    // COUNTER_HTTP_SERVER_REQUEST();
-
-    if (socket._httpMessage) {
-      // There are already pending outgoing res, append.
-      outgoing.push(res);
-    } else {
-      res.assignSocket(socket);
-    }
-
-    // When we're finished writing the response, check if this is the last
-    // respose, if so destroy the socket.
-    res.on('prefinish', resOnFinish);
-    function resOnFinish() {
-      // Usually the first incoming element should be our request.  it may
-      // be that in the case abortIncoming() was called that the incoming
-      // array will be empty.
-      assert(incoming.length === 0 || incoming[0] === req);
-
-      incoming.shift();
-
-      // if the user never called req.read(), and didn't pipe() or
-      // .resume() or .on('data'), then we call req._dump() so that the
-      // bytes will be pulled off the wire.
-      if (!req._consuming && !req._readableState.resumeScheduled)
-        req._dump();
-
-      res.detachSocket(socket);
-
-      if (res._last) {
-        socket.destroySoon();
-      } else {
-        // start sending the next message
-        var m = outgoing.shift();
-        if (m) {
-          m.assignSocket(socket);
-        }
-      }
-    }
-
-    if (!util.isUndefined(req.headers.expect) &&
-        (req.httpVersionMajor == 1 && req.httpVersionMinor == 1) &&
-        continueExpression.test(req.headers['expect'])) {
-      res._expect_continue = true;
-      if (EventEmitter.listenerCount(self, 'checkContinue') > 0) {
-        self.emit('checkContinue', req, res);
-      } else {
-        res.writeContinue();
-        self.emit('request', req, res);
-      }
-    } else {
-      self.emit('request', req, res);
-    }
-    return false; // Not a HEAD response. (Not even a response!)
-  }
-}
-exports._connectionListener = connectionListener;
-
-},{"./_http_common":28,"./_http_outgoing":30,"assert":125,"events":132,"http-parser-js":33,"net":"net","util":156}],32:[function(require,module,exports){
-var FreeList = (function() {
-	function FreeList(name, max, constructor) {
-		this.name = name;
-		this.max = max;
-		this.constructor = constructor != null ? constructor : function() {};
-		this.list = [];
-	}
-
-	FreeList.prototype.alloc = function() {
-		if (this.list.length) {
-			return this.list.shift();
-		} else {
-			return this.constructor.apply(this, arguments);
-		}
-	};
-
-	FreeList.prototype.free = function(obj) {
-		if (this.list.length < this.max) {
-			this.list.push(obj);
-			return true;
-		} else {
-			return false;
-		}
-	};
-
-	return FreeList;
-})();
-
-// remain backward compatible
-FreeList.FreeList = FreeList;
-
-module.exports = FreeList;
-
-},{}],33:[function(require,module,exports){
-/*jshint node:true */
-
-var assert = require('assert');
-
-exports.HTTPParser = HTTPParser;
-function HTTPParser(type) {
-  assert.ok(type === HTTPParser.REQUEST || type === HTTPParser.RESPONSE);
-  this.type = type;
-  this.state = type + '_LINE';
-  this.info = {
-    headers: [],
-    upgrade: false
-  };
-  this.trailers = [];
-  this.line = '';
-  this.isChunked = false;
-  this.connection = '';
-  this.headerSize = 0; // for preventing too big headers
-  this.body_bytes = null;
-  this.isUserCall = false;
-}
-HTTPParser.REQUEST = 'REQUEST';
-HTTPParser.RESPONSE = 'RESPONSE';
-var kOnHeaders = HTTPParser.kOnHeaders = 0;
-var kOnHeadersComplete = HTTPParser.kOnHeadersComplete = 1;
-var kOnBody = HTTPParser.kOnBody = 2;
-var kOnMessageComplete = HTTPParser.kOnMessageComplete = 3;
-var methods = HTTPParser.methods = [
-  'DELETE',
-  'GET',
-  'HEAD',
-  'POST',
-  'PUT',
-  'CONNECT',
-  'OPTIONS',
-  'TRACE',
-  'COPY',
-  'LOCK',
-  'MKCOL',
-  'MOVE',
-  'PROPFIND',
-  'PROPPATCH',
-  'SEARCH',
-  'UNLOCK',
-  'REPORT',
-  'MKACTIVITY',
-  'CHECKOUT',
-  'MERGE',
-  'M-SEARCH',
-  'NOTIFY',
-  'SUBSCRIBE',
-  'UNSUBSCRIBE',
-  'PATCH',
-  'PURGE'
-];
-HTTPParser.prototype.reinitialize = HTTPParser;
-HTTPParser.prototype.close =
-HTTPParser.prototype.pause =
-HTTPParser.prototype.resume = function () {};
-HTTPParser.prototype._compatMode = false;
-
-var maxHeaderSize = 80 * 1024;
-var headerState = {
-  REQUEST_LINE: true,
-  RESPONSE_LINE: true,
-  HEADER: true
-};
-HTTPParser.prototype.execute = function (chunk, start, length) {
-  if (!(this instanceof HTTPParser)) {
-    throw new TypeError('not a HTTPParser');
-  }
-  
-  // backward compat to node < 0.11.4
-  // Note: the start and length params were removed in newer version
-  start = start || 0;
-  length = typeof length === 'number' ? length : chunk.length;
-
-  this.chunk = chunk;
-  this.offset = start;
-  var end = this.end = start + length;
-  try {
-    while (this.offset < end) {
-      if (this[this.state]()) {
-        break;
-      }
-    }
-  } catch (err) {
-    if (this.isUserCall) {
-      throw err;
-    }
-    return err;
-  }
-  this.chunk = null;
-  var length = this.offset - start
-  if (headerState[this.state]) {
-    this.headerSize += length;
-    if (this.headerSize > maxHeaderSize) {
-      return new Error('max header size exceeded');
-    }
-  }
-  return length;
-};
-
-var stateFinishAllowed = {
-  REQUEST_LINE: true,
-  RESPONSE_LINE: true,
-  BODY_RAW: true
-};
-HTTPParser.prototype.finish = function () {
-  if (!stateFinishAllowed[this.state]) {
-    return new Error('invalid state for EOF');
-  }
-  if (this.state === 'BODY_RAW') {
-    this.userCall()(this[kOnMessageComplete]());
-  }
-};
-
-//For correct error handling - see HTTPParser#execute
-//Usage: this.userCall()(userFunction('arg'));
-HTTPParser.prototype.userCall = function () {
-  this.isUserCall = true;
-  var self = this;
-  return function (ret) {
-    self.isUserCall = false;
-    return ret;
-  };
-};
-
-HTTPParser.prototype.nextRequest = function () {
-  this.userCall()(this[kOnMessageComplete]());
-  this.reinitialize(this.type);
-};
-
-HTTPParser.prototype.consumeLine = function () {
-  var end = this.end,
-      chunk = this.chunk;
-  for (var i = this.offset; i < end; i++) {
-    if (chunk[i] === 0x0a) { // \n
-      var line = this.line + chunk.toString('ascii', this.offset, i);
-      if (line.charAt(line.length - 1) === '\r') {
-        line = line.substr(0, line.length - 1);
-      }
-      this.line = '';
-      this.offset = i + 1;
-      return line;
-    }
-  }
-  //line split over multiple chunks
-  this.line += chunk.toString('ascii', this.offset, this.end);
-  this.offset = this.end;
-};
-
-var headerExp = /^([^: \t]+):[ \t]*((?:.*[^ \t])|)/;
-var headerContinueExp = /^[ \t]+(.*[^ \t])/;
-HTTPParser.prototype.parseHeader = function (line, headers) {
-  var match = headerExp.exec(line);
-  var k = match && match[1];
-  if (k) { // skip empty string (malformed header)
-    headers.push(k);
-    headers.push(match[2]);
-  } else {
-    var matchContinue = headerContinueExp.exec(line);
-    if (matchContinue && headers.length) {
-      if (headers[headers.length - 1]) {
-        headers[headers.length - 1] += ' ';
-      }
-      headers[headers.length - 1] += matchContinue[1];
-    }
-  }
-};
-
-var requestExp = /^([A-Z-]+) ([^ ]+) HTTP\/(\d)\.(\d)$/;
-HTTPParser.prototype.REQUEST_LINE = function () {
-  var line = this.consumeLine();
-  if (!line) {
-    return;
-  }
-  var match = requestExp.exec(line);
-  if (match === null) {
-    var err = new Error('Parse Error');
-    err.code = 'HPE_INVALID_CONSTANT';
-    throw err;
-  }
-  this.info.method = this._compatMode ? match[1] : methods.indexOf(match[1]);
-  if (this.info.method === -1) {
-    throw new Error('invalid request method');
-  }
-  if (match[1] === 'CONNECT') {
-    this.info.upgrade = true;
-  }
-  this.info.url = match[2];
-  this.info.versionMajor = +match[3];
-  this.info.versionMinor = +match[4];
-  this.body_bytes = 0;
-  this.state = 'HEADER';
-};
-
-var responseExp = /^HTTP\/(\d)\.(\d) (\d{3}) ?(.*)$/;
-HTTPParser.prototype.RESPONSE_LINE = function () {
-  var line = this.consumeLine();
-  if (!line) {
-    return;
-  }
-  var match = responseExp.exec(line);
-  if (match === null) {
-    var err = new Error('Parse Error');
-    err.code = 'HPE_INVALID_CONSTANT';
-    throw err;
-  }
-  this.info.versionMajor = +match[1];
-  this.info.versionMinor = +match[2];
-  var statusCode = this.info.statusCode = +match[3];
-  this.info.statusMessage = match[4];
-  // Implied zero length.
-  if ((statusCode / 100 | 0) === 1 || statusCode === 204 || statusCode === 304) {
-    this.body_bytes = 0;
-  }
-  this.state = 'HEADER';
-};
-
-HTTPParser.prototype.shouldKeepAlive = function () {
-  if (this.info.versionMajor > 0 && this.info.versionMinor > 0) {
-    if (this.connection.indexOf('close') !== -1) {
-      return false;
-    }
-  } else if (this.connection.indexOf('keep-alive') === -1) {
-    return false;
-  }
-  if (this.body_bytes !== null || this.isChunked) { // || skipBody
-    return true;
-  }
-  return false;
-};
-
-HTTPParser.prototype.HEADER = function () {
-  var line = this.consumeLine();
-  if (line === undefined) {
-    return;
-  }
-  if (line) {
-    this.parseHeader(line, this.info.headers);
-  } else {
-    var headers = this.info.headers;
-    for (var i = 0; i < headers.length; i += 2) {
-      switch (headers[i].toLowerCase()) {
-        case 'transfer-encoding':
-          this.isChunked = headers[i + 1].toLowerCase() === 'chunked';
-          break;
-        case 'content-length':
-          this.body_bytes = +headers[i + 1];
-          break;
-        case 'connection':
-          this.connection += headers[i + 1].toLowerCase();
-          break;
-        case 'upgrade':
-          this.info.upgrade = true;
-          break;
-      }
-    }
-    
-    this.info.shouldKeepAlive = this.shouldKeepAlive();
-    //problem which also exists in original node: we should know skipBody before calling onHeadersComplete
-    var skipBody = this.userCall()(this[kOnHeadersComplete](this.info));
-    
-    if (this.info.upgrade) {
-      this.nextRequest();
-      return true;
-    } else if (this.isChunked && !skipBody) {
-      this.state = 'BODY_CHUNKHEAD';
-    } else if (skipBody || this.body_bytes === 0) {
-      this.nextRequest();
-    } else if (this.body_bytes === null) {
-      this.state = 'BODY_RAW';
-    } else {
-      this.state = 'BODY_SIZED';
-    }
-  }
-};
-
-HTTPParser.prototype.BODY_CHUNKHEAD = function () {
-  var line = this.consumeLine();
-  if (line === undefined) {
-    return;
-  }
-  this.body_bytes = parseInt(line, 16);
-  if (!this.body_bytes) {
-    this.state = 'BODY_CHUNKTRAILERS';
-  } else {
-    this.state = 'BODY_CHUNK';
-  }
-};
-
-HTTPParser.prototype.BODY_CHUNK = function () {
-  var length = Math.min(this.end - this.offset, this.body_bytes);
-  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
-  this.offset += length;
-  this.body_bytes -= length;
-  if (!this.body_bytes) {
-    this.state = 'BODY_CHUNKEMPTYLINE';
-  }
-};
-
-HTTPParser.prototype.BODY_CHUNKEMPTYLINE = function () {
-  var line = this.consumeLine();
-  if (line === undefined) {
-    return;
-  }
-  assert.equal(line, '');
-  this.state = 'BODY_CHUNKHEAD';
-};
-
-HTTPParser.prototype.BODY_CHUNKTRAILERS = function () {
-  var line = this.consumeLine();
-  if (line === undefined) {
-    return;
-  }
-  if (line) {
-    this.parseHeader(line, this.trailers);
-  } else {
-    if (this.trailers.length) {
-      this.userCall()(this[kOnHeaders](this.trailers, this.info.url));
-    }
-    this.nextRequest();
-  }
-};
-
-HTTPParser.prototype.BODY_RAW = function () {
-  var length = this.end - this.offset;
-  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
-  this.offset = this.end;
-};
-
-HTTPParser.prototype.BODY_SIZED = function () {
-  var length = Math.min(this.end - this.offset, this.body_bytes);
-  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
-  this.offset += length;
-  this.body_bytes -= length;
-  if (!this.body_bytes) {
-    this.nextRequest();
-  }
-};
-
-// backward compat to node < 0.11.6
-['Headers', 'HeadersComplete', 'Body', 'MessageComplete'].forEach(function (name) {
-  var k = HTTPParser['kOn' + name];
-  Object.defineProperty(HTTPParser.prototype, 'on' + name, {
-    get: function () {
-      return this[k];
-    },
-    set: function (to) {
-      // hack for backward compatibility
-      this._compatMode = true;
-      return (this[k] = to);
-    }
-  });
-});
-
-},{"assert":125}],34:[function(require,module,exports){
-(function (process){
-"use strict";
-
-var utils = require('./utils');
-var merge = require('./merge');
-var errors = require('./deps/errors');
-var EventEmitter = require('events').EventEmitter;
-var upsert = require('./deps/upsert');
-var Changes = require('./changes');
-var Promise = utils.Promise;
-var isDeleted = require('./deps/docs/isDeleted');
-var isLocalId = require('./deps/docs/isLocalId');
-
-/*
- * A generic pouch adapter
- */
-
-// returns first element of arr satisfying callback predicate
-function arrayFirst(arr, callback) {
-  for (var i = 0; i < arr.length; i++) {
-    if (callback(arr[i], i) === true) {
-      return arr[i];
-    }
-  }
-  return false;
-}
-
-// Wrapper for functions that call the bulkdocs api with a single doc,
-// if the first result is an error, return an error
-function yankError(callback) {
-  return function (err, results) {
-    if (err || (results[0] && results[0].error)) {
-      callback(err || results[0]);
-    } else {
-      callback(null, results.length ? results[0]  : results);
-    }
-  };
-}
-
-// clean docs given to us by the user
-function cleanDocs(docs) {
-  for (var i = 0; i < docs.length; i++) {
-    var doc = docs[i];
-    if (doc._deleted) {
-      delete doc._attachments; // ignore atts for deleted docs
-    } else if (doc._attachments) {
-      // filter out extraneous keys from _attachments
-      var atts = Object.keys(doc._attachments);
-      for (var j = 0; j < atts.length; j++) {
-        var att = atts[j];
-        doc._attachments[att] = utils.pick(doc._attachments[att],
-          ['data', 'digest', 'content_type', 'length', 'revpos', 'stub']);
-      }
-    }
-  }
-}
-
-// compare two docs, first by _id then by _rev
-function compareByIdThenRev(a, b) {
-  var idCompare = utils.compare(a._id, b._id);
-  if (idCompare !== 0) {
-    return idCompare;
-  }
-  var aStart = a._revisions ? a._revisions.start : 0;
-  var bStart = b._revisions ? b._revisions.start : 0;
-  return utils.compare(aStart, bStart);
-}
-
-// for every node in a revision tree computes its distance from the closest
-// leaf
-function computeHeight(revs) {
-  var height = {};
-  var edges = [];
-  merge.traverseRevTree(revs, function (isLeaf, pos, id, prnt) {
-    var rev = pos + "-" + id;
-    if (isLeaf) {
-      height[rev] = 0;
-    }
-    if (prnt !== undefined) {
-      edges.push({from: prnt, to: rev});
-    }
-    return rev;
-  });
-
-  edges.reverse();
-  edges.forEach(function (edge) {
-    if (height[edge.from] === undefined) {
-      height[edge.from] = 1 + height[edge.to];
-    } else {
-      height[edge.from] = Math.min(height[edge.from], 1 + height[edge.to]);
-    }
-  });
-  return height;
-}
-
-function allDocsKeysQuery(api, opts, callback) {
-  var keys =  ('limit' in opts) ?
-      opts.keys.slice(opts.skip, opts.limit + opts.skip) :
-      (opts.skip > 0) ? opts.keys.slice(opts.skip) : opts.keys;
-  if (opts.descending) {
-    keys.reverse();
-  }
-  if (!keys.length) {
-    return api._allDocs({limit: 0}, callback);
-  }
-  var finalResults = {
-    offset: opts.skip
-  };
-  return Promise.all(keys.map(function (key) {
-    var subOpts = utils.extend({key: key, deleted: 'ok'}, opts);
-    ['limit', 'skip', 'keys'].forEach(function (optKey) {
-      delete subOpts[optKey];
-    });
-    return new Promise(function (resolve, reject) {
-      api._allDocs(subOpts, function (err, res) {
-        if (err) {
-          return reject(err);
-        }
-        finalResults.total_rows = res.total_rows;
-        resolve(res.rows[0] || {key: key, error: 'not_found'});
-      });
-    });
-  })).then(function (results) {
-    finalResults.rows = results;
-    return finalResults;
-  });
-}
-
-// all compaction is done in a queue, to avoid attaching
-// too many listeners at once
-function doNextCompaction(self) {
-  var task = self._compactionQueue[0];
-  var opts = task.opts;
-  var callback = task.callback;
-  self.get('_local/compaction').catch(function () {
-    return false;
-  }).then(function (doc) {
-    if (doc && doc.last_seq) {
-      opts.last_seq = doc.last_seq;
-    }
-    self._compact(opts, function (err, res) {
-      if (err) {
-        callback(err);
-      } else {
-        callback(null, res);
-      }
-      process.nextTick(function () {
-        self._compactionQueue.shift();
-        if (self._compactionQueue.length) {
-          doNextCompaction(self);
-        }
-      });
-    });
-  });
-}
-
-utils.inherits(AbstractPouchDB, EventEmitter);
-module.exports = AbstractPouchDB;
-
-function AbstractPouchDB() {
-  EventEmitter.call(this);
-}
-
-AbstractPouchDB.prototype.post =
-  utils.adapterFun('post', function (doc, opts, callback) {
-  if (typeof opts === 'function') {
-    callback = opts;
-    opts = {};
-  }
-  if (typeof doc !== 'object' || Array.isArray(doc)) {
-    return callback(errors.error(errors.NOT_AN_OBJECT));
-  }
-  this.bulkDocs({docs: [doc]}, opts, yankError(callback));
-});
-
-AbstractPouchDB.prototype.put =
-  utils.adapterFun('put', utils.getArguments(function (args) {
-  var temp, temptype, opts, callback;
-  var doc = args.shift();
-  var id = '_id' in doc;
-  if (typeof doc !== 'object' || Array.isArray(doc)) {
-    callback = args.pop();
-    return callback(errors.error(errors.NOT_AN_OBJECT));
-  }
-  doc = utils.clone(doc);
-  while (true) {
-    temp = args.shift();
-    temptype = typeof temp;
-    if (temptype === "string" && !id) {
-      doc._id = temp;
-      id = true;
-    } else if (temptype === "string" && id && !('_rev' in doc)) {
-      doc._rev = temp;
-    } else if (temptype === "object") {
-      opts = temp;
-    } else if (temptype === "function") {
-      callback = temp;
-    }
-    if (!args.length) {
-      break;
-    }
-  }
-  opts = opts || {};
-  var error = utils.invalidIdError(doc._id);
-  if (error) {
-    return callback(error);
-  }
-  if (isLocalId(doc._id) && typeof this._putLocal === 'function') {
-    if (doc._deleted) {
-      return this._removeLocal(doc, callback);
-    } else {
-      return this._putLocal(doc, callback);
-    }
-  }
-  this.bulkDocs({docs: [doc]}, opts, yankError(callback));
-}));
-
-AbstractPouchDB.prototype.putAttachment =
-  utils.adapterFun('putAttachment', function (docId, attachmentId, rev,
-                                              blob, type, callback) {
-  var api = this;
-  if (typeof type === 'function') {
-    callback = type;
-    type = blob;
-    blob = rev;
-    rev = null;
-  }
-  if (typeof type === 'undefined') {
-    type = blob;
-    blob = rev;
-    rev = null;
-  }
-
-  function createAttachment(doc) {
-    doc._attachments = doc._attachments || {};
-    doc._attachments[attachmentId] = {
-      content_type: type,
-      data: blob
-    };
-    return api.put(doc);
-  }
-
-  return api.get(docId).then(function (doc) {
-    if (doc._rev !== rev) {
-      throw errors.error(errors.REV_CONFLICT);
-    }
-
-    return createAttachment(doc);
-  }, function (err) {
-     // create new doc
-    if (err.reason === errors.MISSING_DOC.message) {
-      return createAttachment({_id: docId});
-    } else {
-      throw err;
-    }
-  });
-});
-
-AbstractPouchDB.prototype.removeAttachment =
-  utils.adapterFun('removeAttachment', function (docId, attachmentId, rev,
-                                                 callback) {
-  var self = this;
-  self.get(docId, function (err, obj) {
-    if (err) {
-      callback(err);
-      return;
-    }
-    if (obj._rev !== rev) {
-      callback(errors.error(errors.REV_CONFLICT));
-      return;
-    }
-    if (!obj._attachments) {
-      return callback();
-    }
-    delete obj._attachments[attachmentId];
-    if (Object.keys(obj._attachments).length === 0) {
-      delete obj._attachments;
-    }
-    self.put(obj, callback);
-  });
-});
-
-AbstractPouchDB.prototype.remove =
-  utils.adapterFun('remove', function (docOrId, optsOrRev, opts, callback) {
-  var doc;
-  if (typeof optsOrRev === 'string') {
-    // id, rev, opts, callback style
-    doc = {
-      _id: docOrId,
-      _rev: optsOrRev
-    };
-    if (typeof opts === 'function') {
-      callback = opts;
-      opts = {};
-    }
-  } else {
-    // doc, opts, callback style
-    doc = docOrId;
-    if (typeof optsOrRev === 'function') {
-      callback = optsOrRev;
-      opts = {};
-    } else {
-      callback = opts;
-      opts = optsOrRev;
-    }
-  }
-  opts = utils.clone(opts || {});
-  opts.was_delete = true;
-  var newDoc = {_id: doc._id, _rev: (doc._rev || opts.rev)};
-  newDoc._deleted = true;
-  if (isLocalId(newDoc._id) && typeof this._removeLocal === 'function') {
-    return this._removeLocal(doc, callback);
-  }
-  this.bulkDocs({docs: [newDoc]}, opts, yankError(callback));
-});
-
-AbstractPouchDB.prototype.revsDiff =
-  utils.adapterFun('revsDiff', function (req, opts, callback) {
-  if (typeof opts === 'function') {
-    callback = opts;
-    opts = {};
-  }
-  opts = utils.clone(opts);
-  var ids = Object.keys(req);
-
-  if (!ids.length) {
-    return callback(null, {});
-  }
-
-  var count = 0;
-  var missing = new utils.Map();
-
-  function addToMissing(id, revId) {
-    if (!missing.has(id)) {
-      missing.set(id, {missing: []});
-    }
-    missing.get(id).missing.push(revId);
-  }
-
-  function processDoc(id, rev_tree) {
-    // Is this fast enough? Maybe we should switch to a set simulated by a map
-    var missingForId = req[id].slice(0);
-    merge.traverseRevTree(rev_tree, function (isLeaf, pos, revHash, ctx,
-      opts) {
-        var rev = pos + '-' + revHash;
-        var idx = missingForId.indexOf(rev);
-        if (idx === -1) {
-          return;
-        }
-
-        missingForId.splice(idx, 1);
-        if (opts.status !== 'available') {
-          addToMissing(id, rev);
-        }
-      });
-
-    // Traversing the tree is synchronous, so now `missingForId` contains
-    // revisions that were not found in the tree
-    missingForId.forEach(function (rev) {
-      addToMissing(id, rev);
-    });
-  }
-
-  ids.map(function (id) {
-    this._getRevisionTree(id, function (err, rev_tree) {
-      if (err && err.status === 404 && err.message === 'missing') {
-        missing.set(id, {missing: req[id]});
-      } else if (err) {
-        return callback(err);
-      } else {
-        processDoc(id, rev_tree);
-      }
-
-      if (++count === ids.length) {
-        // convert LazyMap to object
-        var missingObj = {};
-        missing.forEach(function (value, key) {
-          missingObj[key] = value;
-        });
-        return callback(null, missingObj);
-      }
-    });
-  }, this);
-});
-
-// compact one document and fire callback
-// by compacting we mean removing all revisions which
-// are further from the leaf in revision tree than max_height
-AbstractPouchDB.prototype.compactDocument =
-  utils.adapterFun('compactDocument', function (docId, maxHeight, callback) {
-  var self = this;
-  this._getRevisionTree(docId, function (err, revTree) {
-    if (err) {
-      return callback(err);
-    }
-    var height = computeHeight(revTree);
-    var candidates = [];
-    var revs = [];
-    Object.keys(height).forEach(function (rev) {
-      if (height[rev] > maxHeight) {
-        candidates.push(rev);
-      }
-    });
-
-    merge.traverseRevTree(revTree, function (isLeaf, pos, revHash, ctx, opts) {
-      var rev = pos + '-' + revHash;
-      if (opts.status === 'available' && candidates.indexOf(rev) !== -1) {
-        revs.push(rev);
-      }
-    });
-    self._doCompaction(docId, revs, callback);
-  });
-});
-
-// compact the whole database using single document
-// compaction
-AbstractPouchDB.prototype.compact =
-  utils.adapterFun('compact', function (opts, callback) {
-  if (typeof opts === 'function') {
-    callback = opts;
-    opts = {};
-  }
-  var self = this;
-
-  opts = utils.clone(opts || {});
-
-  self._compactionQueue = self._compactionQueue || [];
-  self._compactionQueue.push({opts: opts, callback: callback});
-  if (self._compactionQueue.length === 1) {
-    doNextCompaction(self);
-  }
-});
-AbstractPouchDB.prototype._compact = function (opts, callback) {
-  var self = this;
-  var changesOpts = {
-    returnDocs: false,
-    last_seq: opts.last_seq || 0
-  };
-  var promises = [];
-
-  function onChange(row) {
-    promises.push(self.compactDocument(row.id, 0));
-  }
-  function onComplete(resp) {
-    var lastSeq = resp.last_seq;
-    Promise.all(promises).then(function () {
-      return upsert(self, '_local/compaction', function deltaFunc(doc) {
-        if (!doc.last_seq || doc.last_seq < lastSeq) {
-          doc.last_seq = lastSeq;
-          return doc;
-        }
-        return false; // somebody else got here first, don't update
-      });
-    }).then(function () {
-      callback(null, {ok: true});
-    }).catch(callback);
-  }
-  self.changes(changesOpts)
-    .on('change', onChange)
-    .on('complete', onComplete)
-    .on('error', callback);
-};
-/* Begin api wrappers. Specific functionality to storage belongs in the
-   _[method] */
-AbstractPouchDB.prototype.get =
-  utils.adapterFun('get', function (id, opts, callback) {
-  if (typeof opts === 'function') {
-    callback = opts;
-    opts = {};
-  }
-  if (typeof id !== 'string') {
-    return callback(errors.error(errors.INVALID_ID));
-  }
-  if (isLocalId(id) && typeof this._getLocal === 'function') {
-    return this._getLocal(id, callback);
-  }
-  var leaves = [], self = this;
-
-  function finishOpenRevs() {
-    var result = [];
-    var count = leaves.length;
-    if (!count) {
-      return callback(null, result);
-    }
-    // order with open_revs is unspecified
-    leaves.forEach(function (leaf) {
-      self.get(id, {
-        rev: leaf,
-        revs: opts.revs,
-        attachments: opts.attachments
-      }, function (err, doc) {
-        if (!err) {
-          result.push({ok: doc});
-        } else {
-          result.push({missing: leaf});
-        }
-        count--;
-        if (!count) {
-          callback(null, result);
-        }
-      });
-    });
-  }
-
-  if (opts.open_revs) {
-    if (opts.open_revs === "all") {
-      this._getRevisionTree(id, function (err, rev_tree) {
-        if (err) {
-          return callback(err);
-        }
-        leaves = merge.collectLeaves(rev_tree).map(function (leaf) {
-          return leaf.rev;
-        });
-        finishOpenRevs();
-      });
-    } else {
-      if (Array.isArray(opts.open_revs)) {
-        leaves = opts.open_revs;
-        for (var i = 0; i < leaves.length; i++) {
-          var l = leaves[i];
-          // looks like it's the only thing couchdb checks
-          if (!(typeof(l) === "string" && /^\d+-/.test(l))) {
-            return callback(errors.error(errors.INVALID_REV));
-          }
-        }
-        finishOpenRevs();
-      } else {
-        return callback(errors.error(errors.UNKNOWN_ERROR,
-          'function_clause'));
-      }
-    }
-    return; // open_revs does not like other options
-  }
-
-  return this._get(id, opts, function (err, result) {
-    opts = utils.clone(opts);
-    if (err) {
-      return callback(err);
-    }
-
-    var doc = result.doc;
-    var metadata = result.metadata;
-    var ctx = result.ctx;
-
-    if (opts.conflicts) {
-      var conflicts = merge.collectConflicts(metadata);
-      if (conflicts.length) {
-        doc._conflicts = conflicts;
-      }
-    }
-
-    if (isDeleted(metadata, doc._rev)) {
-      doc._deleted = true;
-    }
-
-    if (opts.revs || opts.revs_info) {
-      var paths = merge.rootToLeaf(metadata.rev_tree);
-      var path = arrayFirst(paths, function (arr) {
-        return arr.ids.map(function (x) { return x.id; })
-          .indexOf(doc._rev.split('-')[1]) !== -1;
-      });
-
-      var indexOfRev = path.ids.map(function (x) {return x.id; })
-        .indexOf(doc._rev.split('-')[1]) + 1;
-      var howMany = path.ids.length - indexOfRev;
-      path.ids.splice(indexOfRev, howMany);
-      path.ids.reverse();
-
-      if (opts.revs) {
-        doc._revisions = {
-          start: (path.pos + path.ids.length) - 1,
-          ids: path.ids.map(function (rev) {
-            return rev.id;
-          })
-        };
-      }
-      if (opts.revs_info) {
-        var pos =  path.pos + path.ids.length;
-        doc._revs_info = path.ids.map(function (rev) {
-          pos--;
-          return {
-            rev: pos + '-' + rev.id,
-            status: rev.opts.status
-          };
-        });
-      }
-    }
-
-    if (opts.attachments && doc._attachments) {
-      var attachments = doc._attachments;
-      var count = Object.keys(attachments).length;
-      if (count === 0) {
-        return callback(null, doc);
-      }
-      Object.keys(attachments).forEach(function (key) {
-        this._getAttachment(attachments[key], {
-          binary: opts.binary,
-          ctx: ctx
-        }, function (err, data) {
-          var att = doc._attachments[key];
-          att.data = data;
-          delete att.stub;
-          delete att.length;
-          if (!--count) {
-            callback(null, doc);
-          }
-        });
-      }, self);
-    } else {
-      if (doc._attachments) {
-        for (var key in doc._attachments) {
-          /* istanbul ignore else */
-          if (doc._attachments.hasOwnProperty(key)) {
-            doc._attachments[key].stub = true;
-          }
-        }
-      }
-      callback(null, doc);
-    }
-  });
-});
-
-AbstractPouchDB.prototype.getAttachment =
-  utils.adapterFun('getAttachment', function (docId, attachmentId, opts,
-                                              callback) {
-  var self = this;
-  if (opts instanceof Function) {
-    callback = opts;
-    opts = {};
-  }
-  opts = utils.clone(opts);
-  this._get(docId, opts, function (err, res) {
-    if (err) {
-      return callback(err);
-    }
-    if (res.doc._attachments && res.doc._attachments[attachmentId]) {
-      opts.ctx = res.ctx;
-      opts.binary = true;
-      self._getAttachment(res.doc._attachments[attachmentId], opts, callback);
-    } else {
-      return callback(errors.error(errors.MISSING_DOC));
-    }
-  });
-});
-
-AbstractPouchDB.prototype.allDocs =
-  utils.adapterFun('allDocs', function (opts, callback) {
-  if (typeof opts === 'function') {
-    callback = opts;
-    opts = {};
-  }
-  opts = utils.clone(opts);
-  opts.skip = typeof opts.skip !== 'undefined' ? opts.skip : 0;
-  if (opts.start_key) {
-    opts.startkey = opts.start_key;
-  }
-  if (opts.end_key) {
-    opts.endkey = opts.end_key;
-  }
-  if ('keys' in opts) {
-    if (!Array.isArray(opts.keys)) {
-      return callback(new TypeError('options.keys must be an array'));
-    }
-    var incompatibleOpt =
-      ['startkey', 'endkey', 'key'].filter(function (incompatibleOpt) {
-      return incompatibleOpt in opts;
-    })[0];
-    if (incompatibleOpt) {
-      callback(errors.error(errors.QUERY_PARSE_ERROR,
-        'Query parameter `' + incompatibleOpt +
-        '` is not compatible with multi-get'
-      ));
-      return;
-    }
-    if (this.type() !== 'http') {
-      return allDocsKeysQuery(this, opts, callback);
-    }
-  }
-
-  return this._allDocs(opts, callback);
-});
-
-AbstractPouchDB.prototype.changes = function (opts, callback) {
-  if (typeof opts === 'function') {
-    callback = opts;
-    opts = {};
-  }
-  return new Changes(this, opts, callback);
-};
-
-AbstractPouchDB.prototype.close =
-  utils.adapterFun('close', function (callback) {
-  this._closed = true;
-  return this._close(callback);
-});
-
-AbstractPouchDB.prototype.info = utils.adapterFun('info', function (callback) {
-  var self = this;
-  this._info(function (err, info) {
-    if (err) {
-      return callback(err);
-    }
-    // assume we know better than the adapter, unless it informs us
-    info.db_name = info.db_name || self._db_name;
-    info.auto_compaction = !!(self.auto_compaction && self.type() !== 'http');
-    info.adapter = self.type();
-    callback(null, info);
-  });
-});
-
-AbstractPouchDB.prototype.id = utils.adapterFun('id', function (callback) {
-  return this._id(callback);
-});
-
-AbstractPouchDB.prototype.type = function () {
-  return (typeof this._type === 'function') ? this._type() : this.adapter;
-};
-
-AbstractPouchDB.prototype.bulkDocs =
-  utils.adapterFun('bulkDocs', function (req, opts, callback) {
-  if (typeof opts === 'function') {
-    callback = opts;
-    opts = {};
-  }
-
-  opts = utils.clone(opts || {});
-
-  if (Array.isArray(req)) {
-    req = {
-      docs: req
-    };
-  }
-
-  if (!req || !req.docs || !Array.isArray(req.docs)) {
-    return callback(errors.error(errors.MISSING_BULK_DOCS));
-  }
-
-  for (var i = 0; i < req.docs.length; ++i) {
-    if (typeof req.docs[i] !== 'object' || Array.isArray(req.docs[i])) {
-      return callback(errors.error(errors.NOT_AN_OBJECT));
-    }
-  }
-
-  req = utils.clone(req);
-  if (!('new_edits' in opts)) {
-    if ('new_edits' in req) {
-      opts.new_edits = req.new_edits;
-    } else {
-      opts.new_edits = true;
-    }
-  }
-
-  if (!opts.new_edits && this.type() !== 'http') {
-    // ensure revisions of the same doc are sorted, so that
-    // the local adapter processes them correctly (#2935)
-    req.docs.sort(compareByIdThenRev);
-  }
-
-  cleanDocs(req.docs);
-
-  return this._bulkDocs(req, opts, function (err, res) {
-    if (err) {
-      return callback(err);
-    }
-    if (!opts.new_edits) {
-      // this is what couch does when new_edits is false
-      res = res.filter(function (x) {
-        return x.error;
-      });
-    }
-    callback(null, res);
-  });
-});
-
-AbstractPouchDB.prototype.registerDependentDatabase =
-  utils.adapterFun('registerDependentDatabase', function (dependentDb,
-                                                          callback) {
-  var depDB = new this.constructor(dependentDb, this.__opts);
-
-  function diffFun(doc) {
-    doc.dependentDbs = doc.dependentDbs || {};
-    if (doc.dependentDbs[dependentDb]) {
-      return false; // no update required
-    }
-    doc.dependentDbs[dependentDb] = true;
-    return doc;
-  }
-  upsert(this, '_local/_pouch_dependentDbs', diffFun)
-    .then(function () {
-      callback(null, {db: depDB});
-    }).catch(callback);
-});
-
-AbstractPouchDB.prototype.destroy =
-  utils.adapterFun('destroy', function (callback) {
-
-  var self = this;
-  var usePrefix = 'use_prefix' in self ? self.use_prefix : true;
-
-  function destroyDb() {
-    // call destroy method of the particular adaptor
-    self._destroy(function (err, resp) {
-      if (err) {
-        return callback(err);
-      }
-      self.emit('destroyed');
-      callback(null, resp || { 'ok': true });
-    });
-  }
-
-  if (self.type() === 'http') {
-    // no need to check for dependent DBs if it's a remote DB
-    return destroyDb();
-  }
-
-  self.get('_local/_pouch_dependentDbs', function (err, localDoc) {
-    if (err) {
-      if (err.status !== 404) {
-        return callback(err);
-      } else { // no dependencies
-        return destroyDb();
-      }
-    }
-    var dependentDbs = localDoc.dependentDbs;
-    var PouchDB = self.constructor;
-    var deletedMap = Object.keys(dependentDbs).map(function (name) {
-      var trueName = usePrefix ?
-        name.replace(new RegExp('^' + PouchDB.prefix), '') : name;
-      return new PouchDB(trueName, self.__opts).destroy();
-    });
-    Promise.all(deletedMap).then(destroyDb, function (error) {
-      callback(error);
-    });
-  });
-});
-
-}).call(this,require('_process'))
-},{"./changes":47,"./deps/docs/isDeleted":71,"./deps/docs/isLocalId":72,"./deps/errors":81,"./deps/upsert":90,"./merge":101,"./utils":112,"_process":135,"events":132}],35:[function(require,module,exports){
-'use strict';
-
-module.exports = {
-  idb: require('./adapters/idb'),
-  websql: require('./adapters/websql')
-};
-},{"./adapters/idb":41,"./adapters/websql":45}],36:[function(require,module,exports){
-"use strict";
-
-var CHANGES_BATCH_SIZE = 25;
-
-// according to http://stackoverflow.com/a/417184/680742,
-// the de facto URL length limit is 2000 characters.
-// but since most of our measurements don't take the full
-// URL into account, we fudge it a bit.
-// TODO: we could measure the full URL to enforce exactly 2000 chars
-var MAX_URL_LENGTH = 1800;
-
-var binStringToBluffer =
-  require('../../deps/binary/binaryStringToBlobOrBuffer');
-var b64StringToBluffer =
-  require('../../deps/binary/base64StringToBlobOrBuffer');
-var utils = require('../../utils');
-var Promise = utils.Promise;
-var clone = utils.clone;
-var base64 = require('../../deps/binary/base64');
-var btoa = base64.btoa;
-var atob = base64.atob;
-var errors = require('../../deps/errors');
-var log = require('debug')('pouchdb:http');
-var createMultipart = require('../../deps/ajax/multipart');
-var blufferToBase64 = require('../../deps/binary/blobOrBufferToBase64');
-var parseDoc = require('../../deps/docs/parseDoc');
-
-function readAttachmentsAsBlobOrBuffer(row) {
-  var atts = row.doc && row.doc._attachments;
-  if (!atts) {
-    return;
-  }
-  Object.keys(atts).forEach(function (filename) {
-    var att = atts[filename];
-    att.data = b64StringToBluffer(att.data, att.content_type);
-  });
-}
-
-function encodeDocId(id) {
-  if (/^_design/.test(id)) {
-    return '_design/' + encodeURIComponent(id.slice(8));
-  }
-  if (/^_local/.test(id)) {
-    return '_local/' + encodeURIComponent(id.slice(7));
-  }
-  return encodeURIComponent(id);
-}
-
-function preprocessAttachments(doc) {
-  if (!doc._attachments || !Object.keys(doc._attachments)) {
-    return Promise.resolve();
-  }
-
-  return Promise.all(Object.keys(doc._attachments).map(function (key) {
-    var attachment = doc._attachments[key];
-    if (attachment.data && typeof attachment.data !== 'string') {
-      return blufferToBase64(attachment.data).then(function (b64) {
-        attachment.data = b64;
-      });
-    }
-  }));
-}
-
-// Get all the information you possibly can about the URI given by name and
-// return it as a suitable object.
-function getHost(name, opts) {
-  // Prase the URI into all its little bits
-  var uri = utils.parseUri(name);
-
-  // Store the user and password as a separate auth object
-  if (uri.user || uri.password) {
-    uri.auth = {username: uri.user, password: uri.password};
-  }
-
-  // Split the path part of the URI into parts using '/' as the delimiter
-  // after removing any leading '/' and any trailing '/'
-  var parts = uri.path.replace(/(^\/|\/$)/g, '').split('/');
-
-  // Store the first part as the database name and remove it from the parts
-  // array
-  uri.db = parts.pop();
-
-  // Restore the path by joining all the remaining parts (all the parts
-  // except for the database name) with '/'s
-  uri.path = parts.join('/');
-  opts = opts || {};
-  opts = clone(opts);
-  uri.headers = opts.headers || (opts.ajax && opts.ajax.headers) || {};
-
-  if (opts.auth || uri.auth) {
-    var nAuth = opts.auth || uri.auth;
-    var token = btoa(nAuth.username + ':' + nAuth.password);
-    uri.headers.Authorization = 'Basic ' + token;
-  }
-
-  if (opts.headers) {
-    uri.headers = opts.headers;
-  }
-
-  return uri;
-}
-
-// Generate a URL with the host data given by opts and the given path
-function genDBUrl(opts, path) {
-  return genUrl(opts, opts.db + '/' + path);
-}
-
-// Generate a URL with the host data given by opts and the given path
-function genUrl(opts, path) {
-  // If the host already has a path, then we need to have a path delimiter
-  // Otherwise, the path delimiter is the empty string
-  var pathDel = !opts.path ? '' : '/';
-
-  // If the host already has a path, then we need to have a path delimiter
-  // Otherwise, the path delimiter is the empty string
-  return opts.protocol + '://' + opts.host + ':' + opts.port + '/' +
-         opts.path + pathDel + path;
-}
-
-// Implements the PouchDB API for dealing with CouchDB instances over HTTP
-function HttpPouch(opts, callback) {
-  // The functions that will be publicly available for HttpPouch
-  var api = this;
-
-  // Parse the URI given by opts.name into an easy-to-use object
-  var getHostFun = getHost;
-
-  // TODO: this seems to only be used by yarong for the Thali project.
-  // Verify whether or not it's still needed.
-  /* istanbul ignore:next */
-  if (opts.getHost) {
-    getHostFun = opts.getHost;
-  }
-  var host = getHostFun(opts.name, opts);
-
-  // Generate the database URL based on the host
-  var dbUrl = genDBUrl(host, '');
-
-  api.getUrl = function () {return dbUrl; };
-  api.getHeaders = function () {return clone(host.headers); };
-
-  var ajaxOpts = opts.ajax || {};
-  opts = clone(opts);
-  function ajax(options, callback) {
-    var reqOpts = utils.extend(clone(ajaxOpts), options);
-    log(reqOpts.method + ' ' + reqOpts.url);
-    return utils.ajax(reqOpts, callback);
-  }
-
-  function ajaxPromise(opts) {
-    return new Promise(function (resolve, reject) {
-      ajax(opts, function (err, res) {
-        if (err) {
-          return reject(err);
-        }
-        resolve(res);
-      });
-    });
-  }
-
-  // Create a new CouchDB database based on the given opts
-  var createDB = function () {
-    ajax({
-      headers: clone(host.headers),
-      method: 'PUT',
-      url: dbUrl
-    }, function (err) {
-      // If we get an "Unauthorized" error
-      /* istanbul ignore else */
-      if (err && err.status === 401) {
-        // Test if the database already exists
-        ajax({headers: clone(host.headers), method: 'HEAD', url: dbUrl},
-             function (err) {
-          // If there is still an error
-          if (err) {
-            // Give the error to the callback to deal with
-            callback(err);
-          } else {
-            // Continue as if there had been no errors
-            callback(null, api);
-          }
-        });
-        // If there were no errros or if the only error is "Precondition Failed"
-        // (note: "Precondition Failed" occurs when we try to create a database
-        // that already exists)
-      } else if (!err || err.status === 412) {
-        // Continue as if there had been no errors
-        callback(null, api);
-      } else {
-        callback(err);
-      }
-    });
-  };
-
-  if (!opts.skipSetup) {
-    ajax({
-      headers: clone(host.headers),
-      method: 'GET',
-      url: dbUrl
-    }, function (err) {
-      //check if the db exists
-      if (err) {
-        if (err.status === 404) {
-          utils.explain404(
-            'PouchDB is just detecting if the remote DB exists.');
-          //if it doesn't, create it
-          createDB();
-        } else {
-          callback(err);
-        }
-      } else {
-        //go do stuff with the db
-        callback(null, api);
-      }
-    });
-  }
-
-  api.type = function () {
-    return 'http';
-  };
-
-  api.id = utils.adapterFun('id', function (callback) {
-    ajax({
-      headers: clone(host.headers),
-      method: 'GET',
-      url: genUrl(host, '')
-    }, function (err, result) {
-      var uuid = (result && result.uuid) ?
-        (result.uuid + host.db) : genDBUrl(host, '');
-      callback(null, uuid);
-    });
-  });
-
-  api.request = utils.adapterFun('request', function (options, callback) {
-    options.headers = host.headers;
-    options.url = genDBUrl(host, options.url);
-    ajax(options, callback);
-  });
-
-  // Sends a POST request to the host calling the couchdb _compact function
-  //    version: The version of CouchDB it is running
-  api.compact = utils.adapterFun('compact', function (opts, callback) {
-    if (typeof opts === 'function') {
-      callback = opts;
-      opts = {};
-    }
-    opts = clone(opts);
-    ajax({
-      headers: clone(host.headers),
-      url: genDBUrl(host, '_compact'),
-      method: 'POST'
-    }, function () {
-      function ping() {
-        api.info(function (err, res) {
-          if (!res.compact_running) {
-            callback(null, {ok: true});
-          } else {
-            setTimeout(ping, opts.interval || 200);
-          }
-        });
-      }
-      // Ping the http if it's finished compaction
-      ping();
-    });
-  });
-
-  // Calls GET on the host, which gets back a JSON string containing
-  //    couchdb: A welcome string
-  //    version: The version of CouchDB it is running
-  api._info = function (callback) {
-    ajax({
-      headers: clone(host.headers),
-      method: 'GET',
-      url: genDBUrl(host, '')
-    }, function (err, res) {
-      /* istanbul ignore next */
-      if (err) {
-        return callback(err);
-      }
-      res.host = genDBUrl(host, '');
-      callback(null, res);
-    });
-  };
-
-  // Get the document with the given id from the database given by host.
-  // The id could be solely the _id in the database, or it may be a
-  // _design/ID or _local/ID path
-  api.get = utils.adapterFun('get', function (id, opts, callback) {
-    // If no options were given, set the callback to the second parameter
-    if (typeof opts === 'function') {
-      callback = opts;
-      opts = {};
-    }
-    opts = clone(opts);
-
-    // List of parameters to add to the GET request
-    var params = [];
-
-    // If it exists, add the opts.revs value to the list of parameters.
-    // If revs=true then the resulting JSON will include a field
-    // _revisions containing an array of the revision IDs.
-    if (opts.revs) {
-      params.push('revs=true');
-    }
-
-    // If it exists, add the opts.revs_info value to the list of parameters.
-    // If revs_info=true then the resulting JSON will include the field
-    // _revs_info containing an array of objects in which each object
-    // representing an available revision.
-    if (opts.revs_info) {
-      params.push('revs_info=true');
-    }
-
-    // If it exists, add the opts.open_revs value to the list of parameters.
-    // If open_revs=all then the resulting JSON will include all the leaf
-    // revisions. If open_revs=["rev1", "rev2",...] then the resulting JSON
-    // will contain an array of objects containing data of all revisions
-    if (opts.open_revs) {
-      if (opts.open_revs !== "all") {
-        opts.open_revs = JSON.stringify(opts.open_revs);
-      }
-      params.push('open_revs=' + opts.open_revs);
-    }
-
-    // If it exists, add the opts.rev value to the list of parameters.
-    // If rev is given a revision number then get the specified revision.
-    if (opts.rev) {
-      params.push('rev=' + opts.rev);
-    }
-
-    // If it exists, add the opts.conflicts value to the list of parameters.
-    // If conflicts=true then the resulting JSON will include the field
-    // _conflicts containing all the conflicting revisions.
-    if (opts.conflicts) {
-      params.push('conflicts=' + opts.conflicts);
-    }
-
-    // Format the list of parameters into a valid URI query string
-    params = params.join('&');
-    params = params === '' ? '' : '?' + params;
-
-    id = encodeDocId(id);
-
-    // Set the options for the ajax call
-    var options = {
-      headers: clone(host.headers),
-      method: 'GET',
-      url: genDBUrl(host, id + params)
-    };
-    var getRequestAjaxOpts = opts.ajax || {};
-    utils.extend(options, getRequestAjaxOpts);
-
-    function fetchAttachments(doc) {
-      var atts = doc._attachments;
-      var filenames = atts && Object.keys(atts);
-      if (!atts || !filenames.length) {
-        return;
-      }
-      // we fetch these manually in separate XHRs, because
-      // Sync Gateway would normally send it back as multipart/mixed,
-      // which we cannot parse. Also, this is more efficient than
-      // receiving attachments as base64-encoded strings.
-      return Promise.all(filenames.map(function (filename) {
-        var att = atts[filename];
-        var path = encodeDocId(doc._id) + '/' + encodeAttachmentId(filename) +
-          '?rev=' + doc._rev;
-        return ajaxPromise({
-          headers: clone(host.headers),
-          method: 'GET',
-          url: genDBUrl(host, path),
-          binary: true
-        }).then(function (blob) {
-          if (opts.binary) {
-            return blob;
-          }
-          return blufferToBase64(blob);
-        }).then(function (data) {
-          delete att.stub;
-          delete att.length;
-          att.data = data;
-        });
-      }));
-    }
-
-    function fetchAllAttachments(docOrDocs) {
-      if (Array.isArray(docOrDocs)) {
-        return Promise.all(docOrDocs.map(function (doc) {
-          if (doc.ok) {
-            return fetchAttachments(doc.ok);
-          }
-        }));
-      }
-      return fetchAttachments(docOrDocs);
-    }
-
-    ajaxPromise(options).then(function (res) {
-      return Promise.resolve().then(function () {
-        if (opts.attachments) {
-          return fetchAllAttachments(res);
-        }
-      }).then(function () {
-        callback(null, res);
-      });
-    }).catch(callback);
-  });
-
-  // Delete the document given by doc from the database given by host.
-  api.remove = utils.adapterFun('remove',
-      function (docOrId, optsOrRev, opts, callback) {
-    var doc;
-    if (typeof optsOrRev === 'string') {
-      // id, rev, opts, callback style
-      doc = {
-        _id: docOrId,
-        _rev: optsOrRev
-      };
-      if (typeof opts === 'function') {
-        callback = opts;
-        opts = {};
-      }
-    } else {
-      // doc, opts, callback style
-      doc = docOrId;
-      if (typeof optsOrRev === 'function') {
-        callback = optsOrRev;
-        opts = {};
-      } else {
-        callback = opts;
-        opts = optsOrRev;
-      }
-    }
-
-    var rev = (doc._rev || opts.rev);
-
-    // Delete the document
-    ajax({
-      headers: clone(host.headers),
-      method: 'DELETE',
-      url: genDBUrl(host, encodeDocId(doc._id)) + '?rev=' + rev
-    }, callback);
-  });
-
-  function encodeAttachmentId(attachmentId) {
-    return attachmentId.split("/").map(encodeURIComponent).join("/");
-  }
-
-  // Get the attachment
-  api.getAttachment =
-    utils.adapterFun('getAttachment', function (docId, attachmentId, opts,
-                                                callback) {
-    if (typeof opts === 'function') {
-      callback = opts;
-      opts = {};
-    }
-    var params = opts.rev ? ('?rev=' + opts.rev) : '';
-    var url = genDBUrl(host, encodeDocId(docId)) + '/' +
-      encodeAttachmentId(attachmentId) + params;
-    ajax({
-      headers: clone(host.headers),
-      method: 'GET',
-      url: url,
-      binary: true
-    }, callback);
-  });
-
-  // Remove the attachment given by the id and rev
-  api.removeAttachment =
-    utils.adapterFun('removeAttachment', function (docId, attachmentId, rev,
-                                                   callback) {
-
-    var url = genDBUrl(host, encodeDocId(docId) + '/' +
-      encodeAttachmentId(attachmentId)) + '?rev=' + rev;
-
-    ajax({
-      headers: clone(host.headers),
-      method: 'DELETE',
-      url: url
-    }, callback);
-  });
-
-  // Add the attachment given by blob and its contentType property
-  // to the document with the given id, the revision given by rev, and
-  // add it to the database given by host.
-  api.putAttachment =
-    utils.adapterFun('putAttachment', function (docId, attachmentId, rev, blob,
-                                                type, callback) {
-    if (typeof type === 'function') {
-      callback = type;
-      type = blob;
-      blob = rev;
-      rev = null;
-    }
-    var id = encodeDocId(docId) + '/' + encodeAttachmentId(attachmentId);
-    var url = genDBUrl(host, id);
-    if (rev) {
-      url += '?rev=' + rev;
-    }
-
-    if (typeof blob === 'string') {
-      var binary;
-      try {
-        binary = atob(blob);
-      } catch (err) {
-        // it's not base64-encoded, so throw error
-        return callback(errors.error(errors.BAD_ARG,
-                        'Attachments need to be base64 encoded'));
-      }
-      blob = binary ? binStringToBluffer(binary, type) : '';
-    }
-
-    var opts = {
-      headers: clone(host.headers),
-      method: 'PUT',
-      url: url,
-      processData: false,
-      body: blob,
-      timeout: ajaxOpts.timeout || 60000
-    };
-    opts.headers['Content-Type'] = type;
-    // Add the attachment
-    ajax(opts, callback);
-  });
-
-  // Add the document given by doc (in JSON string format) to the database
-  // given by host. This fails if the doc has no _id field.
-  api.put = utils.adapterFun('put', utils.getArguments(function (args) {
-    var temp, temptype, opts;
-    var doc = args.shift();
-    var id = '_id' in doc;
-    var callback = args.pop();
-    if (typeof doc !== 'object' || Array.isArray(doc)) {
-      return callback(errors.error(errors.NOT_AN_OBJECT));
-    }
-
-    doc = clone(doc);
-
-    preprocessAttachments(doc).then(function () {
-      while (true) {
-        temp = args.shift();
-        temptype = typeof temp;
-        if (temptype === "string" && !id) {
-          doc._id = temp;
-          id = true;
-        } else if (temptype === "string" && id && !('_rev' in doc)) {
-          doc._rev = temp;
-        } else if (temptype === "object") {
-          opts = clone(temp);
-        }
-        if (!args.length) {
-          break;
-        }
-      }
-      opts = opts || {};
-
-      // check for any errors
-      // TODO: rename this function
-      parseDoc.invalidIdError(doc._id);
-
-      // List of parameter to add to the PUT request
-      var params = [];
-
-      // If it exists, add the opts.new_edits value to the list of parameters.
-      // If new_edits = false then the database will NOT assign this document a
-      // new revision number
-      if (opts && typeof opts.new_edits !== 'undefined') {
-        params.push('new_edits=' + opts.new_edits);
-      }
-
-      // Format the list of parameters into a valid URI query string
-      params = params.join('&');
-      if (params !== '') {
-        params = '?' + params;
-      }
-
-      var ajaxOpts = {
-        headers: clone(host.headers),
-        method: 'PUT',
-        url: genDBUrl(host, encodeDocId(doc._id)) + params,
-        body: doc
-      };
-
-      return Promise.resolve().then(function () {
-        var hasNonStubAttachments = doc._attachments &&
-          Object.keys(doc._attachments).filter(function (att) {
-            return !doc._attachments[att].stub;
-          }).length;
-        if (hasNonStubAttachments) {
-          // use multipart/related for more efficient attachment uploading
-          var multipart = createMultipart(doc);
-          ajaxOpts.body = multipart.body;
-          ajaxOpts.processData = false;
-          ajaxOpts.headers = utils.extend(ajaxOpts.headers, multipart.headers);
-        }
-      }).catch(function () {
-        throw new Error('Did you forget to base64-encode an attachment?');
-      }).then(function () {
-        return ajaxPromise(ajaxOpts);
-      }).then(function (res) {
-        res.ok = true; // smooths out cloudant not doing this
-        callback(null, res);
-      });
-    }).catch(callback);
-  }));
-
-  // Add the document given by doc (in JSON string format) to the database
-  // given by host. This does not assume that doc is a new document
-  // (i.e. does not have a _id or a _rev field.)
-  api.post = utils.adapterFun('post', function (doc, opts, callback) {
-    // If no options were given, set the callback to be the second parameter
-    if (typeof opts === 'function') {
-      callback = opts;
-      opts = {};
-    }
-    opts = clone(opts);
-    if (typeof doc !== 'object') {
-      return callback(errors.error(errors.NOT_AN_OBJECT));
-    }
-    if (! ("_id" in doc)) {
-      doc._id = utils.uuid();
-    }
-    api.put(doc, opts, function (err, res) {
-      if (err) {
-        return callback(err);
-      }
-      res.ok = true;
-      callback(null, res);
-    });
-  });
-
-  // Update/create multiple documents given by req in the database
-  // given by host.
-  api._bulkDocs = function (req, opts, callback) {
-    // If new_edits=false then it prevents the database from creating
-    // new revision numbers for the documents. Instead it just uses
-    // the old ones. This is used in database replication.
-    req.new_edits = opts.new_edits;
-
-    Promise.all(req.docs.map(preprocessAttachments)).then(function () {
-      // Update/create the documents
-      ajax({
-        headers: clone(host.headers),
-        method: 'POST',
-        url: genDBUrl(host, '_bulk_docs'),
-        body: req
-      }, function (err, results) {
-        if (err) {
-          return callback(err);
-        }
-        results.forEach(function (result) {
-          result.ok = true; // smooths out cloudant not adding this
-        });
-        callback(null, results);
-      });
-    }).catch(callback);
-  };
-
-  // Get a listing of the documents in the database given
-  // by host and ordered by increasing id.
-  api.allDocs = utils.adapterFun('allDocs', function (opts, callback) {
-    if (typeof opts === 'function') {
-      callback = opts;
-      opts = {};
-    }
-    opts = clone(opts);
-    // List of parameters to add to the GET request
-    var params = [];
-    var body;
-    var method = 'GET';
-
-    if (opts.conflicts) {
-      params.push('conflicts=true');
-    }
-
-    // If opts.descending is truthy add it to params
-    if (opts.descending) {
-      params.push('descending=true');
-    }
-
-    // If opts.include_docs exists, add the include_docs value to the
-    // list of parameters.
-    // If include_docs=true then include the associated document with each
-    // result.
-    if (opts.include_docs) {
-      params.push('include_docs=true');
-    }
-
-    if (opts.attachments) {
-      // added in CouchDB 1.6.0
-      params.push('attachments=true');
-    }
-
-    if (opts.key) {
-      params.push('key=' + encodeURIComponent(JSON.stringify(opts.key)));
-    }
-    
-    if (opts.start_key) {
-      opts.startkey = opts.start_key;
-    }
-
-    // If opts.startkey exists, add the startkey value to the list of
-    // parameters.
-    // If startkey is given then the returned list of documents will
-    // start with the document whose id is startkey.
-    if (opts.startkey) {
-      params.push('startkey=' +
-        encodeURIComponent(JSON.stringify(opts.startkey)));
-    }
-
-    if (opts.end_key) {
-      opts.endkey = opts.end_key;
-    }
-
-    // If opts.endkey exists, add the endkey value to the list of parameters.
-    // If endkey is given then the returned list of docuemnts will
-    // end with the document whose id is endkey.
-    if (opts.endkey) {
-      params.push('endkey=' + encodeURIComponent(JSON.stringify(opts.endkey)));
-    }
-
-    if (typeof opts.inclusive_end !== 'undefined') {
-      params.push('inclusive_end=' + !!opts.inclusive_end);
-    }
-
-    // If opts.limit exists, add the limit value to the parameter list.
-    if (typeof opts.limit !== 'undefined') {
-      params.push('limit=' + opts.limit);
-    }
-
-    if (typeof opts.skip !== 'undefined') {
-      params.push('skip=' + opts.skip);
-    }
-
-    // Format the list of parameters into a valid URI query string
-    params = params.join('&');
-    if (params !== '') {
-      params = '?' + params;
-    }
-
-    if (typeof opts.keys !== 'undefined') {
-
-      var keysAsString =
-        'keys=' + encodeURIComponent(JSON.stringify(opts.keys));
-      if (keysAsString.length + params.length + 1 <= MAX_URL_LENGTH) {
-        // If the keys are short enough, do a GET. we do this to work around
-        // Safari not understanding 304s on POSTs (see issue #1239)
-        params += (params.indexOf('?') !== -1 ? '&' : '?') + keysAsString;
-      } else {
-        // If keys are too long, issue a POST request to circumvent GET
-        // query string limits
-        // see http://wiki.apache.org/couchdb/HTTP_view_API#Querying_Options
-        method = 'POST';
-        body = JSON.stringify({keys: opts.keys});
-      }
-    }
-
-    // Get the document listing
-    ajaxPromise({
-      headers: clone(host.headers),
-      method: method,
-      url: genDBUrl(host, '_all_docs' + params),
-      body: body
-    }).then(function (res) {
-      if (opts.include_docs && opts.attachments && opts.binary) {
-        res.rows.forEach(readAttachmentsAsBlobOrBuffer);
-      }
-      callback(null, res);
-    }).catch(callback);
-  });
-
-  // Get a list of changes made to documents in the database given by host.
-  // TODO According to the README, there should be two other methods here,
-  // api.changes.addListener and api.changes.removeListener.
-  api._changes = function (opts) {
-    // We internally page the results of a changes request, this means
-    // if there is a large set of changes to be returned we can start
-    // processing them quicker instead of waiting on the entire
-    // set of changes to return and attempting to process them at once
-    var batchSize = 'batch_size' in opts ? opts.batch_size : CHANGES_BATCH_SIZE;
-
-    opts = clone(opts);
-    opts.timeout = opts.timeout || ajaxOpts.timeout || 30 * 1000;
-
-    // We give a 5 second buffer for CouchDB changes to respond with
-    // an ok timeout
-    var params = { timeout: opts.timeout - (5 * 1000) };
-    var limit = (typeof opts.limit !== 'undefined') ? opts.limit : false;
-    var returnDocs;
-    if ('returnDocs' in opts) {
-      returnDocs = opts.returnDocs;
-    } else {
-      returnDocs = true;
-    }
-    //
-    var leftToFetch = limit;
-
-    if (opts.style) {
-      params.style = opts.style;
-    }
-
-    if (opts.include_docs || opts.filter && typeof opts.filter === 'function') {
-      params.include_docs = true;
-    }
-
-    if (opts.attachments) {
-      params.attachments = true;
-    }
-
-    if (opts.continuous) {
-      params.feed = 'longpoll';
-    }
-
-    if (opts.conflicts) {
-      params.conflicts = true;
-    }
-
-    if (opts.descending) {
-      params.descending = true;
-    }
-
-    if (opts.filter && typeof opts.filter === 'string') {
-      params.filter = opts.filter;
-      if (opts.filter === '_view' &&
-          opts.view &&
-          typeof opts.view === 'string') {
-        params.view = opts.view;
-      }
-    }
-
-    // If opts.query_params exists, pass it through to the changes request.
-    // These parameters may be used by the filter on the source database.
-    if (opts.query_params && typeof opts.query_params === 'object') {
-      for (var param_name in opts.query_params) {
-        /* istanbul ignore else */
-        if (opts.query_params.hasOwnProperty(param_name)) {
-          params[param_name] = opts.query_params[param_name];
-        }
-      }
-    }
-
-    var method = 'GET';
-    var body;
-
-    if (opts.doc_ids) {
-      // set this automagically for the user; it's annoying that couchdb
-      // requires both a "filter" and a "doc_ids" param.
-      params.filter = '_doc_ids';
-
-      var docIdsJson = JSON.stringify(opts.doc_ids);
-
-      if (docIdsJson.length < MAX_URL_LENGTH) {
-        params.doc_ids = docIdsJson;
-      } else {
-        // anything greater than ~2000 is unsafe for gets, so
-        // use POST instead
-        method = 'POST';
-        body = {doc_ids: opts.doc_ids };
-      }
-    }
-
-    var xhr;
-    var lastFetchedSeq;
-
-    // Get all the changes starting wtih the one immediately after the
-    // sequence number given by since.
-    var fetch = function (since, callback) {
-      if (opts.aborted) {
-        return;
-      }
-      params.since = since;
-      // "since" can be any kind of json object in Coudant/CouchDB 2.x
-      /* istanbul ignore next */
-      if (typeof params.since === "object") {
-        params.since = JSON.stringify(params.since);
-      }
-
-      if (opts.descending) {
-        if (limit) {
-          params.limit = leftToFetch;
-        }
-      } else {
-        params.limit = (!limit || leftToFetch > batchSize) ?
-          batchSize : leftToFetch;
-      }
-
-      var paramStr = '?' + Object.keys(params).map(function (k) {
-        return k + '=' + encodeURIComponent(params[k]);
-      }).join('&');
-
-      // Set the options for the ajax call
-      var xhrOpts = {
-        headers: clone(host.headers),
-        method: method,
-        url: genDBUrl(host, '_changes' + paramStr),
-        // _changes can take a long time to generate, especially when filtered
-        timeout: opts.timeout,
-        body: body
-      };
-      lastFetchedSeq = since;
-
-      if (opts.aborted) {
-        return;
-      }
-
-      // Get the changes
-      xhr = ajax(xhrOpts, callback);
-    };
-
-    // If opts.since exists, get all the changes from the sequence
-    // number given by opts.since. Otherwise, get all the changes
-    // from the sequence number 0.
-    var fetchTimeout = 10;
-    var fetchRetryCount = 0;
-
-    var results = {results: []};
-
-    var fetched = function (err, res) {
-      if (opts.aborted) {
-        return;
-      }
-      var raw_results_length = 0;
-      // If the result of the ajax call (res) contains changes (res.results)
-      if (res && res.results) {
-        raw_results_length = res.results.length;
-        results.last_seq = res.last_seq;
-        // For each change
-        var req = {};
-        req.query = opts.query_params;
-        res.results = res.results.filter(function (c) {
-          leftToFetch--;
-          var ret = utils.filterChange(opts)(c);
-          if (ret) {
-            if (opts.include_docs && opts.attachments && opts.binary) {
-              readAttachmentsAsBlobOrBuffer(c);
-            }
-            if (returnDocs) {
-              results.results.push(c);
-            }
-            opts.onChange(c);
-          }
-          return ret;
-        });
-      } else if (err) {
-        // In case of an error, stop listening for changes and call
-        // opts.complete
-        opts.aborted = true;
-        opts.complete(err);
-        return;
-      }
-
-      // The changes feed may have timed out with no results
-      // if so reuse last update sequence
-      if (res && res.last_seq) {
-        lastFetchedSeq = res.last_seq;
-      }
-
-      var finished = (limit && leftToFetch <= 0) ||
-        (res && raw_results_length < batchSize) ||
-        (opts.descending);
-
-      if ((opts.continuous && !(limit && leftToFetch <= 0)) || !finished) {
-        // Increase retry delay exponentially as long as errors persist
-        if (err) {
-          fetchRetryCount += 1;
-        } else {
-          fetchRetryCount = 0;
-        }
-        var timeoutMultiplier = 1 << fetchRetryCount;
-        var retryWait = fetchTimeout * timeoutMultiplier;
-        var maximumWait = opts.maximumWait || 30000;
-
-        if (retryWait > maximumWait) {
-          opts.complete(err || errors.error(errors.UNKNOWN_ERROR));
-          return;
-        }
-
-        // Queue a call to fetch again with the newest sequence number
-        setTimeout(function () { fetch(lastFetchedSeq, fetched); }, retryWait);
-      } else {
-        // We're done, call the callback
-        opts.complete(null, results);
-      }
-    };
-
-    fetch(opts.since || 0, fetched);
-
-    // Return a method to cancel this method from processing any more
-    return {
-      cancel: function () {
-        opts.aborted = true;
-        if (xhr) {
-          xhr.abort();
-        }
-      }
-    };
-  };
-
-  // Given a set of document/revision IDs (given by req), tets the subset of
-  // those that do NOT correspond to revisions stored in the database.
-  // See http://wiki.apache.org/couchdb/HttpPostRevsDiff
-  api.revsDiff = utils.adapterFun('revsDiff', function (req, opts, callback) {
-    // If no options were given, set the callback to be the second parameter
-    if (typeof opts === 'function') {
-      callback = opts;
-      opts = {};
-    }
-
-    // Get the missing document/revision IDs
-    ajax({
-      headers: clone(host.headers),
-      method: 'POST',
-      url: genDBUrl(host, '_revs_diff'),
-      body: JSON.stringify(req)
-    }, callback);
-  });
-
-  api._close = function (callback) {
-    callback();
-  };
-
-  api._destroy = function (callback) {
-    ajax({
-      url: genDBUrl(host, ''),
-      method: 'DELETE',
-      headers: clone(host.headers)
-    }, function (err, resp) {
-      /* istanbul ignore next */
-      if (err) {
-        api.emit('error', err);
-        return callback(err);
-      }
-      api.emit('destroyed');
-      api.constructor.emit('destroyed', opts.name);
-      callback(null, resp);
-    });
-  };
-}
-
-// HttpPouch is a valid adapter.
-HttpPouch.valid = function () {
-  return true;
-};
-
-module.exports = HttpPouch;
-
-},{"../../deps/ajax/multipart":57,"../../deps/binary/base64":61,"../../deps/binary/base64StringToBlobOrBuffer":62,"../../deps/binary/binaryStringToBlobOrBuffer":64,"../../deps/binary/blobOrBufferToBase64":66,"../../deps/docs/parseDoc":75,"../../deps/errors":81,"../../utils":112,"debug":"debug"}],37:[function(require,module,exports){
-'use strict';
-
-var merge = require('../../merge');
-var errors = require('../../deps/errors');
-var idbUtils = require('./utils');
-var idbConstants = require('./constants');
-
-var ATTACH_STORE = idbConstants.ATTACH_STORE;
-var BY_SEQ_STORE = idbConstants.BY_SEQ_STORE;
-var DOC_STORE = idbConstants.DOC_STORE;
-
-var decodeDoc = idbUtils.decodeDoc;
-var decodeMetadata = idbUtils.decodeMetadata;
-var fetchAttachmentsIfNecessary = idbUtils.fetchAttachmentsIfNecessary;
-var postProcessAttachments = idbUtils.postProcessAttachments;
-var openTransactionSafely = idbUtils.openTransactionSafely;
-
-function createKeyRange(start, end, inclusiveEnd, key, descending) {
-  try {
-    if (start && end) {
-      if (descending) {
-        return IDBKeyRange.bound(end, start, !inclusiveEnd, false);
-      } else {
-        return IDBKeyRange.bound(start, end, false, !inclusiveEnd);
-      }
-    } else if (start) {
-      if (descending) {
-        return IDBKeyRange.upperBound(start);
-      } else {
-        return IDBKeyRange.lowerBound(start);
-      }
-    } else if (end) {
-      if (descending) {
-        return IDBKeyRange.lowerBound(end, !inclusiveEnd);
-      } else {
-        return IDBKeyRange.upperBound(end, !inclusiveEnd);
-      }
-    } else if (key) {
-      return IDBKeyRange.only(key);
-    }
-  } catch (e) {
-    return {error: e};
-  }
-  return null;
-}
-
-function handleKeyRangeError(api, opts, err, callback) {
-  if (err.name === "DataError" && err.code === 0) {
-    // data error, start is less than end
-    return callback(null, {
-      total_rows: api._meta.docCount,
-      offset: opts.skip,
-      rows: []
-    });
-  }
-  callback(errors.error(errors.IDB_ERROR, err.name, err.message));
-}
-
-function idbAllDocs(opts, api, idb, callback) {
-
-  function allDocsQuery(opts, callback) {
-    var start = 'startkey' in opts ? opts.startkey : false;
-    var end = 'endkey' in opts ? opts.endkey : false;
-    var key = 'key' in opts ? opts.key : false;
-    var skip = opts.skip || 0;
-    var limit = typeof opts.limit === 'number' ? opts.limit : -1;
-    var inclusiveEnd = opts.inclusive_end !== false;
-    var descending = 'descending' in opts && opts.descending ? 'prev' : null;
-
-    var keyRange = createKeyRange(start, end, inclusiveEnd, key, descending);
-    if (keyRange && keyRange.error) {
-      return handleKeyRangeError(api, opts, keyRange.error, callback);
-    }
-
-    var stores = [DOC_STORE, BY_SEQ_STORE];
-
-    if (opts.attachments) {
-      stores.push(ATTACH_STORE);
-    }
-    var txnResult = openTransactionSafely(idb, stores, 'readonly');
-    if (txnResult.error) {
-      return callback(txnResult.error);
-    }
-    var txn = txnResult.txn;
-    var docStore = txn.objectStore(DOC_STORE);
-    var seqStore = txn.objectStore(BY_SEQ_STORE);
-    var cursor = descending ?
-      docStore.openCursor(keyRange, descending) :
-      docStore.openCursor(keyRange);
-    var docIdRevIndex = seqStore.index('_doc_id_rev');
-    var results = [];
-    var docCount = 0;
-
-    // if the user specifies include_docs=true, then we don't
-    // want to block the main cursor while we're fetching the doc
-    function fetchDocAsynchronously(metadata, row, winningRev) {
-      var key = metadata.id + "::" + winningRev;
-      docIdRevIndex.get(key).onsuccess =  function onGetDoc(e) {
-        row.doc = decodeDoc(e.target.result);
-        if (opts.conflicts) {
-          row.doc._conflicts = merge.collectConflicts(metadata);
-        }
-        fetchAttachmentsIfNecessary(row.doc, opts, txn);
-      };
-    }
-
-    function allDocsInner(cursor, winningRev, metadata) {
-      var row = {
-        id: metadata.id,
-        key: metadata.id,
-        value: {
-          rev: winningRev
-        }
-      };
-      var deleted = metadata.deleted;
-      if (opts.deleted === 'ok') {
-        results.push(row);
-        // deleted docs are okay with "keys" requests
-        if (deleted) {
-          row.value.deleted = true;
-          row.doc = null;
-        } else if (opts.include_docs) {
-          fetchDocAsynchronously(metadata, row, winningRev);
-        }
-      } else if (!deleted && skip-- <= 0) {
-        results.push(row);
-        if (opts.include_docs) {
-          fetchDocAsynchronously(metadata, row, winningRev);
-        }
-        if (--limit === 0) {
-          return;
-        }
-      }
-      cursor.continue();
-    }
-
-    function onGetCursor(e) {
-      docCount = api._meta.docCount; // do this within the txn for consistency
-      var cursor = e.target.result;
-      if (!cursor) {
-        return;
-      }
-      var metadata = decodeMetadata(cursor.value);
-      var winningRev = metadata.winningRev;
-
-      allDocsInner(cursor, winningRev, metadata);
-    }
-
-    function onResultsReady() {
-      callback(null, {
-        total_rows: docCount,
-        offset: opts.skip,
-        rows: results
-      });
-    }
-
-    function onTxnComplete() {
-      if (opts.attachments) {
-        postProcessAttachments(results, opts.binary).then(onResultsReady);
-      } else {
-        onResultsReady();
-      }
-    }
-
-    txn.oncomplete = onTxnComplete;
-    cursor.onsuccess = onGetCursor;
-  }
-
-  function allDocs(opts, callback) {
-
-    if (opts.limit === 0) {
-      return callback(null, {
-        total_rows: api._meta.docCount,
-        offset: opts.skip,
-        rows: []
-      });
-    }
-    allDocsQuery(opts, callback);
-  }
-
-  allDocs(opts, callback);
-}
-
-module.exports = idbAllDocs;
-},{"../../deps/errors":81,"../../merge":101,"./constants":40,"./utils":42}],38:[function(require,module,exports){
-'use strict';
-
-var utils = require('../../utils');
-var createBlob = require('../../deps/binary/blob');
-
-var idbConstants = require('./constants');
-var DETECT_BLOB_SUPPORT_STORE = idbConstants.DETECT_BLOB_SUPPORT_STORE;
-
-//
-// Detect blob support. Chrome didn't support it until version 38.
-// In version 37 they had a broken version where PNGs (and possibly
-// other binary types) aren't stored correctly, because when you fetch
-// them, the content type is always null.
-//
-// Furthermore, they have some outstanding bugs where blobs occasionally
-// are read by FileReader as null, or by ajax as 404s.
-//
-// Sadly we use the 404 bug to detect the FileReader bug, so if they
-// get fixed independently and released in different versions of Chrome,
-// then the bug could come back. So it's worthwhile to watch these issues:
-// 404 bug: https://code.google.com/p/chromium/issues/detail?id=447916
-// FileReader bug: https://code.google.com/p/chromium/issues/detail?id=447836
-//
-function checkBlobSupport(txn, idb) {
-  return new utils.Promise(function (resolve, reject) {
-    var blob = createBlob([''], {type: 'image/png'});
-    txn.objectStore(DETECT_BLOB_SUPPORT_STORE).put(blob, 'key');
-    txn.oncomplete = function () {
-      // have to do it in a separate transaction, else the correct
-      // content type is always returned
-      var blobTxn = idb.transaction([DETECT_BLOB_SUPPORT_STORE],
-        'readwrite');
-      var getBlobReq = blobTxn.objectStore(
-        DETECT_BLOB_SUPPORT_STORE).get('key');
-      getBlobReq.onerror = reject;
-      getBlobReq.onsuccess = function (e) {
-
-        var storedBlob = e.target.result;
-        var url = URL.createObjectURL(storedBlob);
-
-        utils.ajax({
-          url: url,
-          cache: true,
-          binary: true
-        }, function (err, res) {
-          if (err && err.status === 405) {
-            // firefox won't let us do that. but firefox doesn't
-            // have the blob type bug that Chrome does, so that's ok
-            resolve(true);
-          } else {
-            resolve(!!(res && res.type === 'image/png'));
-            if (err && err.status === 404) {
-              utils.explain404('PouchDB is just detecting blob URL support.');
-            }
-          }
-          URL.revokeObjectURL(url);
-        });
-      };
-    };
-  }).catch(function () {
-    return false; // error, so assume unsupported
-  });
-}
-
-module.exports = checkBlobSupport;
-
-},{"../../deps/binary/blob":65,"../../utils":112,"./constants":40}],39:[function(require,module,exports){
-'use strict';
-
-var utils = require('../../utils');
-var errors = require('../../deps/errors');
-var preprocessAttachments =
-  require('../../deps/docs/preprocessAttachments');
-var processDocs = require('../../deps/docs/processDocs');
-var isLocalId = require('../../deps/docs/isLocalId');
-var idbUtils = require('./utils');
-var idbConstants = require('./constants');
-
-var ATTACH_AND_SEQ_STORE = idbConstants.ATTACH_AND_SEQ_STORE;
-var ATTACH_STORE = idbConstants.ATTACH_STORE;
-var BY_SEQ_STORE = idbConstants.BY_SEQ_STORE;
-var DOC_STORE = idbConstants.DOC_STORE;
-var LOCAL_STORE = idbConstants.LOCAL_STORE;
-var META_STORE = idbConstants.META_STORE;
-
-var compactRevs = idbUtils.compactRevs;
-var decodeMetadata = idbUtils.decodeMetadata;
-var encodeMetadata = idbUtils.encodeMetadata;
-var idbError = idbUtils.idbError;
-var openTransactionSafely = idbUtils.openTransactionSafely;
-
-function idbBulkDocs(req, opts, api, idb, Changes, callback) {
-  var docInfos = req.docs;
-  var txn;
-  var docStore;
-  var bySeqStore;
-  var attachStore;
-  var attachAndSeqStore;
-  var docInfoError;
-  var docCountDelta = 0;
-
-  for (var i = 0, len = docInfos.length; i < len; i++) {
-    var doc = docInfos[i];
-    if (doc._id && isLocalId(doc._id)) {
-      continue;
-    }
-    doc = docInfos[i] = utils.parseDoc(doc, opts.new_edits);
-    if (doc.error && !docInfoError) {
-      docInfoError = doc;
-    }
-  }
-
-  if (docInfoError) {
-    return callback(docInfoError);
-  }
-
-  var results = new Array(docInfos.length);
-  var fetchedDocs = new utils.Map();
-  var preconditionErrored = false;
-  var blobType = api._meta.blobSupport ? 'blob' : 'base64';
-
-  preprocessAttachments(docInfos, blobType, function (err) {
-    if (err) {
-      return callback(err);
-    }
-    startTransaction();
-  });
-
-  function startTransaction() {
-
-    var stores = [
-      DOC_STORE, BY_SEQ_STORE,
-      ATTACH_STORE, META_STORE,
-      LOCAL_STORE, ATTACH_AND_SEQ_STORE
-    ];
-    var txnResult = openTransactionSafely(idb, stores, 'readwrite');
-    if (txnResult.error) {
-      return callback(txnResult.error);
-    }
-    txn = txnResult.txn;
-    txn.onerror = idbError(callback);
-    txn.ontimeout = idbError(callback);
-    txn.oncomplete = complete;
-    docStore = txn.objectStore(DOC_STORE);
-    bySeqStore = txn.objectStore(BY_SEQ_STORE);
-    attachStore = txn.objectStore(ATTACH_STORE);
-    attachAndSeqStore = txn.objectStore(ATTACH_AND_SEQ_STORE);
-
-    verifyAttachments(function (err) {
-      if (err) {
-        preconditionErrored = true;
-        return callback(err);
-      }
-      fetchExistingDocs();
-    });
-  }
-
-  function idbProcessDocs() {
-
-    processDocs(docInfos, api, fetchedDocs, txn, results, writeDoc, opts);
-  }
-
-  function fetchExistingDocs() {
-
-    if (!docInfos.length) {
-      return;
-    }
-
-    var numFetched = 0;
-
-    function checkDone() {
-      if (++numFetched === docInfos.length) {
-        idbProcessDocs();
-      }
-    }
-
-    function readMetadata(event) {
-      var metadata = decodeMetadata(event.target.result);
-
-      if (metadata) {
-        fetchedDocs.set(metadata.id, metadata);
-      }
-      checkDone();
-    }
-
-    for (var i = 0, len = docInfos.length; i < len; i++) {
-      var docInfo = docInfos[i];
-      if (docInfo._id && isLocalId(docInfo._id)) {
-        checkDone(); // skip local docs
-        continue;
-      }
-      var req = docStore.get(docInfo.metadata.id);
-      req.onsuccess = readMetadata;
-    }
-  }
-
-  function complete() {
-    if (preconditionErrored) {
-      return;
-    }
-
-    Changes.notify(api._meta.name);
-    api._meta.docCount += docCountDelta;
-    callback(null, results);
-  }
-
-  function verifyAttachment(digest, callback) {
-
-    var req = attachStore.get(digest);
-    req.onsuccess = function (e) {
-      if (!e.target.result) {
-        var err = errors.error(errors.MISSING_STUB,
-          'unknown stub attachment with digest ' +
-          digest);
-        err.status = 412;
-        callback(err);
-      } else {
-        callback();
-      }
-    };
-  }
-
-  function verifyAttachments(finish) {
-
-
-    var digests = [];
-    docInfos.forEach(function (docInfo) {
-      if (docInfo.data && docInfo.data._attachments) {
-        Object.keys(docInfo.data._attachments).forEach(function (filename) {
-          var att = docInfo.data._attachments[filename];
-          if (att.stub) {
-            digests.push(att.digest);
-          }
-        });
-      }
-    });
-    if (!digests.length) {
-      return finish();
-    }
-    var numDone = 0;
-    var err;
-
-    function checkDone() {
-      if (++numDone === digests.length) {
-        finish(err);
-      }
-    }
-    digests.forEach(function (digest) {
-      verifyAttachment(digest, function (attErr) {
-        if (attErr && !err) {
-          err = attErr;
-        }
-        checkDone();
-      });
-    });
-  }
-
-  function writeDoc(docInfo, winningRev, winningRevIsDeleted, newRevIsDeleted,
-                    isUpdate, delta, resultsIdx, callback) {
-
-    docCountDelta += delta;
-
-    docInfo.metadata.winningRev = winningRev;
-    docInfo.metadata.deleted = winningRevIsDeleted;
-
-    var doc = docInfo.data;
-    doc._id = docInfo.metadata.id;
-    doc._rev = docInfo.metadata.rev;
-
-    if (newRevIsDeleted) {
-      doc._deleted = true;
-    }
-
-    var hasAttachments = doc._attachments &&
-      Object.keys(doc._attachments).length;
-    if (hasAttachments) {
-      return writeAttachments(docInfo, winningRev, winningRevIsDeleted,
-        isUpdate, resultsIdx, callback);
-    }
-
-    finishDoc(docInfo, winningRev, winningRevIsDeleted,
-      isUpdate, resultsIdx, callback);
-  }
-
-  function autoCompact(docInfo) {
-
-    var revsToDelete = utils.compactTree(docInfo.metadata);
-    compactRevs(revsToDelete, docInfo.metadata.id, txn);
-  }
-
-  function finishDoc(docInfo, winningRev, winningRevIsDeleted,
-                     isUpdate, resultsIdx, callback) {
-
-    var doc = docInfo.data;
-    var metadata = docInfo.metadata;
-
-    doc._doc_id_rev = metadata.id + '::' + metadata.rev;
-    delete doc._id;
-    delete doc._rev;
-
-    function afterPutDoc(e) {
-      if (isUpdate && api.auto_compaction) {
-        autoCompact(docInfo);
-      }
-      metadata.seq = e.target.result;
-      // Current _rev is calculated from _rev_tree on read
-      delete metadata.rev;
-      var metadataToStore = encodeMetadata(metadata, winningRev,
-        winningRevIsDeleted);
-      var metaDataReq = docStore.put(metadataToStore);
-      metaDataReq.onsuccess = afterPutMetadata;
-    }
-
-    function afterPutDocError(e) {
-      // ConstraintError, need to update, not put (see #1638 for details)
-      e.preventDefault(); // avoid transaction abort
-      e.stopPropagation(); // avoid transaction onerror
-      var index = bySeqStore.index('_doc_id_rev');
-      var getKeyReq = index.getKey(doc._doc_id_rev);
-      getKeyReq.onsuccess = function (e) {
-        var putReq = bySeqStore.put(doc, e.target.result);
-        putReq.onsuccess = afterPutDoc;
-      };
-    }
-
-    function afterPutMetadata() {
-      results[resultsIdx] = {
-        ok: true,
-        id: metadata.id,
-        rev: winningRev
-      };
-      fetchedDocs.set(docInfo.metadata.id, docInfo.metadata);
-      insertAttachmentMappings(docInfo, metadata.seq, callback);
-    }
-
-    var putReq = bySeqStore.put(doc);
-
-    putReq.onsuccess = afterPutDoc;
-    putReq.onerror = afterPutDocError;
-  }
-
-  function writeAttachments(docInfo, winningRev, winningRevIsDeleted,
-                            isUpdate, resultsIdx, callback) {
-
-
-    var doc = docInfo.data;
-
-    var numDone = 0;
-    var attachments = Object.keys(doc._attachments);
-
-    function collectResults() {
-      if (numDone === attachments.length) {
-        finishDoc(docInfo, winningRev, winningRevIsDeleted,
-          isUpdate, resultsIdx, callback);
-      }
-    }
-
-    function attachmentSaved() {
-      numDone++;
-      collectResults();
-    }
-
-    attachments.forEach(function (key) {
-      var att = docInfo.data._attachments[key];
-      if (!att.stub) {
-        var data = att.data;
-        delete att.data;
-        var digest = att.digest;
-        saveAttachment(digest, data, attachmentSaved);
-      } else {
-        numDone++;
-        collectResults();
-      }
-    });
-  }
-
-  // map seqs to attachment digests, which
-  // we will need later during compaction
-  function insertAttachmentMappings(docInfo, seq, callback) {
-
-    var attsAdded = 0;
-    var attsToAdd = Object.keys(docInfo.data._attachments || {});
-
-    if (!attsToAdd.length) {
-      return callback();
-    }
-
-    function checkDone() {
-      if (++attsAdded === attsToAdd.length) {
-        callback();
-      }
-    }
-
-    function add(att) {
-      var digest = docInfo.data._attachments[att].digest;
-      var req = attachAndSeqStore.put({
-        seq: seq,
-        digestSeq: digest + '::' + seq
-      });
-
-      req.onsuccess = checkDone;
-      req.onerror = function (e) {
-        // this callback is for a constaint error, which we ignore
-        // because this docid/rev has already been associated with
-        // the digest (e.g. when new_edits == false)
-        e.preventDefault(); // avoid transaction abort
-        e.stopPropagation(); // avoid transaction onerror
-        checkDone();
-      };
-    }
-    for (var i = 0; i < attsToAdd.length; i++) {
-      add(attsToAdd[i]); // do in parallel
-    }
-  }
-
-  function saveAttachment(digest, data, callback) {
-
-
-    var getKeyReq = attachStore.count(digest);
-    getKeyReq.onsuccess = function(e) {
-      var count = e.target.result;
-      if (count) {
-        return callback(); // already exists
-      }
-      var newAtt = {
-        digest: digest,
-        body: data
-      };
-      var putReq = attachStore.put(newAtt);
-      putReq.onsuccess = callback;
-    };
-  }
-}
-
-module.exports = idbBulkDocs;
-},{"../../deps/docs/isLocalId":72,"../../deps/docs/preprocessAttachments":76,"../../deps/docs/processDocs":77,"../../deps/errors":81,"../../utils":112,"./constants":40,"./utils":42}],40:[function(require,module,exports){
-'use strict';
-
-// IndexedDB requires a versioned database structure, so we use the
-// version here to manage migrations.
-exports.ADAPTER_VERSION = 5;
-
-// The object stores created for each database
-// DOC_STORE stores the document meta data, its revision history and state
-// Keyed by document id
-exports. DOC_STORE = 'document-store';
-// BY_SEQ_STORE stores a particular version of a document, keyed by its
-// sequence id
-exports.BY_SEQ_STORE = 'by-sequence';
-// Where we store attachments
-exports.ATTACH_STORE = 'attach-store';
-// Where we store many-to-many relations
-// between attachment digests and seqs
-exports.ATTACH_AND_SEQ_STORE = 'attach-seq-store';
-
-// Where we store database-wide meta data in a single record
-// keyed by id: META_STORE
-exports.META_STORE = 'meta-store';
-// Where we store local documents
-exports.LOCAL_STORE = 'local-store';
-// Where we detect blob support
-exports.DETECT_BLOB_SUPPORT_STORE = 'detect-blob-support';
-},{}],41:[function(require,module,exports){
-(function (process){
-'use strict';
-
-var utils = require('../../utils');
-var merge = require('../../merge');
-var isDeleted = require('../../deps/docs/isDeleted');
-var isLocalId = require('../../deps/docs/isLocalId');
-var errors = require('../../deps/errors');
-var idbUtils = require('./utils');
-var idbConstants = require('./constants');
-var idbBulkDocs = require('./bulkDocs');
-var idbAllDocs = require('./allDocs');
-var checkBlobSupport = require('./blobSupport');
-var hasLocalStorage = require('../../deps/env/hasLocalStorage');
-
-var ADAPTER_VERSION = idbConstants.ADAPTER_VERSION;
-var ATTACH_AND_SEQ_STORE = idbConstants.ATTACH_AND_SEQ_STORE;
-var ATTACH_STORE = idbConstants.ATTACH_STORE;
-var BY_SEQ_STORE = idbConstants.BY_SEQ_STORE;
-var DETECT_BLOB_SUPPORT_STORE = idbConstants.DETECT_BLOB_SUPPORT_STORE;
-var DOC_STORE = idbConstants.DOC_STORE;
-var LOCAL_STORE = idbConstants.LOCAL_STORE;
-var META_STORE = idbConstants.META_STORE;
-
-var applyNext = idbUtils.applyNext;
-var compactRevs = idbUtils.compactRevs;
-var decodeDoc = idbUtils.decodeDoc;
-var decodeMetadata = idbUtils.decodeMetadata;
-var encodeMetadata = idbUtils.encodeMetadata;
-var fetchAttachmentsIfNecessary = idbUtils.fetchAttachmentsIfNecessary;
-var idbError = idbUtils.idbError;
-var postProcessAttachments = idbUtils.postProcessAttachments;
-var readBlobData = idbUtils.readBlobData;
-var taskQueue = idbUtils.taskQueue;
-var openTransactionSafely = idbUtils.openTransactionSafely;
-
-var cachedDBs = {};
-var blobSupportPromise;
-
-function IdbPouch(opts, callback) {
-  var api = this;
-
-  taskQueue.queue.push({
-    action: function (thisCallback) {
-      init(api, opts, thisCallback);
-    },
-    callback: callback
-  });
-  applyNext();
-}
-
-function init(api, opts, callback) {
-
-  var dbName = opts.name;
-
-  var idb = null;
-  api._meta = null;
-
-  // called when creating a fresh new database
-  function createSchema(db) {
-    var docStore = db.createObjectStore(DOC_STORE, {keyPath : 'id'});
-    db.createObjectStore(BY_SEQ_STORE, {autoIncrement: true})
-      .createIndex('_doc_id_rev', '_doc_id_rev', {unique: true});
-    db.createObjectStore(ATTACH_STORE, {keyPath: 'digest'});
-    db.createObjectStore(META_STORE, {keyPath: 'id', autoIncrement: false});
-    db.createObjectStore(DETECT_BLOB_SUPPORT_STORE);
-
-    // added in v2
-    docStore.createIndex('deletedOrLocal', 'deletedOrLocal', {unique : false});
-
-    // added in v3
-    db.createObjectStore(LOCAL_STORE, {keyPath: '_id'});
-
-    // added in v4
-    var attAndSeqStore = db.createObjectStore(ATTACH_AND_SEQ_STORE,
-      {autoIncrement: true});
-    attAndSeqStore.createIndex('seq', 'seq');
-    attAndSeqStore.createIndex('digestSeq', 'digestSeq', {unique: true});
-  }
-
-  // migration to version 2
-  // unfortunately "deletedOrLocal" is a misnomer now that we no longer
-  // store local docs in the main doc-store, but whaddyagonnado
-  function addDeletedOrLocalIndex(txn, callback) {
-    var docStore = txn.objectStore(DOC_STORE);
-    docStore.createIndex('deletedOrLocal', 'deletedOrLocal', {unique : false});
-
-    docStore.openCursor().onsuccess = function (event) {
-      var cursor = event.target.result;
-      if (cursor) {
-        var metadata = cursor.value;
-        var deleted = isDeleted(metadata);
-        metadata.deletedOrLocal = deleted ? "1" : "0";
-        docStore.put(metadata);
-        cursor.continue();
-      } else {
-        callback();
-      }
-    };
-  }
-
-  // migration to version 3 (part 1)
-  function createLocalStoreSchema(db) {
-    db.createObjectStore(LOCAL_STORE, {keyPath: '_id'})
-      .createIndex('_doc_id_rev', '_doc_id_rev', {unique: true});
-  }
-
-  // migration to version 3 (part 2)
-  function migrateLocalStore(txn, cb) {
-    var localStore = txn.objectStore(LOCAL_STORE);
-    var docStore = txn.objectStore(DOC_STORE);
-    var seqStore = txn.objectStore(BY_SEQ_STORE);
-
-    var cursor = docStore.openCursor();
-    cursor.onsuccess = function (event) {
-      var cursor = event.target.result;
-      if (cursor) {
-        var metadata = cursor.value;
-        var docId = metadata.id;
-        var local = isLocalId(docId);
-        var rev = merge.winningRev(metadata);
-        if (local) {
-          var docIdRev = docId + "::" + rev;
-          // remove all seq entries
-          // associated with this docId
-          var start = docId + "::";
-          var end = docId + "::~";
-          var index = seqStore.index('_doc_id_rev');
-          var range = IDBKeyRange.bound(start, end, false, false);
-          var seqCursor = index.openCursor(range);
-          seqCursor.onsuccess = function (e) {
-            seqCursor = e.target.result;
-            if (!seqCursor) {
-              // done
-              docStore.delete(cursor.primaryKey);
-              cursor.continue();
-            } else {
-              var data = seqCursor.value;
-              if (data._doc_id_rev === docIdRev) {
-                localStore.put(data);
-              }
-              seqStore.delete(seqCursor.primaryKey);
-              seqCursor.continue();
-            }
-          };
-        } else {
-          cursor.continue();
-        }
-      } else if (cb) {
-        cb();
-      }
-    };
-  }
-
-  // migration to version 4 (part 1)
-  function addAttachAndSeqStore(db) {
-    var attAndSeqStore = db.createObjectStore(ATTACH_AND_SEQ_STORE,
-      {autoIncrement: true});
-    attAndSeqStore.createIndex('seq', 'seq');
-    attAndSeqStore.createIndex('digestSeq', 'digestSeq', {unique: true});
-  }
-
-  // migration to version 4 (part 2)
-  function migrateAttsAndSeqs(txn, callback) {
-    var seqStore = txn.objectStore(BY_SEQ_STORE);
-    var attStore = txn.objectStore(ATTACH_STORE);
-    var attAndSeqStore = txn.objectStore(ATTACH_AND_SEQ_STORE);
-
-    // need to actually populate the table. this is the expensive part,
-    // so as an optimization, check first that this database even
-    // contains attachments
-    var req = attStore.count();
-    req.onsuccess = function (e) {
-      var count = e.target.result;
-      if (!count) {
-        return callback(); // done
-      }
-
-      seqStore.openCursor().onsuccess = function (e) {
-        var cursor = e.target.result;
-        if (!cursor) {
-          return callback(); // done
-        }
-        var doc = cursor.value;
-        var seq = cursor.primaryKey;
-        var atts = Object.keys(doc._attachments || {});
-        var digestMap = {};
-        for (var j = 0; j < atts.length; j++) {
-          var att = doc._attachments[atts[j]];
-          digestMap[att.digest] = true; // uniq digests, just in case
-        }
-        var digests = Object.keys(digestMap);
-        for (j = 0; j < digests.length; j++) {
-          var digest = digests[j];
-          attAndSeqStore.put({
-            seq: seq,
-            digestSeq: digest + '::' + seq
-          });
-        }
-        cursor.continue();
-      };
-    };
-  }
-
-  // migration to version 5
-  // Instead of relying on on-the-fly migration of metadata,
-  // this brings the doc-store to its modern form:
-  // - metadata.winningrev
-  // - metadata.seq
-  // - stringify the metadata when storing it
-  function migrateMetadata(txn) {
-
-    function decodeMetadataCompat(storedObject) {
-      if (!storedObject.data) {
-        // old format, when we didn't store it stringified
-        storedObject.deleted = storedObject.deletedOrLocal === '1';
-        return storedObject;
-      }
-      return decodeMetadata(storedObject);
-    }
-
-    // ensure that every metadata has a winningRev and seq,
-    // which was previously created on-the-fly but better to migrate
-    var bySeqStore = txn.objectStore(BY_SEQ_STORE);
-    var docStore = txn.objectStore(DOC_STORE);
-    var cursor = docStore.openCursor();
-    cursor.onsuccess = function (e) {
-      var cursor = e.target.result;
-      if (!cursor) {
-        return; // done
-      }
-      var metadata = decodeMetadataCompat(cursor.value);
-
-      metadata.winningRev = metadata.winningRev || merge.winningRev(metadata);
-
-      function fetchMetadataSeq() {
-        // metadata.seq was added post-3.2.0, so if it's missing,
-        // we need to fetch it manually
-        var start = metadata.id + '::';
-        var end = metadata.id + '::\uffff';
-        var req = bySeqStore.index('_doc_id_rev').openCursor(
-          IDBKeyRange.bound(start, end));
-
-        var metadataSeq = 0;
-        req.onsuccess = function (e) {
-          var cursor = e.target.result;
-          if (!cursor) {
-            metadata.seq = metadataSeq;
-            return onGetMetadataSeq();
-          }
-          var seq = cursor.primaryKey;
-          if (seq > metadataSeq) {
-            metadataSeq = seq;
-          }
-          cursor.continue();
-        };
-      }
-
-      function onGetMetadataSeq() {
-        var metadataToStore = encodeMetadata(metadata,
-          metadata.winningRev, metadata.deleted);
-
-        var req = docStore.put(metadataToStore);
-        req.onsuccess = function () {
-          cursor.continue();
-        };
-      }
-
-      if (metadata.seq) {
-        return onGetMetadataSeq();
-      }
-
-      fetchMetadataSeq();
-    };
-
-  }
-
-  api.type = function () {
-    return 'idb';
-  };
-
-  api._id = utils.toPromise(function (callback) {
-    callback(null, api._meta.instanceId);
-  });
-
-  api._bulkDocs = function idb_bulkDocs(req, opts, callback) {
-    idbBulkDocs(req, opts, api, idb, IdbPouch.Changes, callback);
-  };
-
-  // First we look up the metadata in the ids database, then we fetch the
-  // current revision(s) from the by sequence store
-  api._get = function idb_get(id, opts, callback) {
-    var doc;
-    var metadata;
-    var err;
-    var txn = opts.ctx;
-    if (!txn) {
-      var txnResult = openTransactionSafely(idb,
-        [DOC_STORE, BY_SEQ_STORE, ATTACH_STORE], 'readonly');
-      if (txnResult.error) {
-        return callback(txnResult.error);
-      }
-      txn = txnResult.txn;
-    }
-
-    function finish() {
-      callback(err, {doc: doc, metadata: metadata, ctx: txn});
-    }
-
-    txn.objectStore(DOC_STORE).get(id).onsuccess = function (e) {
-      metadata = decodeMetadata(e.target.result);
-      // we can determine the result here if:
-      // 1. there is no such document
-      // 2. the document is deleted and we don't ask about specific rev
-      // When we ask with opts.rev we expect the answer to be either
-      // doc (possibly with _deleted=true) or missing error
-      if (!metadata) {
-        err = errors.error(errors.MISSING_DOC, 'missing');
-        return finish();
-      }
-      if (isDeleted(metadata) && !opts.rev) {
-        err = errors.error(errors.MISSING_DOC, "deleted");
-        return finish();
-      }
-      var objectStore = txn.objectStore(BY_SEQ_STORE);
-
-      var rev = opts.rev || metadata.winningRev;
-      var key = metadata.id + '::' + rev;
-
-      objectStore.index('_doc_id_rev').get(key).onsuccess = function (e) {
-        doc = e.target.result;
-        if (doc) {
-          doc = decodeDoc(doc);
-        }
-        if (!doc) {
-          err = errors.error(errors.MISSING_DOC, 'missing');
-          return finish();
-        }
-        finish();
-      };
-    };
-  };
-
-  api._getAttachment = function (attachment, opts, callback) {
-    var txn;
-    if (opts.ctx) {
-      txn = opts.ctx;
-    } else {
-      var txnResult = openTransactionSafely(idb,
-        [DOC_STORE, BY_SEQ_STORE, ATTACH_STORE], 'readonly');
-      if (txnResult.error) {
-        return callback(txnResult.error);
-      }
-      txn = txnResult.txn;
-    }
-    var digest = attachment.digest;
-    var type = attachment.content_type;
-
-    txn.objectStore(ATTACH_STORE).get(digest).onsuccess = function (e) {
-      var body = e.target.result.body;
-      readBlobData(body, type, opts.binary, function (blobData) {
-        callback(null, blobData);
-      });
-    };
-  };
-
-  api._info = function idb_info(callback) {
-
-    if (idb === null || !cachedDBs[dbName]) {
-      var error = new Error('db isn\'t open');
-      error.id = 'idbNull';
-      return callback(error);
-    }
-    var updateSeq;
-    var docCount;
-
-    var txnResult = openTransactionSafely(idb, [BY_SEQ_STORE], 'readonly');
-    if (txnResult.error) {
-      return callback(txnResult.error);
-    }
-    var txn = txnResult.txn;
-    var cursor = txn.objectStore(BY_SEQ_STORE).openCursor(null, 'prev');
-    cursor.onsuccess = function (event) {
-      var cursor = event.target.result;
-      updateSeq = cursor ? cursor.key : 0;
-      // count within the same txn for consistency
-      docCount = api._meta.docCount;
-    };
-
-    txn.oncomplete = function () {
-      callback(null, {
-        doc_count: docCount,
-        update_seq: updateSeq,
-        // for debugging
-        idb_attachment_format: (api._meta.blobSupport ? 'binary' : 'base64')
-      });
-    };
-  };
-
-  api._allDocs = function idb_allDocs(opts, callback) {
-    idbAllDocs(opts, api, idb, callback);
-  };
-
-  api._changes = function (opts) {
-    opts = utils.clone(opts);
-
-    if (opts.continuous) {
-      var id = dbName + ':' + utils.uuid();
-      IdbPouch.Changes.addListener(dbName, id, api, opts);
-      IdbPouch.Changes.notify(dbName);
-      return {
-        cancel: function () {
-          IdbPouch.Changes.removeListener(dbName, id);
-        }
-      };
-    }
-
-    var docIds = opts.doc_ids && new utils.Set(opts.doc_ids);
-    var descending = opts.descending ? 'prev' : null;
-
-    opts.since = opts.since || 0;
-    var lastSeq = opts.since;
-
-    var limit = 'limit' in opts ? opts.limit : -1;
-    if (limit === 0) {
-      limit = 1; // per CouchDB _changes spec
-    }
-    var returnDocs;
-    if ('returnDocs' in opts) {
-      returnDocs = opts.returnDocs;
-    } else {
-      returnDocs = true;
-    }
-
-    var results = [];
-    var numResults = 0;
-    var filter = utils.filterChange(opts);
-    var docIdsToMetadata = new utils.Map();
-
-    var txn;
-    var bySeqStore;
-    var docStore;
-
-    function onGetCursor(cursor) {
-
-      var doc = decodeDoc(cursor.value);
-      var seq = cursor.key;
-
-      if (docIds && !docIds.has(doc._id)) {
-        return cursor.continue();
-      }
-
-      var metadata;
-
-      function onGetMetadata() {
-        if (metadata.seq !== seq) {
-          // some other seq is later
-          return cursor.continue();
-        }
-
-        lastSeq = seq;
-
-        if (metadata.winningRev === doc._rev) {
-          return onGetWinningDoc(doc);
-        }
-
-        fetchWinningDoc();
-      }
-
-      function fetchWinningDoc() {
-        var docIdRev = doc._id + '::' + metadata.winningRev;
-        var req = bySeqStore.index('_doc_id_rev').openCursor(
-          IDBKeyRange.bound(docIdRev, docIdRev + '\uffff'));
-        req.onsuccess = function (e) {
-          onGetWinningDoc(decodeDoc(e.target.result.value));
-        };
-      }
-
-      function onGetWinningDoc(winningDoc) {
-
-        var change = opts.processChange(winningDoc, metadata, opts);
-        change.seq = metadata.seq;
-        if (filter(change)) {
-          numResults++;
-          if (returnDocs) {
-            results.push(change);
-          }
-          // process the attachment immediately
-          // for the benefit of live listeners
-          if (opts.attachments && opts.include_docs) {
-            fetchAttachmentsIfNecessary(winningDoc, opts, txn, function () {
-              postProcessAttachments([change], opts.binary).then(function () {
-                opts.onChange(change);
-              });
-            });
-          } else {
-            opts.onChange(change);
-          }
-        }
-        if (numResults !== limit) {
-          cursor.continue();
-        }
-      }
-
-      metadata = docIdsToMetadata.get(doc._id);
-      if (metadata) { // cached
-        return onGetMetadata();
-      }
-      // metadata not cached, have to go fetch it
-      docStore.get(doc._id).onsuccess = function (event) {
-        metadata = decodeMetadata(event.target.result);
-        docIdsToMetadata.set(doc._id, metadata);
-        onGetMetadata();
-      };
-    }
-
-    function onsuccess(event) {
-      var cursor = event.target.result;
-
-      if (!cursor) {
-        return;
-      }
-      onGetCursor(cursor);
-    }
-
-    function fetchChanges() {
-      var objectStores = [DOC_STORE, BY_SEQ_STORE];
-      if (opts.attachments) {
-        objectStores.push(ATTACH_STORE);
-      }
-      var txnResult = openTransactionSafely(idb, objectStores, 'readonly');
-      if (txnResult.error) {
-        return opts.complete(txnResult.error);
-      }
-      txn = txnResult.txn;
-      txn.onerror = idbError(opts.complete);
-      txn.oncomplete = onTxnComplete;
-
-      bySeqStore = txn.objectStore(BY_SEQ_STORE);
-      docStore = txn.objectStore(DOC_STORE);
-
-      var req;
-
-      if (descending) {
-        req = bySeqStore.openCursor(
-
-          null, descending);
-      } else {
-        req = bySeqStore.openCursor(
-          IDBKeyRange.lowerBound(opts.since, true));
-      }
-
-      req.onsuccess = onsuccess;
-    }
-
-    fetchChanges();
-
-    function onTxnComplete() {
-
-      function finish() {
-        opts.complete(null, {
-          results: results,
-          last_seq: lastSeq
-        });
-      }
-
-      if (!opts.continuous && opts.attachments) {
-        // cannot guarantee that postProcessing was already done,
-        // so do it again
-        postProcessAttachments(results).then(finish);
-      } else {
-        finish();
-      }
-    }
-  };
-
-  api._close = function (callback) {
-    if (idb === null) {
-      return callback(errors.error(errors.NOT_OPEN));
-    }
-
-    // https://developer.mozilla.org/en-US/docs/IndexedDB/IDBDatabase#close
-    // "Returns immediately and closes the connection in a separate thread..."
-    idb.close();
-    delete cachedDBs[dbName];
-    idb = null;
-    callback();
-  };
-
-  api._getRevisionTree = function (docId, callback) {
-    var txnResult = openTransactionSafely(idb, [DOC_STORE], 'readonly');
-    if (txnResult.error) {
-      return callback(txnResult.error);
-    }
-    var txn = txnResult.txn;
-    var req = txn.objectStore(DOC_STORE).get(docId);
-    req.onsuccess = function (event) {
-      var doc = decodeMetadata(event.target.result);
-      if (!doc) {
-        callback(errors.error(errors.MISSING_DOC));
-      } else {
-        callback(null, doc.rev_tree);
-      }
-    };
-  };
-
-  // This function removes revisions of document docId
-  // which are listed in revs and sets this document
-  // revision to to rev_tree
-  api._doCompaction = function (docId, revs, callback) {
-    var stores = [
-      DOC_STORE,
-      BY_SEQ_STORE,
-      ATTACH_STORE,
-      ATTACH_AND_SEQ_STORE
-    ];
-    var txnResult = openTransactionSafely(idb, stores, 'readwrite');
-    if (txnResult.error) {
-      return callback(txnResult.error);
-    }
-    var txn = txnResult.txn;
-
-    var docStore = txn.objectStore(DOC_STORE);
-
-    docStore.get(docId).onsuccess = function (event) {
-      var metadata = decodeMetadata(event.target.result);
-      merge.traverseRevTree(metadata.rev_tree, function (isLeaf, pos,
-                                                         revHash, ctx, opts) {
-        var rev = pos + '-' + revHash;
-        if (revs.indexOf(rev) !== -1) {
-          opts.status = 'missing';
-        }
-      });
-      compactRevs(revs, docId, txn);
-      var winningRev = metadata.winningRev;
-      var deleted = metadata.deleted;
-      txn.objectStore(DOC_STORE).put(
-        encodeMetadata(metadata, winningRev, deleted));
-    };
-    txn.onerror = idbError(callback);
-    txn.oncomplete = function () {
-      callback();
-    };
-  };
-
-
-  api._getLocal = function (id, callback) {
-    var txnResult = openTransactionSafely(idb, [LOCAL_STORE], 'readonly');
-    if (txnResult.error) {
-      return callback(txnResult.error);
-    }
-    var tx = txnResult.txn;
-    var req = tx.objectStore(LOCAL_STORE).get(id);
-
-    req.onerror = idbError(callback);
-    req.onsuccess = function (e) {
-      var doc = e.target.result;
-      if (!doc) {
-        callback(errors.error(errors.MISSING_DOC));
-      } else {
-        delete doc['_doc_id_rev']; // for backwards compat
-        callback(null, doc);
-      }
-    };
-  };
-
-  api._putLocal = function (doc, opts, callback) {
-    if (typeof opts === 'function') {
-      callback = opts;
-      opts = {};
-    }
-    delete doc._revisions; // ignore this, trust the rev
-    var oldRev = doc._rev;
-    var id = doc._id;
-    if (!oldRev) {
-      doc._rev = '0-1';
-    } else {
-      doc._rev = '0-' + (parseInt(oldRev.split('-')[1], 10) + 1);
-    }
-
-    var tx = opts.ctx;
-    var ret;
-    if (!tx) {
-      var txnResult = openTransactionSafely(idb, [LOCAL_STORE], 'readwrite');
-      if (txnResult.error) {
-        return callback(txnResult.error);
-      }
-      tx = txnResult.txn;
-      tx.onerror = idbError(callback);
-      tx.oncomplete = function () {
-        if (ret) {
-          callback(null, ret);
-        }
-      };
-    }
-
-    var oStore = tx.objectStore(LOCAL_STORE);
-    var req;
-    if (oldRev) {
-      req = oStore.get(id);
-      req.onsuccess = function (e) {
-        var oldDoc = e.target.result;
-        if (!oldDoc || oldDoc._rev !== oldRev) {
-          callback(errors.error(errors.REV_CONFLICT));
-        } else { // update
-          var req = oStore.put(doc);
-          req.onsuccess = function () {
-            ret = {ok: true, id: doc._id, rev: doc._rev};
-            if (opts.ctx) { // return immediately
-              callback(null, ret);
-            }
-          };
-        }
-      };
-    } else { // new doc
-      req = oStore.add(doc);
-      req.onerror = function (e) {
-        // constraint error, already exists
-        callback(errors.error(errors.REV_CONFLICT));
-        e.preventDefault(); // avoid transaction abort
-        e.stopPropagation(); // avoid transaction onerror
-      };
-      req.onsuccess = function () {
-        ret = {ok: true, id: doc._id, rev: doc._rev};
-        if (opts.ctx) { // return immediately
-          callback(null, ret);
-        }
-      };
-    }
-  };
-
-  api._removeLocal = function (doc, opts, callback) {
-    if (typeof opts === 'function') {
-      callback = opts;
-      opts = {};
-    }
-    var tx = opts.ctx;
-    if (!tx) {
-      var txnResult = openTransactionSafely(idb, [LOCAL_STORE], 'readwrite');
-      if (txnResult.error) {
-        return callback(txnResult.error);
-      }
-      tx = txnResult.txn;
-      tx.oncomplete = function () {
-        if (ret) {
-          callback(null, ret);
-        }
-      };
-    }
-    var ret;
-    var id = doc._id;
-    var oStore = tx.objectStore(LOCAL_STORE);
-    var req = oStore.get(id);
-
-    req.onerror = idbError(callback);
-    req.onsuccess = function (e) {
-      var oldDoc = e.target.result;
-      if (!oldDoc || oldDoc._rev !== doc._rev) {
-        callback(errors.error(errors.MISSING_DOC));
-      } else {
-        oStore.delete(id);
-        ret = {ok: true, id: id, rev: '0-0'};
-        if (opts.ctx) { // return immediately
-          callback(null, ret);
-        }
-      }
-    };
-  };
-
-  api._destroy = function (callback) {
-    IdbPouch.Changes.removeAllListeners(dbName);
-
-    //Close open request for "dbName" database to fix ie delay.
-    if (IdbPouch.openReqList[dbName] && IdbPouch.openReqList[dbName].result) {
-      IdbPouch.openReqList[dbName].result.close();
-      delete cachedDBs[dbName];
-    }
-    var req = indexedDB.deleteDatabase(dbName);
-
-    req.onsuccess = function () {
-      //Remove open request from the list.
-      if (IdbPouch.openReqList[dbName]) {
-        IdbPouch.openReqList[dbName] = null;
-      }
-      if (hasLocalStorage() && (dbName in localStorage)) {
-        delete localStorage[dbName];
-      }
-      callback(null, { 'ok': true });
-    };
-
-    req.onerror = idbError(callback);
-  };
-
-  var cached = cachedDBs[dbName];
-
-  if (cached) {
-    idb = cached.idb;
-    api._meta = cached.global;
-    process.nextTick(function () {
-      callback(null, api);
-    });
-    return;
-  }
-
-  var req = indexedDB.open(dbName, ADAPTER_VERSION);
-
-  if (!('openReqList' in IdbPouch)) {
-    IdbPouch.openReqList = {};
-  }
-  IdbPouch.openReqList[dbName] = req;
-
-  req.onupgradeneeded = function (e) {
-    var db = e.target.result;
-    if (e.oldVersion < 1) {
-      return createSchema(db); // new db, initial schema
-    }
-    // do migrations
-
-    var txn = e.currentTarget.transaction;
-    // these migrations have to be done in this function, before
-    // control is returned to the event loop, because IndexedDB
-
-    if (e.oldVersion < 3) {
-      createLocalStoreSchema(db); // v2 -> v3
-    }
-    if (e.oldVersion < 4) {
-      addAttachAndSeqStore(db); // v3 -> v4
-    }
-
-    var migrations = [
-      addDeletedOrLocalIndex, // v1 -> v2
-      migrateLocalStore,      // v2 -> v3
-      migrateAttsAndSeqs,     // v3 -> v4
-      migrateMetadata         // v4 -> v5
-    ];
-
-    var i = e.oldVersion;
-
-    function next() {
-      var migration = migrations[i - 1];
-      i++;
-      if (migration) {
-        migration(txn, next);
-      }
-    }
-
-    next();
-  };
-
-  req.onsuccess = function (e) {
-
-    idb = e.target.result;
-
-    idb.onversionchange = function () {
-      idb.close();
-      delete cachedDBs[dbName];
-    };
-    idb.onabort = function () {
-      idb.close();
-      delete cachedDBs[dbName];
-    };
-
-    var txn = idb.transaction([
-        META_STORE,
-        DETECT_BLOB_SUPPORT_STORE,
-        DOC_STORE
-      ], 'readwrite');
-
-    var req = txn.objectStore(META_STORE).get(META_STORE);
-
-    var blobSupport = null;
-    var docCount = null;
-    var instanceId = null;
-
-    req.onsuccess = function (e) {
-
-      var checkSetupComplete = function () {
-        if (blobSupport === null || docCount === null ||
-            instanceId === null) {
-          return;
-        } else {
-          api._meta = {
-            name: dbName,
-            instanceId: instanceId,
-            blobSupport: blobSupport,
-            docCount: docCount
-          };
-
-          cachedDBs[dbName] = {
-            idb: idb,
-            global: api._meta
-          };
-          callback(null, api);
-        }
-      };
-
-      //
-      // fetch/store the id
-      //
-
-      var meta = e.target.result || {id: META_STORE};
-      if (dbName  + '_id' in meta) {
-        instanceId = meta[dbName + '_id'];
-        checkSetupComplete();
-      } else {
-        instanceId = utils.uuid();
-        meta[dbName + '_id'] = instanceId;
-        txn.objectStore(META_STORE).put(meta).onsuccess = function () {
-          checkSetupComplete();
-        };
-      }
-
-      //
-      // check blob support
-      //
-
-      if (!blobSupportPromise) {
-        // make sure blob support is only checked once
-        blobSupportPromise = checkBlobSupport(txn, idb);
-      }
-
-      blobSupportPromise.then(function (val) {
-        blobSupport = val;
-        checkSetupComplete();
-      });
-
-      //
-      // count docs
-      //
-
-      var index = txn.objectStore(DOC_STORE).index('deletedOrLocal');
-      index.count(IDBKeyRange.only('0')).onsuccess = function (e) {
-        docCount = e.target.result;
-        checkSetupComplete();
-      };
-
-    };
-  };
-
-  req.onerror = function(e) {
-    var msg = 'Failed to open indexedDB, are you in private browsing mode?';
-    console.error(msg);
-    callback(errors.error(errors.IDB_ERROR, msg));
-  };
-
-}
-
-IdbPouch.valid = function () {
-  // Issue #2533, we finally gave up on doing bug
-  // detection instead of browser sniffing. Safari brought us
-  // to our knees.
-  var isSafari = typeof openDatabase !== 'undefined' &&
-    /(Safari|iPhone|iPad|iPod)/.test(navigator.userAgent) &&
-    !/Chrome/.test(navigator.userAgent) &&
-    !/BlackBerry/.test(navigator.platform);
-
-  // some outdated implementations of IDB that appear on Samsung
-  // and HTC Android devices <4.4 are missing IDBKeyRange
-  return !isSafari && typeof indexedDB !== 'undefined' &&
-    typeof IDBKeyRange !== 'undefined';
-};
-
-IdbPouch.Changes = new utils.Changes();
-
-module.exports = IdbPouch;
-
-}).call(this,require('_process'))
-},{"../../deps/docs/isDeleted":71,"../../deps/docs/isLocalId":72,"../../deps/env/hasLocalStorage":79,"../../deps/errors":81,"../../merge":101,"../../utils":112,"./allDocs":37,"./blobSupport":38,"./bulkDocs":39,"./constants":40,"./utils":42,"_process":135}],42:[function(require,module,exports){
-(function (process){
-'use strict';
-
-var errors = require('../../deps/errors');
-var utils = require('../../utils');
-var base64 = require('../../deps/binary/base64');
-var btoa = base64.btoa;
-var constants = require('./constants');
-var readAsBinaryString = require('../../deps/binary/readAsBinaryString');
-var b64StringToBlob = require('../../deps/binary/base64StringToBlobOrBuffer');
-var createBlob = require('../../deps/binary/blob');
-
-function tryCode(fun, that, args) {
-  try {
-    fun.apply(that, args);
-  } catch (err) { // shouldn't happen
-    if (typeof PouchDB !== 'undefined') {
-      PouchDB.emit('error', err);
-    }
-  }
-}
-
-exports.taskQueue = {
-  running: false,
-  queue: []
-};
-
-exports.applyNext = function () {
-  if (exports.taskQueue.running || !exports.taskQueue.queue.length) {
-    return;
-  }
-  exports.taskQueue.running = true;
-  var item = exports.taskQueue.queue.shift();
-  item.action(function (err, res) {
-    tryCode(item.callback, this, [err, res]);
-    exports.taskQueue.running = false;
-    process.nextTick(exports.applyNext);
-  });
-};
-
-exports.idbError = function (callback) {
-  return function (event) {
-    var message = (event.target && event.target.error &&
-      event.target.error.name) || event.target;
-    callback(errors.error(errors.IDB_ERROR, message, event.type));
-  };
-};
-
-// Unfortunately, the metadata has to be stringified
-// when it is put into the database, because otherwise
-// IndexedDB can throw errors for deeply-nested objects.
-// Originally we just used JSON.parse/JSON.stringify; now
-// we use this custom vuvuzela library that avoids recursion.
-// If we could do it all over again, we'd probably use a
-// format for the revision trees other than JSON.
-exports.encodeMetadata = function (metadata, winningRev, deleted) {
-  return {
-    data: utils.safeJsonStringify(metadata),
-    winningRev: winningRev,
-    deletedOrLocal: deleted ? '1' : '0',
-    seq: metadata.seq, // highest seq for this doc
-    id: metadata.id
-  };
-};
-
-exports.decodeMetadata = function (storedObject) {
-  if (!storedObject) {
-    return null;
-  }
-  var metadata = utils.safeJsonParse(storedObject.data);
-  metadata.winningRev = storedObject.winningRev;
-  metadata.deleted = storedObject.deletedOrLocal === '1';
-  metadata.seq = storedObject.seq;
-  return metadata;
-};
-
-// read the doc back out from the database. we don't store the
-// _id or _rev because we already have _doc_id_rev.
-exports.decodeDoc = function (doc) {
-  if (!doc) {
-    return doc;
-  }
-  var idx = doc._doc_id_rev.lastIndexOf(':');
-  doc._id = doc._doc_id_rev.substring(0, idx - 1);
-  doc._rev = doc._doc_id_rev.substring(idx + 1);
-  delete doc._doc_id_rev;
-  return doc;
-};
-
-// Read a blob from the database, encoding as necessary
-// and translating from base64 if the IDB doesn't support
-// native Blobs
-exports.readBlobData = function (body, type, asBlob, callback) {
-  if (asBlob) {
-    if (!body) {
-      callback(createBlob([''], {type: type}));
-    } else if (typeof body !== 'string') { // we have blob support
-      callback(body);
-    } else { // no blob support
-      callback(b64StringToBlob(body, type));
-    }
-  } else { // as base64 string
-    if (!body) {
-      callback('');
-    } else if (typeof body !== 'string') { // we have blob support
-      readAsBinaryString(body, function (binary) {
-        callback(btoa(binary));
-      });
-    } else { // no blob support
-      callback(body);
-    }
-  }
-};
-
-exports.fetchAttachmentsIfNecessary = function (doc, opts, txn, cb) {
-  var attachments = Object.keys(doc._attachments || {});
-  if (!attachments.length) {
-    return cb && cb();
-  }
-  var numDone = 0;
-
-  function checkDone() {
-    if (++numDone === attachments.length && cb) {
-      cb();
-    }
-  }
-
-  function fetchAttachment(doc, att) {
-    var attObj = doc._attachments[att];
-    var digest = attObj.digest;
-    var req = txn.objectStore(constants.ATTACH_STORE).get(digest);
-    req.onsuccess = function (e) {
-      attObj.body = e.target.result.body;
-      checkDone();
-    };
-  }
-
-  attachments.forEach(function (att) {
-    if (opts.attachments && opts.include_docs) {
-      fetchAttachment(doc, att);
-    } else {
-      doc._attachments[att].stub = true;
-      checkDone();
-    }
-  });
-};
-
-// IDB-specific postprocessing necessary because
-// we don't know whether we stored a true Blob or
-// a base64-encoded string, and if it's a Blob it
-// needs to be read outside of the transaction context
-exports.postProcessAttachments = function (results, asBlob) {
-  return utils.Promise.all(results.map(function (row) {
-    if (row.doc && row.doc._attachments) {
-      var attNames = Object.keys(row.doc._attachments);
-      return utils.Promise.all(attNames.map(function (att) {
-        var attObj = row.doc._attachments[att];
-        if (!('body' in attObj)) { // already processed
-          return;
-        }
-        var body = attObj.body;
-        var type = attObj.content_type;
-        return new utils.Promise(function (resolve) {
-          exports.readBlobData(body, type, asBlob, function (data) {
-            row.doc._attachments[att] = utils.extend(
-              utils.pick(attObj, ['digest', 'content_type']),
-              {data: data}
-            );
-            resolve();
-          });
-        });
-      }));
-    }
-  }));
-};
-
-exports.compactRevs = function (revs, docId, txn) {
-
-  var possiblyOrphanedDigests = [];
-  var seqStore = txn.objectStore(constants.BY_SEQ_STORE);
-  var attStore = txn.objectStore(constants.ATTACH_STORE);
-  var attAndSeqStore = txn.objectStore(constants.ATTACH_AND_SEQ_STORE);
-  var count = revs.length;
-
-  function checkDone() {
-    count--;
-    if (!count) { // done processing all revs
-      deleteOrphanedAttachments();
-    }
-  }
-
-  function deleteOrphanedAttachments() {
-    if (!possiblyOrphanedDigests.length) {
-      return;
-    }
-    possiblyOrphanedDigests.forEach(function (digest) {
-      var countReq = attAndSeqStore.index('digestSeq').count(
-        IDBKeyRange.bound(
-          digest + '::', digest + '::\uffff', false, false));
-      countReq.onsuccess = function (e) {
-        var count = e.target.result;
-        if (!count) {
-          // orphaned
-          attStore.delete(digest);
-        }
-      };
-    });
-  }
-
-  revs.forEach(function (rev) {
-    var index = seqStore.index('_doc_id_rev');
-    var key = docId + "::" + rev;
-    index.getKey(key).onsuccess = function (e) {
-      var seq = e.target.result;
-      if (typeof seq !== 'number') {
-        return checkDone();
-      }
-      seqStore.delete(seq);
-
-      var cursor = attAndSeqStore.index('seq')
-        .openCursor(IDBKeyRange.only(seq));
-
-      cursor.onsuccess = function (event) {
-        var cursor = event.target.result;
-        if (cursor) {
-          var digest = cursor.value.digestSeq.split('::')[0];
-          possiblyOrphanedDigests.push(digest);
-          attAndSeqStore.delete(cursor.primaryKey);
-          cursor.continue();
-        } else { // done
-          checkDone();
-        }
-      };
-    };
-  });
-};
-
-exports.openTransactionSafely = function (idb, stores, mode) {
-  try {
-    return {
-      txn: idb.transaction(stores, mode)
-    };
-  } catch (err) {
-    return {
-      error: err
-    };
-  }
-};
-}).call(this,require('_process'))
-},{"../../deps/binary/base64":61,"../../deps/binary/base64StringToBlobOrBuffer":62,"../../deps/binary/blob":65,"../../deps/binary/readAsBinaryString":69,"../../deps/errors":81,"../../utils":112,"./constants":40,"_process":135}],43:[function(require,module,exports){
-'use strict';
-
-var utils = require('../../utils');
-var errors = require('../../deps/errors');
-var preprocessAttachments =
-  require('../../deps/docs/preprocessAttachments');
-var isLocalId = require('../../deps/docs/isLocalId');
-var processDocs = require('../../deps/docs/processDocs');
-
-var websqlUtils = require('./utils');
-var websqlConstants = require('./constants');
-
-var DOC_STORE = websqlConstants.DOC_STORE;
-var BY_SEQ_STORE = websqlConstants.BY_SEQ_STORE;
-var ATTACH_STORE = websqlConstants.ATTACH_STORE;
-var ATTACH_AND_SEQ_STORE = websqlConstants.ATTACH_AND_SEQ_STORE;
-
-var select = websqlUtils.select;
-var stringifyDoc = websqlUtils.stringifyDoc;
-var compactRevs = websqlUtils.compactRevs;
-var unknownError = websqlUtils.unknownError;
-
-function websqlBulkDocs(req, opts, api, db, Changes, callback) {
-  var newEdits = opts.new_edits;
-  var userDocs = req.docs;
-
-  // Parse the docs, give them a sequence number for the result
-  var docInfos = userDocs.map(function (doc) {
-    if (doc._id && isLocalId(doc._id)) {
-      return doc;
-    }
-    var newDoc = utils.parseDoc(doc, newEdits);
-    return newDoc;
-  });
-
-  var docInfoErrors = docInfos.filter(function (docInfo) {
-    return docInfo.error;
-  });
-  if (docInfoErrors.length) {
-    return callback(docInfoErrors[0]);
-  }
-
-  var tx;
-  var results = new Array(docInfos.length);
-  var fetchedDocs = new utils.Map();
-
-  var preconditionErrored;
-  function complete() {
-    if (preconditionErrored) {
-      return callback(preconditionErrored);
-    }
-    Changes.notify(api._name);
-    api._docCount = -1; // invalidate
-    callback(null, results);
-  }
-
-  function verifyAttachment(digest, callback) {
-    var sql = 'SELECT count(*) as cnt FROM ' + ATTACH_STORE +
-      ' WHERE digest=?';
-    tx.executeSql(sql, [digest], function (tx, result) {
-      if (result.rows.item(0).cnt === 0) {
-        var err = errors.error(errors.MISSING_STUB,
-          'unknown stub attachment with digest ' +
-          digest);
-        callback(err);
-      } else {
-        callback();
-      }
-    });
-  }
-
-  function verifyAttachments(finish) {
-    var digests = [];
-    docInfos.forEach(function (docInfo) {
-      if (docInfo.data && docInfo.data._attachments) {
-        Object.keys(docInfo.data._attachments).forEach(function (filename) {
-          var att = docInfo.data._attachments[filename];
-          if (att.stub) {
-            digests.push(att.digest);
-          }
-        });
-      }
-    });
-    if (!digests.length) {
-      return finish();
-    }
-    var numDone = 0;
-    var err;
-
-    function checkDone() {
-      if (++numDone === digests.length) {
-        finish(err);
-      }
-    }
-    digests.forEach(function (digest) {
-      verifyAttachment(digest, function (attErr) {
-        if (attErr && !err) {
-          err = attErr;
-        }
-        checkDone();
-      });
-    });
-  }
-
-  function writeDoc(docInfo, winningRev, winningRevIsDeleted, newRevIsDeleted,
-                    isUpdate, delta, resultsIdx, callback) {
-
-    function finish() {
-      var data = docInfo.data;
-      var deletedInt = newRevIsDeleted ? 1 : 0;
-
-      var id = data._id;
-      var rev = data._rev;
-      var json = stringifyDoc(data);
-      var sql = 'INSERT INTO ' + BY_SEQ_STORE +
-        ' (doc_id, rev, json, deleted) VALUES (?, ?, ?, ?);';
-      var sqlArgs = [id, rev, json, deletedInt];
-
-      // map seqs to attachment digests, which
-      // we will need later during compaction
-      function insertAttachmentMappings(seq, callback) {
-        var attsAdded = 0;
-        var attsToAdd = Object.keys(data._attachments || {});
-
-        if (!attsToAdd.length) {
-          return callback();
-        }
-        function checkDone() {
-          if (++attsAdded === attsToAdd.length) {
-            callback();
-          }
-          return false; // ack handling a constraint error
-        }
-        function add(att) {
-          var sql = 'INSERT INTO ' + ATTACH_AND_SEQ_STORE +
-            ' (digest, seq) VALUES (?,?)';
-          var sqlArgs = [data._attachments[att].digest, seq];
-          tx.executeSql(sql, sqlArgs, checkDone, checkDone);
-          // second callback is for a constaint error, which we ignore
-          // because this docid/rev has already been associated with
-          // the digest (e.g. when new_edits == false)
-        }
-        for (var i = 0; i < attsToAdd.length; i++) {
-          add(attsToAdd[i]); // do in parallel
-        }
-      }
-
-      tx.executeSql(sql, sqlArgs, function (tx, result) {
-        var seq = result.insertId;
-        insertAttachmentMappings(seq, function () {
-          dataWritten(tx, seq);
-        });
-      }, function () {
-        // constraint error, recover by updating instead (see #1638)
-        var fetchSql = select('seq', BY_SEQ_STORE, null,
-          'doc_id=? AND rev=?');
-        tx.executeSql(fetchSql, [id, rev], function (tx, res) {
-          var seq = res.rows.item(0).seq;
-          var sql = 'UPDATE ' + BY_SEQ_STORE +
-            ' SET json=?, deleted=? WHERE doc_id=? AND rev=?;';
-          var sqlArgs = [json, deletedInt, id, rev];
-          tx.executeSql(sql, sqlArgs, function (tx) {
-            insertAttachmentMappings(seq, function () {
-              dataWritten(tx, seq);
-            });
-          });
-        });
-        return false; // ack that we've handled the error
-      });
-    }
-
-    function collectResults(attachmentErr) {
-      if (!err) {
-        if (attachmentErr) {
-          err = attachmentErr;
-          callback(err);
-        } else if (recv === attachments.length) {
-          finish();
-        }
-      }
-    }
-
-    var err = null;
-    var recv = 0;
-
-    docInfo.data._id = docInfo.metadata.id;
-    docInfo.data._rev = docInfo.metadata.rev;
-    var attachments = Object.keys(docInfo.data._attachments || {});
-
-
-    if (newRevIsDeleted) {
-      docInfo.data._deleted = true;
-    }
-
-    function attachmentSaved(err) {
-      recv++;
-      collectResults(err);
-    }
-
-    attachments.forEach(function (key) {
-      var att = docInfo.data._attachments[key];
-      if (!att.stub) {
-        var data = att.data;
-        delete att.data;
-        var digest = att.digest;
-        saveAttachment(digest, data, attachmentSaved);
-      } else {
-        recv++;
-        collectResults();
-      }
-    });
-
-    if (!attachments.length) {
-      finish();
-    }
-
-    function autoCompact() {
-      if (!isUpdate || !api.auto_compaction) {
-        return; // nothing to do
-      }
-      var id = docInfo.metadata.id;
-      var revsToDelete = utils.compactTree(docInfo.metadata);
-      compactRevs(revsToDelete, id, tx);
-    }
-
-    function dataWritten(tx, seq) {
-      autoCompact();
-      docInfo.metadata.seq = seq;
-      delete docInfo.metadata.rev;
-
-      var sql = isUpdate ?
-      'UPDATE ' + DOC_STORE +
-      ' SET json=?, max_seq=?, winningseq=' +
-      '(SELECT seq FROM ' + BY_SEQ_STORE +
-      ' WHERE doc_id=' + DOC_STORE + '.id AND rev=?) WHERE id=?'
-        : 'INSERT INTO ' + DOC_STORE +
-      ' (id, winningseq, max_seq, json) VALUES (?,?,?,?);';
-      var metadataStr = utils.safeJsonStringify(docInfo.metadata);
-      var id = docInfo.metadata.id;
-      var params = isUpdate ?
-        [metadataStr, seq, winningRev, id] :
-        [id, seq, seq, metadataStr];
-      tx.executeSql(sql, params, function () {
-        results[resultsIdx] = {
-          ok: true,
-          id: docInfo.metadata.id,
-          rev: winningRev
-        };
-        fetchedDocs.set(id, docInfo.metadata);
-        callback();
-      });
-    }
-  }
-
-  function websqlProcessDocs() {
-    processDocs(docInfos, api, fetchedDocs, tx, results, writeDoc, opts);
-  }
-
-  function fetchExistingDocs(callback) {
-    if (!docInfos.length) {
-      return callback();
-    }
-
-    var numFetched = 0;
-
-    function checkDone() {
-      if (++numFetched === docInfos.length) {
-        callback();
-      }
-    }
-
-    docInfos.forEach(function (docInfo) {
-      if (docInfo._id && isLocalId(docInfo._id)) {
-        return checkDone(); // skip local docs
-      }
-      var id = docInfo.metadata.id;
-      tx.executeSql('SELECT json FROM ' + DOC_STORE +
-      ' WHERE id = ?', [id], function (tx, result) {
-        if (result.rows.length) {
-          var metadata = utils.safeJsonParse(result.rows.item(0).json);
-          fetchedDocs.set(id, metadata);
-        }
-        checkDone();
-      });
-    });
-  }
-
-  function saveAttachment(digest, data, callback) {
-    var sql = 'SELECT digest FROM ' + ATTACH_STORE + ' WHERE digest=?';
-    tx.executeSql(sql, [digest], function (tx, result) {
-      if (result.rows.length) { // attachment already exists
-        return callback();
-      }
-      // we could just insert before selecting and catch the error,
-      // but my hunch is that it's cheaper not to serialize the blob
-      // from JS to C if we don't have to (TODO: confirm this)
-      sql = 'INSERT INTO ' + ATTACH_STORE +
-      ' (digest, body, escaped) VALUES (?,?,1)';
-      tx.executeSql(sql, [digest, websqlUtils.escapeBlob(data)], function () {
-        callback();
-      }, function () {
-        // ignore constaint errors, means it already exists
-        callback();
-        return false; // ack we handled the error
-      });
-    });
-  }
-
-  preprocessAttachments(docInfos, 'binary', function (err) {
-    if (err) {
-      return callback(err);
-    }
-    db.transaction(function (txn) {
-      tx = txn;
-      verifyAttachments(function (err) {
-        if (err) {
-          preconditionErrored = err;
-        } else {
-          fetchExistingDocs(websqlProcessDocs);
-        }
-      });
-    }, unknownError(callback), complete);
-  });
-}
-
-module.exports = websqlBulkDocs;
-
-},{"../../deps/docs/isLocalId":72,"../../deps/docs/preprocessAttachments":76,"../../deps/docs/processDocs":77,"../../deps/errors":81,"../../utils":112,"./constants":44,"./utils":46}],44:[function(require,module,exports){
-'use strict';
-
-function quote(str) {
-  return "'" + str + "'";
-}
-
-exports.ADAPTER_VERSION = 7; // used to manage migrations
-
-// The object stores created for each database
-// DOC_STORE stores the document meta data, its revision history and state
-exports.DOC_STORE = quote('document-store');
-// BY_SEQ_STORE stores a particular version of a document, keyed by its
-// sequence id
-exports.BY_SEQ_STORE = quote('by-sequence');
-// Where we store attachments
-exports.ATTACH_STORE = quote('attach-store');
-exports.LOCAL_STORE = quote('local-store');
-exports.META_STORE = quote('metadata-store');
-// where we store many-to-many relations between attachment
-// digests and seqs
-exports.ATTACH_AND_SEQ_STORE = quote('attach-seq-store');
-
-
-},{}],45:[function(require,module,exports){
-'use strict';
-
-var utils = require('../../utils');
-var merge = require('../../merge');
-var isDeleted = require('../../deps/docs/isDeleted');
-var isLocalId = require('../../deps/docs/isLocalId');
-var errors = require('../../deps/errors');
-var parseHexString = require('../../deps/parseHex');
-var binStringToBlob = require('../../deps/binary/binaryStringToBlobOrBuffer');
-var hasLocalStorage = require('../../deps/env/hasLocalStorage');
-
-var websqlConstants = require('./constants');
-var websqlUtils = require('./utils');
-var websqlBulkDocs = require('./bulkDocs');
-
-var ADAPTER_VERSION = websqlConstants.ADAPTER_VERSION;
-var DOC_STORE = websqlConstants.DOC_STORE;
-var BY_SEQ_STORE = websqlConstants.BY_SEQ_STORE;
-var ATTACH_STORE = websqlConstants.ATTACH_STORE;
-var LOCAL_STORE = websqlConstants.LOCAL_STORE;
-var META_STORE = websqlConstants.META_STORE;
-var ATTACH_AND_SEQ_STORE = websqlConstants.ATTACH_AND_SEQ_STORE;
-
-var qMarks = websqlUtils.qMarks;
-var stringifyDoc = websqlUtils.stringifyDoc;
-var unstringifyDoc = websqlUtils.unstringifyDoc;
-var select = websqlUtils.select;
-var compactRevs = websqlUtils.compactRevs;
-var unknownError = websqlUtils.unknownError;
-var getSize = websqlUtils.getSize;
-var openDB = websqlUtils.openDB;
-
-function fetchAttachmentsIfNecessary(doc, opts, api, txn, cb) {
-  var attachments = Object.keys(doc._attachments || {});
-  if (!attachments.length) {
-    return cb && cb();
-  }
-  var numDone = 0;
-
-  function checkDone() {
-    if (++numDone === attachments.length && cb) {
-      cb();
-    }
-  }
-
-  function fetchAttachment(doc, att) {
-    var attObj = doc._attachments[att];
-    var attOpts = {binary: opts.binary, ctx: txn};
-    api._getAttachment(attObj, attOpts, function (_, data) {
-      doc._attachments[att] = utils.extend(
-        utils.pick(attObj, ['digest', 'content_type']),
-        { data: data }
-      );
-      checkDone();
-    });
-  }
-
-  attachments.forEach(function (att) {
-    if (opts.attachments && opts.include_docs) {
-      fetchAttachment(doc, att);
-    } else {
-      doc._attachments[att].stub = true;
-      checkDone();
-    }
-  });
-}
-
-var POUCH_VERSION = 1;
-
-// these indexes cover the ground for most allDocs queries
-var BY_SEQ_STORE_DELETED_INDEX_SQL =
-  'CREATE INDEX IF NOT EXISTS \'by-seq-deleted-idx\' ON ' +
-  BY_SEQ_STORE + ' (seq, deleted)';
-var BY_SEQ_STORE_DOC_ID_REV_INDEX_SQL =
-  'CREATE UNIQUE INDEX IF NOT EXISTS \'by-seq-doc-id-rev\' ON ' +
-    BY_SEQ_STORE + ' (doc_id, rev)';
-var DOC_STORE_WINNINGSEQ_INDEX_SQL =
-  'CREATE INDEX IF NOT EXISTS \'doc-winningseq-idx\' ON ' +
-  DOC_STORE + ' (winningseq)';
-var ATTACH_AND_SEQ_STORE_SEQ_INDEX_SQL =
-  'CREATE INDEX IF NOT EXISTS \'attach-seq-seq-idx\' ON ' +
-    ATTACH_AND_SEQ_STORE + ' (seq)';
-var ATTACH_AND_SEQ_STORE_ATTACH_INDEX_SQL =
-  'CREATE UNIQUE INDEX IF NOT EXISTS \'attach-seq-digest-idx\' ON ' +
-    ATTACH_AND_SEQ_STORE + ' (digest, seq)';
-
-var DOC_STORE_AND_BY_SEQ_JOINER = BY_SEQ_STORE +
-  '.seq = ' + DOC_STORE + '.winningseq';
-
-var SELECT_DOCS = BY_SEQ_STORE + '.seq AS seq, ' +
-  BY_SEQ_STORE + '.deleted AS deleted, ' +
-  BY_SEQ_STORE + '.json AS data, ' +
-  BY_SEQ_STORE + '.rev AS rev, ' +
-  DOC_STORE + '.json AS metadata';
-
-function WebSqlPouch(opts, callback) {
-  var api = this;
-  var instanceId = null;
-  var size = getSize(opts);
-  var idRequests = [];
-  var encoding;
-
-  api._docCount = -1; // cache sqlite count(*) for performance
-  api._name = opts.name;
-
-  var db = openDB({
-    name: api._name,
-    version: POUCH_VERSION,
-    description: api._name,
-    size: size,
-    location: opts.location,
-    createFromLocation: opts.createFromLocation,
-    androidDatabaseImplementation: opts.androidDatabaseImplementation
-  });
-  if (!db) {
-    return callback(errors.error(errors.UNKNOWN_ERROR));
-  } else if (typeof db.readTransaction !== 'function') {
-    // doesn't exist in sqlite plugin
-    db.readTransaction = db.transaction;
-  }
-
-  function dbCreated() {
-    // note the db name in case the browser upgrades to idb
-    if (hasLocalStorage()) {
-      window.localStorage['_pouch__websqldb_' + api._name] = true;
-    }
-    callback(null, api);
-  }
-
-  // In this migration, we added the 'deleted' and 'local' columns to the
-  // by-seq and doc store tables.
-  // To preserve existing user data, we re-process all the existing JSON
-  // and add these values.
-  // Called migration2 because it corresponds to adapter version (db_version) #2
-  function runMigration2(tx, callback) {
-    // index used for the join in the allDocs query
-    tx.executeSql(DOC_STORE_WINNINGSEQ_INDEX_SQL);
-
-    tx.executeSql('ALTER TABLE ' + BY_SEQ_STORE +
-      ' ADD COLUMN deleted TINYINT(1) DEFAULT 0', [], function () {
-      tx.executeSql(BY_SEQ_STORE_DELETED_INDEX_SQL);
-      tx.executeSql('ALTER TABLE ' + DOC_STORE +
-        ' ADD COLUMN local TINYINT(1) DEFAULT 0', [], function () {
-        tx.executeSql('CREATE INDEX IF NOT EXISTS \'doc-store-local-idx\' ON ' +
-          DOC_STORE + ' (local, id)');
-
-        var sql = 'SELECT ' + DOC_STORE + '.winningseq AS seq, ' + DOC_STORE +
-          '.json AS metadata FROM ' + BY_SEQ_STORE + ' JOIN ' + DOC_STORE +
-          ' ON ' + BY_SEQ_STORE + '.seq = ' + DOC_STORE + '.winningseq';
-
-        tx.executeSql(sql, [], function (tx, result) {
-
-          var deleted = [];
-          var local = [];
-
-          for (var i = 0; i < result.rows.length; i++) {
-            var item = result.rows.item(i);
-            var seq = item.seq;
-            var metadata = JSON.parse(item.metadata);
-            if (isDeleted(metadata)) {
-              deleted.push(seq);
-            }
-            if (isLocalId(metadata.id)) {
-              local.push(metadata.id);
-            }
-          }
-          tx.executeSql('UPDATE ' + DOC_STORE + 'SET local = 1 WHERE id IN ' +
-            qMarks(local.length), local, function () {
-            tx.executeSql('UPDATE ' + BY_SEQ_STORE +
-              ' SET deleted = 1 WHERE seq IN ' +
-              qMarks(deleted.length), deleted, callback);
-          });
-        });
-      });
-    });
-  }
-
-  // in this migration, we make all the local docs unversioned
-  function runMigration3(tx, callback) {
-    var local = 'CREATE TABLE IF NOT EXISTS ' + LOCAL_STORE +
-      ' (id UNIQUE, rev, json)';
-    tx.executeSql(local, [], function () {
-      var sql = 'SELECT ' + DOC_STORE + '.id AS id, ' +
-        BY_SEQ_STORE + '.json AS data ' +
-        'FROM ' + BY_SEQ_STORE + ' JOIN ' +
-        DOC_STORE + ' ON ' + BY_SEQ_STORE + '.seq = ' +
-        DOC_STORE + '.winningseq WHERE local = 1';
-      tx.executeSql(sql, [], function (tx, res) {
-        var rows = [];
-        for (var i = 0; i < res.rows.length; i++) {
-          rows.push(res.rows.item(i));
-        }
-        function doNext() {
-          if (!rows.length) {
-            return callback(tx);
-          }
-          var row = rows.shift();
-          var rev = JSON.parse(row.data)._rev;
-          tx.executeSql('INSERT INTO ' + LOCAL_STORE +
-              ' (id, rev, json) VALUES (?,?,?)',
-              [row.id, rev, row.data], function (tx) {
-            tx.executeSql('DELETE FROM ' + DOC_STORE + ' WHERE id=?',
-                [row.id], function (tx) {
-              tx.executeSql('DELETE FROM ' + BY_SEQ_STORE + ' WHERE seq=?',
-                  [row.seq], function () {
-                doNext();
-              });
-            });
-          });
-        }
-        doNext();
-      });
-    });
-  }
-
-  // in this migration, we remove doc_id_rev and just use rev
-  function runMigration4(tx, callback) {
-
-    function updateRows(rows) {
-      function doNext() {
-        if (!rows.length) {
-          return callback(tx);
-        }
-        var row = rows.shift();
-        var doc_id_rev = parseHexString(row.hex, encoding);
-        var idx = doc_id_rev.lastIndexOf('::');
-        var doc_id = doc_id_rev.substring(0, idx);
-        var rev = doc_id_rev.substring(idx + 2);
-        var sql = 'UPDATE ' + BY_SEQ_STORE +
-          ' SET doc_id=?, rev=? WHERE doc_id_rev=?';
-        tx.executeSql(sql, [doc_id, rev, doc_id_rev], function () {
-          doNext();
-        });
-      }
-      doNext();
-    }
-
-    var sql = 'ALTER TABLE ' + BY_SEQ_STORE + ' ADD COLUMN doc_id';
-    tx.executeSql(sql, [], function (tx) {
-      var sql = 'ALTER TABLE ' + BY_SEQ_STORE + ' ADD COLUMN rev';
-      tx.executeSql(sql, [], function (tx) {
-        tx.executeSql(BY_SEQ_STORE_DOC_ID_REV_INDEX_SQL, [], function (tx) {
-          var sql = 'SELECT hex(doc_id_rev) as hex FROM ' + BY_SEQ_STORE;
-          tx.executeSql(sql, [], function (tx, res) {
-            var rows = [];
-            for (var i = 0; i < res.rows.length; i++) {
-              rows.push(res.rows.item(i));
-            }
-            updateRows(rows);
-          });
-        });
-      });
-    });
-  }
-
-  // in this migration, we add the attach_and_seq table
-  // for issue #2818
-  function runMigration5(tx, callback) {
-
-    function migrateAttsAndSeqs(tx) {
-      // need to actually populate the table. this is the expensive part,
-      // so as an optimization, check first that this database even
-      // contains attachments
-      var sql = 'SELECT COUNT(*) AS cnt FROM ' + ATTACH_STORE;
-      tx.executeSql(sql, [], function (tx, res) {
-        var count = res.rows.item(0).cnt;
-        if (!count) {
-          return callback(tx);
-        }
-
-        var offset = 0;
-        var pageSize = 10;
-        function nextPage() {
-          var sql = select(
-            SELECT_DOCS + ', ' + DOC_STORE + '.id AS id',
-            [DOC_STORE, BY_SEQ_STORE],
-            DOC_STORE_AND_BY_SEQ_JOINER,
-            null,
-            DOC_STORE + '.id '
-          );
-          sql += ' LIMIT ' + pageSize + ' OFFSET ' + offset;
-          offset += pageSize;
-          tx.executeSql(sql, [], function (tx, res) {
-            if (!res.rows.length) {
-              return callback(tx);
-            }
-            var digestSeqs = {};
-            function addDigestSeq(digest, seq) {
-              // uniq digest/seq pairs, just in case there are dups
-              var seqs = digestSeqs[digest] = (digestSeqs[digest] || []);
-              if (seqs.indexOf(seq) === -1) {
-                seqs.push(seq);
-              }
-            }
-            for (var i = 0; i < res.rows.length; i++) {
-              var row = res.rows.item(i);
-              var doc = unstringifyDoc(row.data, row.id, row.rev);
-              var atts = Object.keys(doc._attachments || {});
-              for (var j = 0; j < atts.length; j++) {
-                var att = doc._attachments[atts[j]];
-                addDigestSeq(att.digest, row.seq);
-              }
-            }
-            var digestSeqPairs = [];
-            Object.keys(digestSeqs).forEach(function (digest) {
-              var seqs = digestSeqs[digest];
-              seqs.forEach(function (seq) {
-                digestSeqPairs.push([digest, seq]);
-              });
-            });
-            if (!digestSeqPairs.length) {
-              return nextPage();
-            }
-            var numDone = 0;
-            digestSeqPairs.forEach(function (pair) {
-              var sql = 'INSERT INTO ' + ATTACH_AND_SEQ_STORE +
-                ' (digest, seq) VALUES (?,?)';
-              tx.executeSql(sql, pair, function () {
-                if (++numDone === digestSeqPairs.length) {
-                  nextPage();
-                }
-              });
-            });
-          });
-        }
-        nextPage();
-      });
-    }
-
-    var attachAndRev = 'CREATE TABLE IF NOT EXISTS ' +
-      ATTACH_AND_SEQ_STORE + ' (digest, seq INTEGER)';
-    tx.executeSql(attachAndRev, [], function (tx) {
-      tx.executeSql(
-        ATTACH_AND_SEQ_STORE_ATTACH_INDEX_SQL, [], function (tx) {
-          tx.executeSql(
-            ATTACH_AND_SEQ_STORE_SEQ_INDEX_SQL, [],
-            migrateAttsAndSeqs);
-        });
-    });
-  }
-
-  // in this migration, we use escapeBlob() and unescapeBlob()
-  // instead of reading out the binary as HEX, which is slow
-  function runMigration6(tx, callback) {
-    var sql = 'ALTER TABLE ' + ATTACH_STORE +
-      ' ADD COLUMN escaped TINYINT(1) DEFAULT 0';
-    tx.executeSql(sql, [], callback);
-  }
-
-  // issue #3136, in this migration we need a "latest seq" as well
-  // as the "winning seq" in the doc store
-  function runMigration7(tx, callback) {
-    var sql = 'ALTER TABLE ' + DOC_STORE +
-      ' ADD COLUMN max_seq INTEGER';
-    tx.executeSql(sql, [], function (tx) {
-      var sql = 'UPDATE ' + DOC_STORE + ' SET max_seq=(SELECT MAX(seq) FROM ' +
-        BY_SEQ_STORE + ' WHERE doc_id=id)';
-      tx.executeSql(sql, [], function (tx) {
-        // add unique index after filling, else we'll get a constraint
-        // error when we do the ALTER TABLE
-        var sql =
-          'CREATE UNIQUE INDEX IF NOT EXISTS \'doc-max-seq-idx\' ON ' +
-          DOC_STORE + ' (max_seq)';
-        tx.executeSql(sql, [], callback);
-      });
-    });
-  }
-
-  function checkEncoding(tx, cb) {
-    // UTF-8 on chrome/android, UTF-16 on safari < 7.1
-    tx.executeSql('SELECT HEX("a") AS hex', [], function (tx, res) {
-        var hex = res.rows.item(0).hex;
-        encoding = hex.length === 2 ? 'UTF-8' : 'UTF-16';
-        cb();
-      }
-    );
-  }
-
-  function onGetInstanceId() {
-    while (idRequests.length > 0) {
-      var idCallback = idRequests.pop();
-      idCallback(null, instanceId);
-    }
-  }
-
-  function onGetVersion(tx, dbVersion) {
-    if (dbVersion === 0) {
-      // initial schema
-
-      var meta = 'CREATE TABLE IF NOT EXISTS ' + META_STORE +
-        ' (dbid, db_version INTEGER)';
-      var attach = 'CREATE TABLE IF NOT EXISTS ' + ATTACH_STORE +
-        ' (digest UNIQUE, escaped TINYINT(1), body BLOB)';
-      var attachAndRev = 'CREATE TABLE IF NOT EXISTS ' +
-        ATTACH_AND_SEQ_STORE + ' (digest, seq INTEGER)';
-      // TODO: migrate winningseq to INTEGER
-      var doc = 'CREATE TABLE IF NOT EXISTS ' + DOC_STORE +
-        ' (id unique, json, winningseq, max_seq INTEGER UNIQUE)';
-      var seq = 'CREATE TABLE IF NOT EXISTS ' + BY_SEQ_STORE +
-        ' (seq INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, ' +
-        'json, deleted TINYINT(1), doc_id, rev)';
-      var local = 'CREATE TABLE IF NOT EXISTS ' + LOCAL_STORE +
-        ' (id UNIQUE, rev, json)';
-
-      // creates
-      tx.executeSql(attach);
-      tx.executeSql(local);
-      tx.executeSql(attachAndRev, [], function () {
-        tx.executeSql(ATTACH_AND_SEQ_STORE_SEQ_INDEX_SQL);
-        tx.executeSql(ATTACH_AND_SEQ_STORE_ATTACH_INDEX_SQL);
-      });
-      tx.executeSql(doc, [], function () {
-        tx.executeSql(DOC_STORE_WINNINGSEQ_INDEX_SQL);
-        tx.executeSql(seq, [], function () {
-          tx.executeSql(BY_SEQ_STORE_DELETED_INDEX_SQL);
-          tx.executeSql(BY_SEQ_STORE_DOC_ID_REV_INDEX_SQL);
-          tx.executeSql(meta, [], function () {
-            // mark the db version, and new dbid
-            var initSeq = 'INSERT INTO ' + META_STORE +
-              ' (db_version, dbid) VALUES (?,?)';
-            instanceId = utils.uuid();
-            var initSeqArgs = [ADAPTER_VERSION, instanceId];
-            tx.executeSql(initSeq, initSeqArgs, function () {
-              onGetInstanceId();
-            });
-          });
-        });
-      });
-    } else { // version > 0
-
-      var setupDone = function () {
-        var migrated = dbVersion < ADAPTER_VERSION;
-        if (migrated) {
-          // update the db version within this transaction
-          tx.executeSql('UPDATE ' + META_STORE + ' SET db_version = ' +
-            ADAPTER_VERSION);
-        }
-        // notify db.id() callers
-        var sql = 'SELECT dbid FROM ' + META_STORE;
-        tx.executeSql(sql, [], function (tx, result) {
-          instanceId = result.rows.item(0).dbid;
-          onGetInstanceId();
-        });
-      };
-
-      // would love to use promises here, but then websql
-      // ends the transaction early
-      var tasks = [
-        runMigration2,
-        runMigration3,
-        runMigration4,
-        runMigration5,
-        runMigration6,
-        runMigration7,
-        setupDone
-      ];
-
-      // run each migration sequentially
-      var i = dbVersion;
-      var nextMigration = function (tx) {
-        tasks[i - 1](tx, nextMigration);
-        i++;
-      };
-      nextMigration(tx);
-    }
-  }
-
-  function setup() {
-    db.transaction(function (tx) {
-      // first check the encoding
-      checkEncoding(tx, function () {
-        // then get the version
-        fetchVersion(tx);
-      });
-    }, unknownError(callback), dbCreated);
-  }
-
-  function fetchVersion(tx) {
-    var sql = 'SELECT sql FROM sqlite_master WHERE tbl_name = ' + META_STORE;
-    tx.executeSql(sql, [], function (tx, result) {
-      if (!result.rows.length) {
-        // database hasn't even been created yet (version 0)
-        onGetVersion(tx, 0);
-      } else if (!/db_version/.test(result.rows.item(0).sql)) {
-        // table was created, but without the new db_version column,
-        // so add it.
-        tx.executeSql('ALTER TABLE ' + META_STORE +
-          ' ADD COLUMN db_version INTEGER', [], function () {
-          // before version 2, this column didn't even exist
-          onGetVersion(tx, 1);
-        });
-      } else { // column exists, we can safely get it
-        tx.executeSql('SELECT db_version FROM ' + META_STORE,
-          [], function (tx, result) {
-          var dbVersion = result.rows.item(0).db_version;
-          onGetVersion(tx, dbVersion);
-        });
-      }
-    });
-  }
-
-  if (utils.isCordova()) {
-    //to wait until custom api is made in pouch.adapters before doing setup
-    window.addEventListener(api._name + '_pouch', function cordova_init() {
-      window.removeEventListener(api._name + '_pouch', cordova_init, false);
-      setup();
-    }, false);
-  } else {
-    setup();
-  }
-
-  api.type = function () {
-    return 'websql';
-  };
-
-  api._id = utils.toPromise(function (callback) {
-    callback(null, instanceId);
-  });
-
-  api._info = function (callback) {
-    db.readTransaction(function (tx) {
-      countDocs(tx, function (docCount) {
-        var sql = 'SELECT MAX(seq) AS seq FROM ' + BY_SEQ_STORE;
-        tx.executeSql(sql, [], function (tx, res) {
-          var updateSeq = res.rows.item(0).seq || 0;
-          callback(null, {
-            doc_count: docCount,
-            update_seq: updateSeq,
-            // for debugging
-            sqlite_plugin: db._sqlitePlugin,
-            websql_encoding: encoding
-          });
-        });
-      });
-    }, unknownError(callback));
-  };
-
-  api._bulkDocs = function (req, opts, callback) {
-    websqlBulkDocs(req, opts, api, db, WebSqlPouch.Changes, callback);
-  };
-
-  api._get = function (id, opts, callback) {
-    var doc;
-    var metadata;
-    var err;
-    var tx = opts.ctx;
-    if (!tx) {
-      return db.readTransaction(function (txn) {
-        api._get(id, utils.extend({ctx: txn}, opts), callback);
-      });
-    }
-
-    function finish() {
-      callback(err, {doc: doc, metadata: metadata, ctx: tx});
-    }
-
-    var sql;
-    var sqlArgs;
-    if (opts.rev) {
-      sql = select(
-        SELECT_DOCS,
-        [DOC_STORE, BY_SEQ_STORE],
-        DOC_STORE + '.id=' + BY_SEQ_STORE + '.doc_id',
-        [BY_SEQ_STORE + '.doc_id=?', BY_SEQ_STORE + '.rev=?']);
-      sqlArgs = [id, opts.rev];
-    } else {
-      sql = select(
-        SELECT_DOCS,
-        [DOC_STORE, BY_SEQ_STORE],
-        DOC_STORE_AND_BY_SEQ_JOINER,
-        DOC_STORE + '.id=?');
-      sqlArgs = [id];
-    }
-    tx.executeSql(sql, sqlArgs, function (a, results) {
-      if (!results.rows.length) {
-        err = errors.error(errors.MISSING_DOC, 'missing');
-        return finish();
-      }
-      var item = results.rows.item(0);
-      metadata = utils.safeJsonParse(item.metadata);
-      if (item.deleted && !opts.rev) {
-        err = errors.error(errors.MISSING_DOC, 'deleted');
-        return finish();
-      }
-      doc = unstringifyDoc(item.data, metadata.id, item.rev);
-      finish();
-    });
-  };
-
-  function countDocs(tx, callback) {
-
-    if (api._docCount !== -1) {
-      return callback(api._docCount);
-    }
-
-    // count the total rows
-    var sql = select(
-      'COUNT(' + DOC_STORE + '.id) AS \'num\'',
-      [DOC_STORE, BY_SEQ_STORE],
-      DOC_STORE_AND_BY_SEQ_JOINER,
-      BY_SEQ_STORE + '.deleted=0');
-
-    tx.executeSql(sql, [], function (tx, result) {
-      api._docCount = result.rows.item(0).num;
-      callback(api._docCount);
-    });
-  }
-
-  api._allDocs = function (opts, callback) {
-    var results = [];
-    var totalRows;
-
-    var start = 'startkey' in opts ? opts.startkey : false;
-    var end = 'endkey' in opts ? opts.endkey : false;
-    var key = 'key' in opts ? opts.key : false;
-    var descending = 'descending' in opts ? opts.descending : false;
-    var limit = 'limit' in opts ? opts.limit : -1;
-    var offset = 'skip' in opts ? opts.skip : 0;
-    var inclusiveEnd = opts.inclusive_end !== false;
-
-    var sqlArgs = [];
-    var criteria = [];
-
-    if (key !== false) {
-      criteria.push(DOC_STORE + '.id = ?');
-      sqlArgs.push(key);
-    } else if (start !== false || end !== false) {
-      if (start !== false) {
-        criteria.push(DOC_STORE + '.id ' + (descending ? '<=' : '>=') + ' ?');
-        sqlArgs.push(start);
-      }
-      if (end !== false) {
-        var comparator = descending ? '>' : '<';
-        if (inclusiveEnd) {
-          comparator += '=';
-        }
-        criteria.push(DOC_STORE + '.id ' + comparator + ' ?');
-        sqlArgs.push(end);
-      }
-      if (key !== false) {
-        criteria.push(DOC_STORE + '.id = ?');
-        sqlArgs.push(key);
-      }
-    }
-
-    if (opts.deleted !== 'ok') {
-      // report deleted if keys are specified
-      criteria.push(BY_SEQ_STORE + '.deleted = 0');
-    }
-
-    db.readTransaction(function (tx) {
-
-      // first count up the total rows
-      countDocs(tx, function (count) {
-        totalRows = count;
-
-        if (limit === 0) {
-          return;
-        }
-
-        // then actually fetch the documents
-        var sql = select(
-          SELECT_DOCS,
-          [DOC_STORE, BY_SEQ_STORE],
-          DOC_STORE_AND_BY_SEQ_JOINER,
-          criteria,
-          DOC_STORE + '.id ' + (descending ? 'DESC' : 'ASC')
-          );
-        sql += ' LIMIT ' + limit + ' OFFSET ' + offset;
-
-        tx.executeSql(sql, sqlArgs, function (tx, result) {
-          for (var i = 0, l = result.rows.length; i < l; i++) {
-            var item = result.rows.item(i);
-            var metadata = utils.safeJsonParse(item.metadata);
-            var id = metadata.id;
-            var data = unstringifyDoc(item.data, id, item.rev);
-            var winningRev = data._rev;
-            var doc = {
-              id: id,
-              key: id,
-              value: {rev: winningRev}
-            };
-            if (opts.include_docs) {
-              doc.doc = data;
-              doc.doc._rev = winningRev;
-              if (opts.conflicts) {
-                doc.doc._conflicts = merge.collectConflicts(metadata);
-              }
-              fetchAttachmentsIfNecessary(doc.doc, opts, api, tx);
-            }
-            if (item.deleted) {
-              if (opts.deleted === 'ok') {
-                doc.value.deleted = true;
-                doc.doc = null;
-              } else {
-                continue;
-              }
-            }
-            results.push(doc);
-          }
-        });
-      });
-    }, unknownError(callback), function () {
-      callback(null, {
-        total_rows: totalRows,
-        offset: opts.skip,
-        rows: results
-      });
-    });
-  };
-
-  api._changes = function (opts) {
-    opts = utils.clone(opts);
-
-    if (opts.continuous) {
-      var id = api._name + ':' + utils.uuid();
-      WebSqlPouch.Changes.addListener(api._name, id, api, opts);
-      WebSqlPouch.Changes.notify(api._name);
-      return {
-        cancel: function () {
-          WebSqlPouch.Changes.removeListener(api._name, id);
-        }
-      };
-    }
-
-    var descending = opts.descending;
-
-    // Ignore the `since` parameter when `descending` is true
-    opts.since = opts.since && !descending ? opts.since : 0;
-
-    var limit = 'limit' in opts ? opts.limit : -1;
-    if (limit === 0) {
-      limit = 1; // per CouchDB _changes spec
-    }
-
-    var returnDocs;
-    if ('returnDocs' in opts) {
-      returnDocs = opts.returnDocs;
-    } else {
-      returnDocs = true;
-    }
-    var results = [];
-    var numResults = 0;
-
-    function fetchChanges() {
-
-      var selectStmt =
-        DOC_STORE + '.json AS metadata, ' +
-        DOC_STORE + '.max_seq AS maxSeq, ' +
-        BY_SEQ_STORE + '.json AS winningDoc, ' +
-        BY_SEQ_STORE + '.rev AS winningRev ';
-
-      var from = DOC_STORE + ' JOIN ' + BY_SEQ_STORE;
-
-      var joiner = DOC_STORE + '.id=' + BY_SEQ_STORE + '.doc_id' +
-        ' AND ' + DOC_STORE + '.winningseq=' + BY_SEQ_STORE + '.seq';
-
-      var criteria = ['maxSeq > ?'];
-      var sqlArgs = [opts.since];
-
-      if (opts.doc_ids) {
-        criteria.push(DOC_STORE + '.id IN ' + qMarks(opts.doc_ids.length));
-        sqlArgs = sqlArgs.concat(opts.doc_ids);
-      }
-
-      var orderBy = 'maxSeq ' + (descending ? 'DESC' : 'ASC');
-
-      var sql = select(selectStmt, from, joiner, criteria, orderBy);
-
-      var filter = utils.filterChange(opts);
-      if (!opts.view && !opts.filter) {
-        // we can just limit in the query
-        sql += ' LIMIT ' + limit;
-      }
-
-      var lastSeq = opts.since || 0;
-      db.readTransaction(function (tx) {
-        tx.executeSql(sql, sqlArgs, function (tx, result) {
-          function reportChange(change) {
-            return function () {
-              opts.onChange(change);
-            };
-          }
-          for (var i = 0, l = result.rows.length; i < l; i++) {
-            var item = result.rows.item(i);
-            var metadata = utils.safeJsonParse(item.metadata);
-            lastSeq = item.maxSeq;
-
-            var doc = unstringifyDoc(item.winningDoc, metadata.id,
-              item.winningRev);
-            var change = opts.processChange(doc, metadata, opts);
-            change.seq = item.maxSeq;
-            if (filter(change)) {
-              numResults++;
-              if (returnDocs) {
-                results.push(change);
-              }
-              // process the attachment immediately
-              // for the benefit of live listeners
-              if (opts.attachments && opts.include_docs) {
-                fetchAttachmentsIfNecessary(doc, opts, api, tx,
-                  reportChange(change));
-              } else {
-                reportChange(change)();
-              }
-            }
-            if (numResults === limit) {
-              break;
-            }
-          }
-        });
-      }, unknownError(opts.complete), function () {
-        if (!opts.continuous) {
-          opts.complete(null, {
-            results: results,
-            last_seq: lastSeq
-          });
-        }
-      });
-    }
-
-    fetchChanges();
-  };
-
-  api._close = function (callback) {
-    //WebSQL databases do not need to be closed
-    callback();
-  };
-
-  api._getAttachment = function (attachment, opts, callback) {
-    var res;
-    var tx = opts.ctx;
-    var digest = attachment.digest;
-    var type = attachment.content_type;
-    var sql = 'SELECT escaped, ' +
-      'CASE WHEN escaped = 1 THEN body ELSE HEX(body) END AS body FROM ' +
-      ATTACH_STORE + ' WHERE digest=?';
-    tx.executeSql(sql, [digest], function (tx, result) {
-      // websql has a bug where \u0000 causes early truncation in strings
-      // and blobs. to work around this, we used to use the hex() function,
-      // but that's not performant. after migration 6, we remove \u0000
-      // and add it back in afterwards
-      var item = result.rows.item(0);
-      var data = item.escaped ? websqlUtils.unescapeBlob(item.body) :
-        parseHexString(item.body, encoding);
-      if (opts.binary) {
-        res = binStringToBlob(data, type);
-      } else {
-        res = utils.btoa(data);
-      }
-      callback(null, res);
-    });
-  };
-
-  api._getRevisionTree = function (docId, callback) {
-    db.readTransaction(function (tx) {
-      var sql = 'SELECT json AS metadata FROM ' + DOC_STORE + ' WHERE id = ?';
-      tx.executeSql(sql, [docId], function (tx, result) {
-        if (!result.rows.length) {
-          callback(errors.error(errors.MISSING_DOC));
-        } else {
-          var data = utils.safeJsonParse(result.rows.item(0).metadata);
-          callback(null, data.rev_tree);
-        }
-      });
-    });
-  };
-
-  api._doCompaction = function (docId, revs, callback) {
-    if (!revs.length) {
-      return callback();
-    }
-    db.transaction(function (tx) {
-
-      // update doc store
-      var sql = 'SELECT json AS metadata FROM ' + DOC_STORE + ' WHERE id = ?';
-      tx.executeSql(sql, [docId], function (tx, result) {
-        var metadata = utils.safeJsonParse(result.rows.item(0).metadata);
-        merge.traverseRevTree(metadata.rev_tree, function (isLeaf, pos,
-                                                           revHash, ctx, opts) {
-          var rev = pos + '-' + revHash;
-          if (revs.indexOf(rev) !== -1) {
-            opts.status = 'missing';
-          }
-        });
-
-        var sql = 'UPDATE ' + DOC_STORE + ' SET json = ? WHERE id = ?';
-        tx.executeSql(sql, [utils.safeJsonStringify(metadata), docId]);
-      });
-
-      compactRevs(revs, docId, tx);
-    }, unknownError(callback), function () {
-      callback();
-    });
-  };
-
-  api._getLocal = function (id, callback) {
-    db.readTransaction(function (tx) {
-      var sql = 'SELECT json, rev FROM ' + LOCAL_STORE + ' WHERE id=?';
-      tx.executeSql(sql, [id], function (tx, res) {
-        if (res.rows.length) {
-          var item = res.rows.item(0);
-          var doc = unstringifyDoc(item.json, id, item.rev);
-          callback(null, doc);
-        } else {
-          callback(errors.error(errors.MISSING_DOC));
-        }
-      });
-    });
-  };
-
-  api._putLocal = function (doc, opts, callback) {
-    if (typeof opts === 'function') {
-      callback = opts;
-      opts = {};
-    }
-    delete doc._revisions; // ignore this, trust the rev
-    var oldRev = doc._rev;
-    var id = doc._id;
-    var newRev;
-    if (!oldRev) {
-      newRev = doc._rev = '0-1';
-    } else {
-      newRev = doc._rev = '0-' + (parseInt(oldRev.split('-')[1], 10) + 1);
-    }
-    var json = stringifyDoc(doc);
-
-    var ret;
-    function putLocal(tx) {
-      var sql;
-      var values;
-      if (oldRev) {
-        sql = 'UPDATE ' + LOCAL_STORE + ' SET rev=?, json=? ' +
-          'WHERE id=? AND rev=?';
-        values = [newRev, json, id, oldRev];
-      } else {
-        sql = 'INSERT INTO ' + LOCAL_STORE + ' (id, rev, json) VALUES (?,?,?)';
-        values = [id, newRev, json];
-      }
-      tx.executeSql(sql, values, function (tx, res) {
-        if (res.rowsAffected) {
-          ret = {ok: true, id: id, rev: newRev};
-          if (opts.ctx) { // return immediately
-            callback(null, ret);
-          }
-        } else {
-          callback(errors.error(errors.REV_CONFLICT));
-        }
-      }, function () {
-        callback(errors.error(errors.REV_CONFLICT));
-        return false; // ack that we handled the error
-      });
-    }
-
-    if (opts.ctx) {
-      putLocal(opts.ctx);
-    } else {
-      db.transaction(putLocal, unknownError(callback), function () {
-        if (ret) {
-          callback(null, ret);
-        }
-      });
-    }
-  };
-
-  api._removeLocal = function (doc, opts, callback) {
-    if (typeof opts === 'function') {
-      callback = opts;
-      opts = {};
-    }
-    var ret;
-
-    function removeLocal(tx) {
-      var sql = 'DELETE FROM ' + LOCAL_STORE + ' WHERE id=? AND rev=?';
-      var params = [doc._id, doc._rev];
-      tx.executeSql(sql, params, function (tx, res) {
-        if (!res.rowsAffected) {
-          return callback(errors.error(errors.MISSING_DOC));
-        }
-        ret = {ok: true, id: doc._id, rev: '0-0'};
-        if (opts.ctx) { // return immediately
-          callback(null, ret);
-        }
-      });
-    }
-
-    if (opts.ctx) {
-      removeLocal(opts.ctx);
-    } else {
-      db.transaction(removeLocal, unknownError(callback), function () {
-        if (ret) {
-          callback(null, ret);
-        }
-      });
-    }
-  };
-
-  api._destroy = function (callback) {
-    WebSqlPouch.Changes.removeAllListeners(api._name);
-    db.transaction(function (tx) {
-      var stores = [DOC_STORE, BY_SEQ_STORE, ATTACH_STORE, META_STORE,
-        LOCAL_STORE, ATTACH_AND_SEQ_STORE];
-      stores.forEach(function (store) {
-        tx.executeSql('DROP TABLE IF EXISTS ' + store, []);
-      });
-    }, unknownError(callback), function () {
-      if (hasLocalStorage()) {
-        delete window.localStorage['_pouch__websqldb_' + api._name];
-        delete window.localStorage[api._name];
-      }
-      callback(null, {'ok': true});
-    });
-  };
-}
-
-WebSqlPouch.valid = websqlUtils.valid;
-
-WebSqlPouch.Changes = new utils.Changes();
-
-module.exports = WebSqlPouch;
-
-},{"../../deps/binary/binaryStringToBlobOrBuffer":64,"../../deps/docs/isDeleted":71,"../../deps/docs/isLocalId":72,"../../deps/env/hasLocalStorage":79,"../../deps/errors":81,"../../deps/parseHex":85,"../../merge":101,"../../utils":112,"./bulkDocs":43,"./constants":44,"./utils":46}],46:[function(require,module,exports){
-'use strict';
-
-var utils = require('../../utils');
-var errors = require('../../deps/errors');
-
-var websqlConstants = require('./constants');
-
-var BY_SEQ_STORE = websqlConstants.BY_SEQ_STORE;
-var ATTACH_STORE = websqlConstants.ATTACH_STORE;
-var ATTACH_AND_SEQ_STORE = websqlConstants.ATTACH_AND_SEQ_STORE;
-
-// escapeBlob and unescapeBlob are workarounds for a websql bug:
-// https://code.google.com/p/chromium/issues/detail?id=422690
-// https://bugs.webkit.org/show_bug.cgi?id=137637
-// The goal is to never actually insert the \u0000 character
-// in the database.
-function escapeBlob(str) {
-  return str
-    .replace(/\u0002/g, '\u0002\u0002')
-    .replace(/\u0001/g, '\u0001\u0002')
-    .replace(/\u0000/g, '\u0001\u0001');
-}
-
-function unescapeBlob(str) {
-  return str
-    .replace(/\u0001\u0001/g, '\u0000')
-    .replace(/\u0001\u0002/g, '\u0001')
-    .replace(/\u0002\u0002/g, '\u0002');
-}
-
-function stringifyDoc(doc) {
-  // don't bother storing the id/rev. it uses lots of space,
-  // in persistent map/reduce especially
-  delete doc._id;
-  delete doc._rev;
-  return JSON.stringify(doc);
-}
-
-function unstringifyDoc(doc, id, rev) {
-  doc = JSON.parse(doc);
-  doc._id = id;
-  doc._rev = rev;
-  return doc;
-}
-
-// question mark groups IN queries, e.g. 3 -> '(?,?,?)'
-function qMarks(num) {
-  var s = '(';
-  while (num--) {
-    s += '?';
-    if (num) {
-      s += ',';
-    }
-  }
-  return s + ')';
-}
-
-function select(selector, table, joiner, where, orderBy) {
-  return 'SELECT ' + selector + ' FROM ' +
-    (typeof table === 'string' ? table : table.join(' JOIN ')) +
-    (joiner ? (' ON ' + joiner) : '') +
-    (where ? (' WHERE ' +
-    (typeof where === 'string' ? where : where.join(' AND '))) : '') +
-    (orderBy ? (' ORDER BY ' + orderBy) : '');
-}
-
-function compactRevs(revs, docId, tx) {
-
-  if (!revs.length) {
-    return;
-  }
-
-  var numDone = 0;
-  var seqs = [];
-
-  function checkDone() {
-    if (++numDone === revs.length) { // done
-      deleteOrphans();
-    }
-  }
-
-  function deleteOrphans() {
-    // find orphaned attachment digests
-
-    if (!seqs.length) {
-      return;
-    }
-
-    var sql = 'SELECT DISTINCT digest AS digest FROM ' +
-      ATTACH_AND_SEQ_STORE + ' WHERE seq IN ' + qMarks(seqs.length);
-
-    tx.executeSql(sql, seqs, function (tx, res) {
-
-      var digestsToCheck = [];
-      for (var i = 0; i < res.rows.length; i++) {
-        digestsToCheck.push(res.rows.item(i).digest);
-      }
-      if (!digestsToCheck.length) {
-        return;
-      }
-
-      var sql = 'DELETE FROM ' + ATTACH_AND_SEQ_STORE +
-        ' WHERE seq IN (' +
-        seqs.map(function () { return '?'; }).join(',') +
-        ')';
-      tx.executeSql(sql, seqs, function (tx) {
-
-        var sql = 'SELECT digest FROM ' + ATTACH_AND_SEQ_STORE +
-          ' WHERE digest IN (' +
-          digestsToCheck.map(function () { return '?'; }).join(',') +
-          ')';
-        tx.executeSql(sql, digestsToCheck, function (tx, res) {
-          var nonOrphanedDigests = new utils.Set();
-          for (var i = 0; i < res.rows.length; i++) {
-            nonOrphanedDigests.add(res.rows.item(i).digest);
-          }
-          digestsToCheck.forEach(function (digest) {
-            if (nonOrphanedDigests.has(digest)) {
-              return;
-            }
-            tx.executeSql(
-              'DELETE FROM ' + ATTACH_AND_SEQ_STORE + ' WHERE digest=?',
-              [digest]);
-            tx.executeSql(
-              'DELETE FROM ' + ATTACH_STORE + ' WHERE digest=?', [digest]);
-          });
-        });
-      });
-    });
-  }
-
-  // update by-seq and attach stores in parallel
-  revs.forEach(function (rev) {
-    var sql = 'SELECT seq FROM ' + BY_SEQ_STORE +
-      ' WHERE doc_id=? AND rev=?';
-
-    tx.executeSql(sql, [docId, rev], function (tx, res) {
-      if (!res.rows.length) { // already deleted
-        return checkDone();
-      }
-      var seq = res.rows.item(0).seq;
-      seqs.push(seq);
-
-      tx.executeSql(
-        'DELETE FROM ' + BY_SEQ_STORE + ' WHERE seq=?', [seq], checkDone);
-    });
-  });
-}
-
-function unknownError(callback) {
-  return function (event) {
-    // event may actually be a SQLError object, so report is as such
-    var errorNameMatch = event && event.constructor.toString()
-        .match(/function ([^\(]+)/);
-    var errorName = (errorNameMatch && errorNameMatch[1]) || event.type;
-    var errorReason = event.target || event.message;
-    callback(errors.error(errors.WSQ_ERROR, errorReason, errorName));
-  };
-}
-
-function getSize(opts) {
-  if ('size' in opts) {
-    // triggers immediate popup in iOS, fixes #2347
-    // e.g. 5000001 asks for 5 MB, 10000001 asks for 10 MB,
-    return opts.size * 1000000;
-  }
-  // In iOS, doesn't matter as long as it's <= 5000000.
-  // Except that if you request too much, our tests fail
-  // because of the native "do you accept?" popup.
-  // In Android <=4.3, this value is actually used as an
-  // honest-to-god ceiling for data, so we need to
-  // set it to a decently high number.
-  var isAndroid = /Android/.test(window.navigator.userAgent);
-  return isAndroid ? 5000000 : 1; // in PhantomJS, if you use 0 it will crash
-}
-
-function createOpenDBFunction() {
-  if (typeof sqlitePlugin !== 'undefined') {
-    // The SQLite Plugin started deviating pretty heavily from the
-    // standard openDatabase() function, as they started adding more features.
-    // It's better to just use their "new" format and pass in a big ol'
-    // options object.
-    return sqlitePlugin.openDatabase.bind(sqlitePlugin);
-  }
-
-  if (typeof openDatabase !== 'undefined') {
-    return function openDB(opts) {
-      // Traditional WebSQL API
-      return openDatabase(opts.name, opts.version, opts.description, opts.size);
-    };
-  }
-}
-
-var cachedDatabases = {};
-
-function openDB(opts) {
-
-  var openDBFunction = createOpenDBFunction();
-
-  var db = cachedDatabases[opts.name];
-  if (!db) {
-    db = cachedDatabases[opts.name] = openDBFunction(opts);
-    db._sqlitePlugin = typeof sqlitePlugin !== 'undefined';
-  }
-  return db;
-}
-
-function valid() {
-  // SQLitePlugin leaks this global object, which we can use
-  // to detect if it's installed or not. The benefit is that it's
-  // declared immediately, before the 'deviceready' event has fired.
-  return typeof openDatabase !== 'undefined' ||
-    typeof SQLitePlugin !== 'undefined';
-}
-
-module.exports = {
-  escapeBlob: escapeBlob,
-  unescapeBlob: unescapeBlob,
-  stringifyDoc: stringifyDoc,
-  unstringifyDoc: unstringifyDoc,
-  qMarks: qMarks,
-  select: select,
-  compactRevs: compactRevs,
-  unknownError: unknownError,
-  getSize: getSize,
-  openDB: openDB,
-  valid: valid
-};
-},{"../../deps/errors":81,"../../utils":112,"./constants":44}],47:[function(require,module,exports){
-'use strict';
-var utils = require('./utils');
-var isDeleted = require('./deps/docs/isDeleted');
-var merge = require('./merge');
-var errors = require('./deps/errors');
-var EE = require('events').EventEmitter;
-var evalFilter = require('./evalFilter');
-var evalView = require('./evalView');
-var parseDdocFunctionName = require('./deps/docs/parseDdocFunctionName');
-var normalizeDdocFunctionName =
-  require('./deps/docs/normalizeDdocFunctionName');
-module.exports = Changes;
-utils.inherits(Changes, EE);
-
-function Changes(db, opts, callback) {
-  EE.call(this);
-  var self = this;
-  this.db = db;
-  opts = opts ? utils.clone(opts) : {};
-  var complete = opts.complete = utils.once(function (err, resp) {
-    if (err) {
-      self.emit('error', err);
-    } else {
-      self.emit('complete', resp);
-    }
-    self.removeAllListeners();
-    db.removeListener('destroyed', onDestroy);
-  });
-  if (callback) {
-    self.on('complete', function (resp) {
-      callback(null, resp);
-    });
-    self.on('error', function (err) {
-      callback(err);
-    });
-  }
-  function onDestroy() {
-    self.cancel();
-  }
-  db.once('destroyed', onDestroy);
-
-  opts.onChange = function (change) {
-    if (opts.isCancelled) {
-      return;
-    }
-    self.emit('change', change);
-    if (self.startSeq && self.startSeq <= change.seq) {
-      self.startSeq = false;
-    }
-    if (change.deleted) {
-      self.emit('delete', change);
-    } else if (change.changes.length === 1 &&
-      change.changes[0].rev.slice(0, 2) === '1-') {
-      self.emit('create', change);
-    } else {
-      self.emit('update', change);
-    }
-  };
-
-  var promise = new utils.Promise(function (fulfill, reject) {
-    opts.complete = function (err, res) {
-      if (err) {
-        reject(err);
-      } else {
-        fulfill(res);
-      }
-    };
-  });
-  self.once('cancel', function () {
-    db.removeListener('destroyed', onDestroy);
-    opts.complete(null, {status: 'cancelled'});
-  });
-  this.then = promise.then.bind(promise);
-  this['catch'] = promise['catch'].bind(promise);
-  this.then(function (result) {
-    complete(null, result);
-  }, complete);
-
-
-
-  if (!db.taskqueue.isReady) {
-    db.taskqueue.addTask(function () {
-      if (self.isCancelled) {
-        self.emit('cancel');
-      } else {
-        self.doChanges(opts);
-      }
-    });
-  } else {
-    self.doChanges(opts);
-  }
-}
-Changes.prototype.cancel = function () {
-  this.isCancelled = true;
-  if (this.db.taskqueue.isReady) {
-    this.emit('cancel');
-  }
-};
-function processChange(doc, metadata, opts) {
-  var changeList = [{rev: doc._rev}];
-  if (opts.style === 'all_docs') {
-    changeList = merge.collectLeaves(metadata.rev_tree)
-    .map(function (x) { return {rev: x.rev}; });
-  }
-  var change = {
-    id: metadata.id,
-    changes: changeList,
-    doc: doc
-  };
-
-  if (isDeleted(metadata, doc._rev)) {
-    change.deleted = true;
-  }
-  if (opts.conflicts) {
-    change.doc._conflicts = merge.collectConflicts(metadata);
-    if (!change.doc._conflicts.length) {
-      delete change.doc._conflicts;
-    }
-  }
-  return change;
-}
-
-Changes.prototype.doChanges = function (opts) {
-  var self = this;
-  var callback = opts.complete;
-
-  opts = utils.clone(opts);
-  if ('live' in opts && !('continuous' in opts)) {
-    opts.continuous = opts.live;
-  }
-  opts.processChange = processChange;
-
-  if (opts.since === 'latest') {
-    opts.since = 'now';
-  }
-  if (!opts.since) {
-    opts.since = 0;
-  }
-  if (opts.since === 'now') {
-    this.db.info().then(function (info) {
-      if (self.isCancelled) {
-        callback(null, {status: 'cancelled'});
-        return;
-      }
-      opts.since = info.update_seq;
-      self.doChanges(opts);
-    }, callback);
-    return;
-  }
-
-  if (opts.continuous && opts.since !== 'now') {
-    this.db.info().then(function (info) {
-      self.startSeq = info.update_seq;
-    }, function (err) {
-      if (err.id === 'idbNull') {
-        //db closed before this returned
-        //thats ok
-        return;
-      }
-      throw err;
-    });
-  }
-
-  if (opts.filter && typeof opts.filter === 'string') {
-    if (opts.filter === '_view') {
-      opts.view = normalizeDdocFunctionName(opts.view);
-    } else {
-      opts.filter = normalizeDdocFunctionName(opts.filter);
-    }
-
-    if (this.db.type() !== 'http' && !opts.doc_ids) {
-      return this.filterChanges(opts);
-    }
-  }
-
-  if (!('descending' in opts)) {
-    opts.descending = false;
-  }
-
-  // 0 and 1 should return 1 document
-  opts.limit = opts.limit === 0 ? 1 : opts.limit;
-  opts.complete = callback;
-  var newPromise = this.db._changes(opts);
-  if (newPromise && typeof newPromise.cancel === 'function') {
-    var cancel = self.cancel;
-    self.cancel = utils.getArguments(function (args) {
-      newPromise.cancel();
-      cancel.apply(this, args);
-    });
-  }
-};
-
-Changes.prototype.filterChanges = function (opts) {
-  var self = this;
-  var callback = opts.complete;
-  if (opts.filter === '_view') {
-    if (!opts.view || typeof opts.view !== 'string') {
-      var err = errors.error(errors.BAD_REQUEST,
-        '`view` filter parameter not found or invalid.');
-      return callback(err);
-    }
-    // fetch a view from a design doc, make it behave like a filter
-    var viewName = parseDdocFunctionName(opts.view);
-    this.db.get('_design/' + viewName[0], function (err, ddoc) {
-      if (self.isCancelled) {
-        return callback(null, {status: 'cancelled'});
-      }
-      /* istanbul ignore next */
-      if (err) {
-        return callback(errors.generateErrorFromResponse(err));
-      }
-      var mapFun = ddoc && ddoc.views && ddoc.views[viewName[1]] &&
-        ddoc.views[viewName[1]].map;
-      if (!mapFun) {
-        return callback(errors.error(errors.MISSING_DOC,
-          (ddoc.views ? 'missing json key: ' + viewName[1] :
-            'missing json key: views')));
-      }
-      opts.filter = evalView(mapFun);
-      self.doChanges(opts);
-    });
-  } else {
-    // fetch a filter from a design doc
-    var filterName = parseDdocFunctionName(opts.filter);
-    if (!filterName) {
-      return callback(errors.error(errors.BAD_REQUEST,
-                             '`filter` filter parameter invalid.'));
-    }
-    this.db.get('_design/' + filterName[0], function (err, ddoc) {
-      if (self.isCancelled) {
-        return callback(null, {status: 'cancelled'});
-      }
-      /* istanbul ignore next */
-      if (err) {
-        return callback(errors.generateErrorFromResponse(err));
-      }
-      var filterFun = ddoc && ddoc.filters && ddoc.filters[filterName[1]];
-      if (!filterFun) {
-        return callback(errors.error(errors.MISSING_DOC,
-          ((ddoc && ddoc.filters) ? 'missing json key: ' + filterName[1]
-            : 'missing json key: filters')));
-      }
-      opts.filter = evalFilter(filterFun);
-      self.doChanges(opts);
-    });
-  }
-};
-
-},{"./deps/docs/isDeleted":71,"./deps/docs/normalizeDdocFunctionName":73,"./deps/docs/parseDdocFunctionName":74,"./deps/errors":81,"./evalFilter":92,"./evalView":93,"./merge":101,"./utils":112,"events":132}],48:[function(require,module,exports){
-'use strict';
-
-var EventEmitter = require('events').EventEmitter;
-var inherits = require('inherits');
-var isChromeApp = require('./deps/env/isChromeApp');
-var hasLocalStorage = require('./deps/env/hasLocalStorage');
-var pick = require('./deps/pick');
-
-inherits(Changes, EventEmitter);
-
-/* istanbul ignore next */
-function attachBrowserEvents(self) {
-  if (isChromeApp()) {
-    chrome.storage.onChanged.addListener(function (e) {
-      // make sure it's event addressed to us
-      if (e.db_name != null) {
-        //object only has oldValue, newValue members
-        self.emit(e.dbName.newValue);
-      }
-    });
-  } else if (hasLocalStorage()) {
-    if (typeof addEventListener !== 'undefined') {
-      addEventListener("storage", function (e) {
-        self.emit(e.key);
-      });
-    } else { // old IE
-      window.attachEvent("storage", function (e) {
-        self.emit(e.key);
-      });
-    }
-  }
-}
-
-function Changes() {
-  EventEmitter.call(this);
-  this._listeners = {};
-
-  attachBrowserEvents(this);
-}
-Changes.prototype.addListener = function (dbName, id, db, opts) {
-  if (this._listeners[id]) {
-    return;
-  }
-  var self = this;
-  var inprogress = false;
-  function eventFunction() {
-    if (!self._listeners[id]) {
-      return;
-    }
-    if (inprogress) {
-      inprogress = 'waiting';
-      return;
-    }
-    inprogress = true;
-    var changesOpts = pick(opts, [
-      'style', 'include_docs', 'attachments', 'conflicts', 'filter',
-      'doc_ids', 'view', 'since', 'query_params', 'binary'
-    ]);
-
-    db.changes(changesOpts).on('change', function (c) {
-      if (c.seq > opts.since && !opts.cancelled) {
-        opts.since = c.seq;
-        opts.onChange(c);
-      }
-    }).on('complete', function () {
-      if (inprogress === 'waiting') {
-        setTimeout(function(){
-          eventFunction();
-        },0);
-      }
-      inprogress = false;
-    }).on('error', function () {
-      inprogress = false;
-    });
-  }
-  this._listeners[id] = eventFunction;
-  this.on(dbName, eventFunction);
-};
-
-Changes.prototype.removeListener = function (dbName, id) {
-  if (!(id in this._listeners)) {
-    return;
-  }
-  EventEmitter.prototype.removeListener.call(this, dbName,
-    this._listeners[id]);
-};
-
-
-/* istanbul ignore next */
-Changes.prototype.notifyLocalWindows = function (dbName) {
-  //do a useless change on a storage thing
-  //in order to get other windows's listeners to activate
-  if (isChromeApp()) {
-    chrome.storage.local.set({dbName: dbName});
-  } else if (hasLocalStorage()) {
-    localStorage[dbName] = (localStorage[dbName] === "a") ? "b" : "a";
-  }
-};
-
-Changes.prototype.notify = function (dbName) {
-  this.emit(dbName);
-  this.notifyLocalWindows(dbName);
-};
-
-module.exports = Changes;
-
-},{"./deps/env/hasLocalStorage":79,"./deps/env/isChromeApp":80,"./deps/pick":87,"events":132,"inherits":115}],49:[function(require,module,exports){
-(function (process,global){
-/*globals cordova */
-"use strict";
-
-var debug = require('debug');
-
-var Adapter = require('./adapter');
-var utils = require('./utils');
-var TaskQueue = require('./taskqueue');
-var Promise = utils.Promise;
-
-function defaultCallback(err) {
-  /* istanbul ignore next */
-  if (err && global.debug) {
-    console.error(err);
-  }
-}
-
-// OK, so here's the deal. Consider this code:
-//     var db1 = new PouchDB('foo');
-//     var db2 = new PouchDB('foo');
-//     db1.destroy();
-// ^ these two both need to emit 'destroyed' events,
-// as well as the PouchDB constructor itself.
-// So we have one db object (whichever one got destroy() called on it)
-// responsible for emitting the initial event, which then gets emitted
-// by the constructor, which then broadcasts it to any other dbs
-// that may have been created with the same name.
-function prepareForDestruction(self, opts) {
-  var name = opts.originalName;
-  var ctor = self.constructor;
-  var destructionListeners = ctor._destructionListeners;
-
-  function onDestroyed() {
-    ctor.emit('destroyed', name);
-    //so we don't have to sift through all dbnames
-    ctor.emit(name, 'destroyed');
-  }
-
-  function onConstructorDestroyed() {
-    self.removeListener('destroyed', onDestroyed);
-    self.emit('destroyed', self);
-  }
-
-  self.once('destroyed', onDestroyed);
-
-  // in setup.js, the constructor is primed to listen for destroy events
-  if (!destructionListeners.has(name)) {
-    destructionListeners.set(name, []);
-  }
-  destructionListeners.get(name).push(onConstructorDestroyed);
-}
-
-utils.inherits(PouchDB, Adapter);
-function PouchDB(name, opts, callback) {
-
-  if (!(this instanceof PouchDB)) {
-    return new PouchDB(name, opts, callback);
-  }
-  var self = this;
-  if (typeof opts === 'function' || typeof opts === 'undefined') {
-    callback = opts;
-    opts = {};
-  }
-
-  if (name && typeof name === 'object') {
-    opts = name;
-    name = undefined;
-  }
-  if (typeof callback === 'undefined') {
-    callback = defaultCallback;
-  }
-  name = name || opts.name;
-  opts = utils.clone(opts);
-  // if name was specified via opts, ignore for the sake of dependentDbs
-  delete opts.name;
-  this.__opts = opts;
-  var oldCB = callback;
-  self.auto_compaction = opts.auto_compaction;
-  self.prefix = PouchDB.prefix;
-  Adapter.call(self);
-  self.taskqueue = new TaskQueue();
-  var promise = new Promise(function (fulfill, reject) {
-    callback = function (err, resp) {
-      if (err) {
-        return reject(err);
-      }
-      delete resp.then;
-      fulfill(resp);
-    };
-  
-    opts = utils.clone(opts);
-    var originalName = opts.name || name;
-    var backend, error;
-    (function () {
-      try {
-
-        if (typeof originalName !== 'string') {
-          error = new Error('Missing/invalid DB name');
-          error.code = 400;
-          throw error;
-        }
-
-        backend = PouchDB.parseAdapter(originalName, opts);
-        
-        opts.originalName = originalName;
-        opts.name = backend.name;
-        if (opts.prefix && backend.adapter !== 'http' &&
-            backend.adapter !== 'https') {
-          opts.name = opts.prefix + opts.name;
-        }
-        opts.adapter = opts.adapter || backend.adapter;
-        self._adapter = opts.adapter;
-        debug('pouchdb:adapter')('Picked adapter: ' + opts.adapter);
-
-        self._db_name = originalName;
-        if (!PouchDB.adapters[opts.adapter]) {
-          error = new Error('Adapter is missing');
-          error.code = 404;
-          throw error;
-        }
-
-        if (!PouchDB.adapters[opts.adapter].valid()) {
-          error = new Error('Invalid Adapter');
-          error.code = 404;
-          throw error;
-        }
-      } catch (err) {
-        self.taskqueue.fail(err);
-      }
-    }());
-    if (error) {
-      return reject(error); // constructor error, see above
-    }
-    self.adapter = opts.adapter;
-
-    // needs access to PouchDB;
-    self.replicate = {};
-
-    self.replicate.from = function (url, opts, callback) {
-      return self.constructor.replicate(url, self, opts, callback);
-    };
-
-    self.replicate.to = function (url, opts, callback) {
-      return self.constructor.replicate(self, url, opts, callback);
-    };
-
-    self.sync = function (dbName, opts, callback) {
-      return self.constructor.sync(self, dbName, opts, callback);
-    };
-
-    self.replicate.sync = self.sync;
-
-    PouchDB.adapters[opts.adapter].call(self, opts, function (err) {
-      if (err) {
-        self.taskqueue.fail(err);
-        callback(err);
-        return;
-      }
-      prepareForDestruction(self, opts);
-
-      self.emit('created', self);
-      PouchDB.emit('created', opts.originalName);
-      self.taskqueue.ready(self);
-      callback(null, self);
-    });
-
-    if (opts.skipSetup) {
-      self.taskqueue.ready(self);
-      process.nextTick(function () {
-        callback(null, self);
-      });
-    }
-
-    /* istanbul ignore next */
-    if (utils.isCordova()) {
-      //to inform websql adapter that we can use api
-      cordova.fireWindowEvent(opts.name + "_pouch", {});
-    }
-  });
-  promise.then(function (resp) {
-    oldCB(null, resp);
-  }, oldCB);
-  self.then = promise.then.bind(promise);
-  self.catch = promise.catch.bind(promise);
-}
-
-PouchDB.debug = debug;
-
-module.exports = PouchDB;
-
-}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./adapter":34,"./taskqueue":111,"./utils":112,"_process":135,"debug":"debug"}],50:[function(require,module,exports){
-"use strict";
-
-var request = require('request');
-
-var errors = require('./../errors');
-var utils = require('../../utils');
-var applyTypeToBuffer = require('./applyTypeToBuffer');
-var defaultBody = require('./defaultBody');
-var explainCors = require('./explainCors');
-
-function ajax(options, callback) {
-
-  options = utils.clone(options);
-
-  var defaultOptions = {
-    method : "GET",
-    headers: {},
-    json: true,
-    processData: true,
-    timeout: 10000,
-    cache: false
-  };
-
-  options = utils.extend(defaultOptions, options);
-
-
-  function onSuccess(obj, resp, cb) {
-    if (!options.binary && !options.json && options.processData &&
-      typeof obj !== 'string') {
-      obj = JSON.stringify(obj);
-    } else if (!options.binary && options.json && typeof obj === 'string') {
-      try {
-        obj = JSON.parse(obj);
-      } catch (e) {
-        // Probably a malformed JSON from server
-        return cb(e);
-      }
-    }
-    if (Array.isArray(obj)) {
-      obj = obj.map(function (v) {
-        if (v.error || v.missing) {
-          return errors.generateErrorFromResponse(v);
-        } else {
-          return v;
-        }
-      });
-    }
-    if (options.binary) {
-      applyTypeToBuffer(obj, resp);
-    }
-    cb(null, obj, resp);
-  }
-
-  function onError(err, cb) {
-    var errParsed, errObj;
-    if (err.code && err.status) {
-      var err2 = new Error(err.message || err.code);
-      err2.status = err.status;
-      return cb(err2);
-    }
-    try {
-      errParsed = JSON.parse(err.responseText);
-      //would prefer not to have a try/catch clause
-      errObj = errors.generateErrorFromResponse(errParsed);
-    } catch (e) {
-      errObj = errors.generateErrorFromResponse(err);
-    }
-    cb(errObj);
-  }
-
-
-  if (options.json) {
-    if (!options.binary) {
-      options.headers.Accept = 'application/json';
-    }
-    options.headers['Content-Type'] = options.headers['Content-Type'] ||
-      'application/json';
-  }
-
-  if (options.binary) {
-    options.encoding = null;
-    options.json = false;
-  }
-
-  if (!options.processData) {
-    options.json = false;
-  }
-
-  return request(options, function (err, response, body) {
-    if (err) {
-      if (response) {
-        if (response.statusCode === 0) {
-          explainCors(); // statusCode 0 indicates a CORS error (405)
-        }
-        err.status = response.statusCode;
-      } else {
-        err.status = 400;
-      }
-      return onError(err, callback);
-    }
-
-    var error;
-    var content_type = response.headers && response.headers['content-type'];
-    var data = body || defaultBody();
-
-    // CouchDB doesn't always return the right content-type for JSON data, so
-    // we check for ^{ and }$ (ignoring leading/trailing whitespace)
-    if (!options.binary && (options.json || !options.processData) &&
-        typeof data !== 'object' &&
-        (/json/.test(content_type) ||
-         (/^[\s]*\{/.test(data) && /\}[\s]*$/.test(data)))) {
-      try {
-        data = JSON.parse(data.toString());
-      } catch (e) {}
-    }
-
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      onSuccess(data, response, callback);
-    } else {
-      error = errors.generateErrorFromResponse(data);
-      error.status = response.statusCode;
-      callback(error);
-    }
-  });
-}
-
-module.exports = ajax;
-
-},{"../../utils":112,"./../errors":81,"./applyTypeToBuffer":51,"./defaultBody":54,"./explainCors":56,"request":59}],51:[function(require,module,exports){
-'use strict';
-
-// the blob already has a type; do nothing
-module.exports = function () {};
-},{}],52:[function(require,module,exports){
-'use strict';
-
-var createBlob = require('../binary/blob');
-
-module.exports = function createBlobOrBufferFromParts(parts, type) {
-  return createBlob(parts, {type: type});
-};
-},{"../binary/blob":65}],53:[function(require,module,exports){
-'use strict';
-
-var binaryStringToArrayBuffer = require('../binary/binaryStringToArrayBuffer');
-
-// create a "part" suitable for multipart. in the browser
-// this is an ArrayBuffer; in Node it's a binary string
-module.exports = function createMultipartPart(data) {
-  return binaryStringToArrayBuffer(data);
-};
-},{"../binary/binaryStringToArrayBuffer":63}],54:[function(require,module,exports){
-'use strict';
-
-module.exports = function defaultBody() {
-  return '';
-};
-},{}],55:[function(require,module,exports){
-(function (global){
-'use strict';
-
-// designed to give info to browser users, who are disturbed
-// when they see 404s in the console
-module.exports = function explain404(str) {
-  if ('console' in global && 'info' in console) {
-    console.info('The above 404 is totally normal. ' + str);
-  }
-};
-}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],56:[function(require,module,exports){
-(function (global){
-'use strict';
-
-module.exports = function () {
-  if ('console' in global && 'error' in console) {
-    console.error('PouchDB error: the remote database does not seem to have ' +
-      'CORS enabled. To fix this, please enable CORS: ' +
-      'http://pouchdb.com/errors.html#no_access_control_allow_origin_header');
-  }
-};
-}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],57:[function(require,module,exports){
-'use strict';
-
-// Create a multipart/related stream out of a document,
-// so we can upload documents in that format when
-// attachments are large. This is shamefully stolen from
-// https://github.com/sballesteros/couch-multipart-stream/
-// and https://github.com/npm/npm-fullfat-registry
-
-var base64 = require('./../binary/base64');
-var atob = base64.atob;
-var uuid = require('./../uuid');
-var utils = require('../../utils');
-var clone = utils.clone;
-
-var createBlufferFromParts = require('./createBlobOrBufferFromParts');
-var createMultipartPart = require('./createMultipartPart');
-
-function createMultipart(doc) {
-  doc = clone(doc);
-
-  var boundary = uuid();
-
-  var nonStubAttachments = {};
-
-  Object.keys(doc._attachments).forEach(function (filename) {
-    var att = doc._attachments[filename];
-    if (att.stub) {
-      return;
-    }
-    var binData = atob(att.data);
-    nonStubAttachments[filename] = {type: att.content_type, data: binData};
-    att.length = binData.length;
-    att.follows = true;
-    delete att.digest;
-    delete att.data;
-  });
-
-  var preamble = '--' + boundary +
-    '\r\nContent-Type: application/json\r\n\r\n';
-
-  var parts = [preamble, JSON.stringify(doc)];
-
-  Object.keys(nonStubAttachments).forEach(function (filename) {
-    var att = nonStubAttachments[filename];
-    var preamble = '\r\n--' + boundary +
-      '\r\nContent-Disposition: attachment; filename=' +
-        JSON.stringify(filename) +
-      '\r\nContent-Type: ' + att.type +
-      '\r\nContent-Length: ' + att.data.length +
-      '\r\n\r\n';
-    parts.push(preamble);
-    parts.push(createMultipartPart(att.data));
-  });
-
-  parts.push('\r\n--' + boundary + '--');
-
-  var type = 'multipart/related; boundary=' + boundary;
-  var body = createBlufferFromParts(parts, type);
-
-  return {
-    headers: {
-      'Content-Type': type
-    },
-    body: body
-  };
-}
-
-module.exports = createMultipart;
-
-},{"../../utils":112,"./../binary/base64":61,"./../uuid":91,"./createBlobOrBufferFromParts":52,"./createMultipartPart":53}],58:[function(require,module,exports){
-'use strict';
-
-var ajax = require('./ajax-core');
-
-module.exports = function(opts, callback) {
-
-  // cache-buster, specifically designed to work around IE's aggressive caching
-  // see http://www.dashbay.com/2011/05/internet-explorer-caches-ajax/
-  // Also Safari caches POSTs, so we need to cache-bust those too.
-  if ((opts.method === 'POST' || opts.method === 'GET') && !opts.cache) {
-    var hasArgs = opts.url.indexOf('?') !== -1;
-    opts.url += (hasArgs ? '&' : '?') + '_nonce=' + Date.now();
-  }
-
-  return ajax(opts, callback);
-};
-
-},{"./ajax-core":50}],59:[function(require,module,exports){
-/* global fetch */
-/* global Headers */
-'use strict';
-
-var createBlob = require('./../binary/blob.js');
-var utils = require('../../utils');
-var readAsArrayBuffer = require('./../binary/readAsArrayBuffer');
-
-function wrappedFetch() {
-  var wrappedPromise = {};
-
-  var promise = new utils.Promise(function(resolve, reject) {
-    wrappedPromise.resolve = resolve;
-    wrappedPromise.reject = reject;
-  });
-
-  var args = new Array(arguments.length);
-
-  for (var i = 0; i < args.length; i++) {
-    args[i] = arguments[i];
-  }
-
-  wrappedPromise.promise = promise;
-
-  utils.Promise.resolve().then(function () {
-    return fetch.apply(null, args);
-  }).then(function(response) {
-    wrappedPromise.resolve(response);
-  }).catch(function(error) {
-    wrappedPromise.reject(error);
-  });
-
-  return wrappedPromise;
-}
-
-function fetchRequest(options, callback) {
-  var wrappedPromise, timer, response;
-
-  var headers = new Headers();
-
-  var fetchOptions = {
-    method: options.method,
-    credentials: 'include',
-    headers: headers
-  };
-
-  if (options.json) {
-    headers.set('Accept', 'application/json');
-    headers.set('Content-Type', options.headers['Content-Type'] ||
-      'application/json');
-  }
-
-  if (options.body && (options.body instanceof Blob)) {
-    readAsArrayBuffer(options.body, function (arrayBuffer) {
-      fetchOptions.body = arrayBuffer;
-    });
-  } else if (options.body &&
-             options.processData &&
-             typeof options.body !== 'string') {
-    fetchOptions.body = JSON.stringify(options.body);
-  } else if ('body' in options) {
-    fetchOptions.body = options.body;
-  } else {
-    fetchOptions.body = null;
-  }
-
-  Object.keys(options.headers).forEach(function(key) {
-    if (options.headers.hasOwnProperty(key)) {
-      headers.set(key, options.headers[key]);
-    }
-  });
-
-  wrappedPromise = wrappedFetch(options.url, fetchOptions);
-
-  if (options.timeout > 0) {
-    timer = setTimeout(function() {
-      wrappedPromise.reject(new Error('Load timeout for resource: ' +
-        options.url));
-    }, options.timeout);
-  }
-
-  wrappedPromise.promise.then(function(fetchResponse) {
-    response = {
-      statusCode: fetchResponse.status
-    };
-
-    if (options.timeout > 0) {
-      clearTimeout(timer);
-    }
-
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      return options.binary ? fetchResponse.blob() : fetchResponse.text();
-    }
-
-    return fetchResponse.json();
-  }).then(function(result) {
-    if (response.statusCode >= 200 && response.statusCode < 300) {
-      callback(null, response, result);
-    } else {
-      callback(result, response);
-    }
-  }).catch(function(error) {
-    callback(error, response);
-  });
-
-  return {abort: wrappedPromise.reject};
-}
-
-function xhRequest(options, callback) {
-
-  var xhr, timer, hasUpload;
-
-  var abortReq = function () {
-    xhr.abort();
-  };
-
-  if (options.xhr) {
-    xhr = new options.xhr();
-  } else {
-    xhr = new XMLHttpRequest();
-  }
-
-  xhr.open(options.method, options.url);
-  xhr.withCredentials = true;
-
-  if (options.method === 'GET') {
-    delete options.headers['Content-Type'];
-  } else if (options.json) {
-    options.headers.Accept = 'application/json';
-    options.headers['Content-Type'] = options.headers['Content-Type'] ||
-      'application/json';
-    if (options.body &&
-        options.processData &&
-        typeof options.body !== "string") {
-      options.body = JSON.stringify(options.body);
-    }
-  }
-
-  if (options.binary) {
-    xhr.responseType = 'arraybuffer';
-  }
-
-  if (!('body' in options)) {
-    options.body = null;
-  }
-
-  for (var key in options.headers) {
-    if (options.headers.hasOwnProperty(key)) {
-      xhr.setRequestHeader(key, options.headers[key]);
-    }
-  }
-
-  if (options.timeout > 0) {
-    timer = setTimeout(abortReq, options.timeout);
-    xhr.onprogress = function () {
-      clearTimeout(timer);
-      timer = setTimeout(abortReq, options.timeout);
-    };
-    if (typeof hasUpload === 'undefined') {
-      // IE throws an error if you try to access it directly
-      hasUpload = Object.keys(xhr).indexOf('upload') !== -1 &&
-                  typeof xhr.upload !== 'undefined';
-    }
-    if (hasUpload) { // does not exist in ie9
-      xhr.upload.onprogress = xhr.onprogress;
-    }
-  }
-
-  xhr.onreadystatechange = function () {
-    if (xhr.readyState !== 4) {
-      return;
-    }
-
-    var response = {
-      statusCode: xhr.status
-    };
-
-    if (xhr.status >= 200 && xhr.status < 300) {
-      var data;
-      if (options.binary) {
-        data = createBlob([xhr.response || ''], {
-          type: xhr.getResponseHeader('Content-Type')
-        });
-      } else {
-        data = xhr.responseText;
-      }
-      callback(null, response, data);
-    } else {
-      var err = {};
-      try {
-        err = JSON.parse(xhr.response);
-      } catch(e) {}
-      callback(err, response);
-    }
-  };
-
-  if (options.body && (options.body instanceof Blob)) {
-    readAsArrayBuffer(options.body, function (arrayBuffer) {
-      xhr.send(arrayBuffer);
-    });
-  } else {
-    xhr.send(options.body);
-  }
-
-  return {abort: abortReq};
-}
-
-function testXhr() {
-  try {
-    new XMLHttpRequest();
-    return true;
-  } catch (err) {
-    return false;
-  }
-}
-
-var hasXhr = testXhr();
-
-module.exports = function(options, callback) {
-  if (hasXhr || options.xhr) {
-    return xhRequest(options, callback);
-  } else {
-    return fetchRequest(options, callback);
-  }
-};
-
-},{"../../utils":112,"./../binary/blob.js":65,"./../binary/readAsArrayBuffer":68}],60:[function(require,module,exports){
-'use strict';
-
-//Can't find original post, but this is close
-//http://stackoverflow.com/questions/6965107/ (continues on next line)
-//converting-between-strings-and-arraybuffers
-module.exports = function (buffer) {
-  var binary = '';
-  var bytes = new Uint8Array(buffer);
-  var length = bytes.byteLength;
-  for (var i = 0; i < length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return binary;
-};
-},{}],61:[function(require,module,exports){
-'use strict';
-
-var buffer = require('./buffer');
-
-/* istanbul ignore if */
-if (typeof atob === 'function') {
-  exports.atob = function (str) {
-    /* global atob */
-    return atob(str);
-  };
-} else {
-  exports.atob = function (str) {
-    var base64 = new buffer(str, 'base64');
-    // Node.js will just skip the characters it can't encode instead of
-    // throwing and exception
-    if (base64.toString('base64') !== str) {
-      throw ("Cannot base64 encode full string");
-    }
-    return base64.toString('binary');
-  };
-}
-
-/* istanbul ignore if */
-if (typeof btoa === 'function') {
-  exports.btoa = function (str) {
-    /* global btoa */
-    return btoa(str);
-  };
-} else {
-  exports.btoa = function (str) {
-    return new buffer(str, 'binary').toString('base64');
-  };
-}
-},{"./buffer":67}],62:[function(require,module,exports){
-'use strict';
-
-var atob = require('./base64').atob;
-var binaryStringToBlobOrBuffer = require('./binaryStringToBlobOrBuffer');
-
-module.exports = function (b64, type) {
-  return binaryStringToBlobOrBuffer(atob(b64), type);
-};
-},{"./base64":61,"./binaryStringToBlobOrBuffer":64}],63:[function(require,module,exports){
-'use strict';
-
-// From http://stackoverflow.com/questions/14967647/ (continues on next line)
-// encode-decode-image-with-base64-breaks-image (2013-04-21)
-module.exports = function (bin) {
-  var length = bin.length;
-  var buf = new ArrayBuffer(length);
-  var arr = new Uint8Array(buf);
-  for (var i = 0; i < length; i++) {
-    arr[i] = bin.charCodeAt(i);
-  }
-  return buf;
-};
-},{}],64:[function(require,module,exports){
-'use strict';
-
-var createBlob = require('./blob');
-var binaryStringToArrayBuffer = require('./binaryStringToArrayBuffer');
-
-module.exports = function (binString, type) {
-  return createBlob([binaryStringToArrayBuffer(binString)], {type: type});
-};
-},{"./binaryStringToArrayBuffer":63,"./blob":65}],65:[function(require,module,exports){
-"use strict";
-
-// Abstracts constructing a Blob object, so it also works in older
-// browsers that don't support the native Blob constructor (e.g.
-// old QtWebKit versions, Android < 4.4).
-function createBlob(parts, properties) {
-  /* global BlobBuilder,MSBlobBuilder,MozBlobBuilder,WebKitBlobBuilder */
-  parts = parts || [];
-  properties = properties || {};
-  try {
-    return new Blob(parts, properties);
-  } catch (e) {
-    if (e.name !== "TypeError") {
-      throw e;
-    }
-    var Builder = typeof BlobBuilder !== 'undefined' ? BlobBuilder :
-                  typeof MSBlobBuilder !== 'undefined' ? MSBlobBuilder :
-                  typeof MozBlobBuilder !== 'undefined' ? MozBlobBuilder :
-                  WebKitBlobBuilder;
-    var builder = new Builder();
-    for (var i = 0; i < parts.length; i += 1) {
-      builder.append(parts[i]);
-    }
-    return builder.getBlob(properties.type);
-  }
-}
-
-module.exports = createBlob;
-
-
-},{}],66:[function(require,module,exports){
-'use strict';
-
-var Promise = require('../promise');
-var readAsBinaryString = require('./readAsBinaryString');
-var btoa = require('./base64').btoa;
-
-module.exports = function blobToBase64(blobOrBuffer) {
-  return new Promise(function (resolve) {
-    readAsBinaryString(blobOrBuffer, function (bin) {
-      resolve(btoa(bin));
-    });
-  });
-};
-},{"../promise":88,"./base64":61,"./readAsBinaryString":69}],67:[function(require,module,exports){
-// hey guess what, we don't need this in the browser
-module.exports = {};
-},{}],68:[function(require,module,exports){
-'use strict';
-
-// simplified API. universal browser support is assumed
-module.exports = function (blob, callback) {
-  var reader = new FileReader();
-  reader.onloadend = function (e) {
-    var result = e.target.result || new ArrayBuffer(0);
-    callback(result);
-  };
-  reader.readAsArrayBuffer(blob);
-};
-},{}],69:[function(require,module,exports){
-'use strict';
-
-var arrayBufferToBinaryString = require('./arrayBufferToBinaryString');
-
-// shim for browsers that don't support it
-module.exports = function (blob, callback) {
-  var reader = new FileReader();
-  var hasBinaryString = typeof reader.readAsBinaryString === 'function';
-  reader.onloadend = function (e) {
-    var result = e.target.result || '';
-    if (hasBinaryString) {
-      return callback(result);
-    }
-    callback(arrayBufferToBinaryString(result));
-  };
-  if (hasBinaryString) {
-    reader.readAsBinaryString(blob);
-  } else {
-    reader.readAsArrayBuffer(blob);
-  }
-};
-},{"./arrayBufferToBinaryString":60}],70:[function(require,module,exports){
-'use strict';
-
-function isPlainObject(object) {
-  // dead-simple "is this a straight-up object" test, taken
-  // from pouchdb-extend ala jQuery 1.9.0
-  // Own properties are enumerated firstly, so to speed up,
-  // if last one is own, then all properties are own.
-
-  if (typeof object.hasOwnProperty !== 'function') {
-    return false;
-  }
-
-  var key;
-  for (key in object) {}
-  return key === undefined || object.hasOwnProperty(key);
-}
-
-module.exports = function clone(object) {
-  var newObject;
-  var i;
-  var len;
-
-  if (!object || typeof object !== 'object') {
-    return object;
-  }
-
-  if (Array.isArray(object)) {
-    newObject = [];
-    for (i = 0, len = object.length; i < len; i++) {
-      newObject[i] = clone(object[i]);
-    }
-    return newObject;
-  }
-
-  // special case: to avoid inconsistencies between IndexedDB
-  // and other backends, we automatically stringify Dates
-  if (object instanceof Date) {
-    return object.toISOString();
-  }
-
-  if (!isPlainObject(object)) {
-    return object;
-  }
-
-  newObject = {};
-  for (i in object) {
-    if (object.hasOwnProperty(i)) {
-      var value = clone(object[i]);
-      if (typeof value !== 'undefined') {
-        newObject[i] = value;
-      }
-    }
-  }
-  return newObject;
-};
-},{}],71:[function(require,module,exports){
-'use strict';
-
-var merge = require('../../merge');
-
-function getTrees(node) {
-  return node.ids;
-}
-
-// check if a specific revision of a doc has been deleted
-//  - metadata: the metadata object from the doc store
-//  - rev: (optional) the revision to check. defaults to winning revision
-function isDeleted(metadata, rev) {
-  if (!rev) {
-    rev = merge.winningRev(metadata);
-  }
-  var id = rev.substring(rev.indexOf('-') + 1);
-  var toVisit = metadata.rev_tree.map(getTrees);
-
-  var tree;
-  while ((tree = toVisit.pop())) {
-    if (tree[0] === id) {
-      return !!tree[1].deleted;
-    }
-    toVisit = toVisit.concat(tree[2]);
-  }
-}
-
-module.exports = isDeleted;
-},{"../../merge":101}],72:[function(require,module,exports){
-'use strict';
-
-function isLocalId(id) {
-  return (/^_local/).test(id);
-}
-
-module.exports = isLocalId;
-},{}],73:[function(require,module,exports){
-'use strict';
-
-var parseDdocFunctionName = require('./parseDdocFunctionName');
-
-module.exports = function normalizeDesignDocFunctionName(s) {
-  var normalized = parseDdocFunctionName(s);
-  return normalized ? normalized.join('/') : null;
-};
-},{"./parseDdocFunctionName":74}],74:[function(require,module,exports){
-'use strict';
-
-module.exports = function parseDesignDocFunctionName(s) {
-  if (!s) {
-    return null;
-  }
-  var parts = s.split('/');
-  if (parts.length === 2) {
-    return parts;
-  }
-  if (parts.length === 1) {
-    return [s, s];
-  }
-  return null;
-};
-},{}],75:[function(require,module,exports){
-'use strict';
-
-var errors = require('./../errors');
-var uuid = require('./../uuid');
-
-function toObject(array) {
-  return array.reduce(function (obj, item) {
-    obj[item] = true;
-    return obj;
-  }, {});
-}
-// List of top level reserved words for doc
-var reservedWords = toObject([
-  '_id',
-  '_rev',
-  '_attachments',
-  '_deleted',
-  '_revisions',
-  '_revs_info',
-  '_conflicts',
-  '_deleted_conflicts',
-  '_local_seq',
-  '_rev_tree',
-  //replication documents
-  '_replication_id',
-  '_replication_state',
-  '_replication_state_time',
-  '_replication_state_reason',
-  '_replication_stats',
-  // Specific to Couchbase Sync Gateway
-  '_removed'
-]);
-
-// List of reserved words that should end up the document
-var dataWords = toObject([
-  '_attachments',
-  //replication documents
-  '_replication_id',
-  '_replication_state',
-  '_replication_state_time',
-  '_replication_state_reason',
-  '_replication_stats'
-]);
-
-// Determine id an ID is valid
-//   - invalid IDs begin with an underescore that does not begin '_design' or
-//     '_local'
-//   - any other string value is a valid id
-// Returns the specific error object for each case
-exports.invalidIdError = function (id) {
-  var err;
-  if (!id) {
-    err = errors.error(errors.MISSING_ID);
-  } else if (typeof id !== 'string') {
-    err = errors.error(errors.INVALID_ID);
-  } else if (/^_/.test(id) && !(/^_(design|local)/).test(id)) {
-    err = errors.error(errors.RESERVED_ID);
-  }
-  if (err) {
-    throw err;
-  }
-};
-
-function parseRevisionInfo(rev) {
-  if (!/^\d+\-./.test(rev)) {
-    return errors.error(errors.INVALID_REV);
-  }
-  var idx = rev.indexOf('-');
-  var left = rev.substring(0, idx);
-  var right = rev.substring(idx + 1);
-  return {
-    prefix: parseInt(left, 10),
-    id: right
-  };
-}
-
-function makeRevTreeFromRevisions(revisions, opts) {
-  var pos = revisions.start - revisions.ids.length + 1;
-
-  var revisionIds = revisions.ids;
-  var ids = [revisionIds[0], opts, []];
-
-  for (var i = 1, len = revisionIds.length; i < len; i++) {
-    ids = [revisionIds[i], {status: 'missing'}, [ids]];
-  }
-
-  return [{
-    pos: pos,
-    ids: ids
-  }];
-}
-
-// Preprocess documents, parse their revisions, assign an id and a
-// revision for new writes that are missing them, etc
-exports.parseDoc = function (doc, newEdits) {
-
-  var nRevNum;
-  var newRevId;
-  var revInfo;
-  var opts = {status: 'available'};
-  if (doc._deleted) {
-    opts.deleted = true;
-  }
-
-  if (newEdits) {
-    if (!doc._id) {
-      doc._id = uuid();
-    }
-    newRevId = uuid(32, 16).toLowerCase();
-    if (doc._rev) {
-      revInfo = parseRevisionInfo(doc._rev);
-      if (revInfo.error) {
-        return revInfo;
-      }
-      doc._rev_tree = [{
-        pos: revInfo.prefix,
-        ids: [revInfo.id, {status: 'missing'}, [[newRevId, opts, []]]]
-      }];
-      nRevNum = revInfo.prefix + 1;
-    } else {
-      doc._rev_tree = [{
-        pos: 1,
-        ids : [newRevId, opts, []]
-      }];
-      nRevNum = 1;
-    }
-  } else {
-    if (doc._revisions) {
-      doc._rev_tree = makeRevTreeFromRevisions(doc._revisions, opts);
-      nRevNum = doc._revisions.start;
-      newRevId = doc._revisions.ids[0];
-    }
-    if (!doc._rev_tree) {
-      revInfo = parseRevisionInfo(doc._rev);
-      if (revInfo.error) {
-        return revInfo;
-      }
-      nRevNum = revInfo.prefix;
-      newRevId = revInfo.id;
-      doc._rev_tree = [{
-        pos: nRevNum,
-        ids: [newRevId, opts, []]
-      }];
-    }
-  }
-
-  exports.invalidIdError(doc._id);
-
-  doc._rev = nRevNum + '-' + newRevId;
-
-  var result = {metadata : {}, data : {}};
-  for (var key in doc) {
-    /* istanbul ignore else */
-    if (doc.hasOwnProperty(key)) {
-      var specialKey = key[0] === '_';
-      if (specialKey && !reservedWords[key]) {
-        var error = errors.error(errors.DOC_VALIDATION, key);
-        error.message = errors.DOC_VALIDATION.message + ': ' + key;
-        throw error;
-      } else if (specialKey && !dataWords[key]) {
-        result.metadata[key.slice(1)] = doc[key];
-      } else {
-        result.data[key] = doc[key];
-      }
-    }
-  }
-  return result;
-};
-
-},{"./../errors":81,"./../uuid":91}],76:[function(require,module,exports){
-'use strict';
-
-var base64 = require('../binary/base64');
-var arrayBuffToBinString = require('../binary/arrayBufferToBinaryString');
-var readAsArrayBuffer = require('../binary/readAsArrayBuffer');
-var binStringToBlobOrBuffer = require('../binary/binaryStringToBlobOrBuffer');
-var errors = require('../errors');
-var md5 = require('../md5');
-
-function preprocessAttachments(docInfos, blobType, callback) {
-
-  if (!docInfos.length) {
-    return callback();
-  }
-
-  var docv = 0;
-
-  function parseBase64(data) {
-    try {
-      return base64.atob(data);
-    } catch (e) {
-      var err = errors.error(errors.BAD_ARG,
-        'Attachments need to be base64 encoded');
-      return {error: err};
-    }
-  }
-
-  function preprocessAttachment(att, callback) {
-    if (att.stub) {
-      return callback();
-    }
-    if (typeof att.data === 'string') {
-      // input is a base64 string
-
-      var asBinary = parseBase64(att.data);
-      if (asBinary.error) {
-        return callback(asBinary.error);
-      }
-
-      att.length = asBinary.length;
-      if (blobType === 'blob') {
-        att.data = binStringToBlobOrBuffer(asBinary, att.content_type);
-      } else if (blobType === 'base64') {
-        att.data = base64.btoa(asBinary);
-      } else { // binary
-        att.data = asBinary;
-      }
-      md5(asBinary).then(function (result) {
-        att.digest = 'md5-' + result;
-        callback();
-      });
-    } else { // input is a blob
-      readAsArrayBuffer(att.data, function (buff) {
-        if (blobType === 'binary') {
-          att.data = arrayBuffToBinString(buff);
-        } else if (blobType === 'base64') {
-          att.data = base64.btoa(arrayBuffToBinString(buff));
-        }
-        md5(buff).then(function (result) {
-          att.digest = 'md5-' + result;
-          att.length = buff.byteLength;
-          callback();
-        });
-      });
-    }
-  }
-
-  var overallErr;
-
-  docInfos.forEach(function (docInfo) {
-    var attachments = docInfo.data && docInfo.data._attachments ?
-      Object.keys(docInfo.data._attachments) : [];
-    var recv = 0;
-
-    if (!attachments.length) {
-      return done();
-    }
-
-    function processedAttachment(err) {
-      overallErr = err;
-      recv++;
-      if (recv === attachments.length) {
-        done();
-      }
-    }
-
-    for (var key in docInfo.data._attachments) {
-      if (docInfo.data._attachments.hasOwnProperty(key)) {
-        preprocessAttachment(docInfo.data._attachments[key],
-          processedAttachment);
-      }
-    }
-  });
-
-  function done() {
-    docv++;
-    if (docInfos.length === docv) {
-      if (overallErr) {
-        callback(overallErr);
-      } else {
-        callback();
-      }
-    }
-  }
-}
-
-module.exports = preprocessAttachments;
-},{"../binary/arrayBufferToBinaryString":60,"../binary/base64":61,"../binary/binaryStringToBlobOrBuffer":64,"../binary/readAsArrayBuffer":68,"../errors":81,"../md5":83}],77:[function(require,module,exports){
-'use strict';
-
-var merge = require('../../merge');
-var errors = require('../errors');
-var updateDoc = require('./updateDoc');
-var isDeleted = require('./isDeleted');
-var isLocalId = require('./isLocalId');
-
-var collections = require('pouchdb-collections');
-var Map = collections.Map;
-
-function processDocs(docInfos, api, fetchedDocs, tx, results, writeDoc, opts,
-                     overallCallback) {
-
-  function insertDoc(docInfo, resultsIdx, callback) {
-    // Cant insert new deleted documents
-    var winningRev = merge.winningRev(docInfo.metadata);
-    var deleted = isDeleted(docInfo.metadata, winningRev);
-    if ('was_delete' in opts && deleted) {
-      results[resultsIdx] = errors.error(errors.MISSING_DOC, 'deleted');
-      return callback();
-    }
-
-    var delta = deleted ? 0 : 1;
-
-    writeDoc(docInfo, winningRev, deleted, deleted, false,
-      delta, resultsIdx, callback);
-  }
-
-  var newEdits = opts.new_edits;
-  var idsToDocs = new Map();
-
-  var docsDone = 0;
-  var docsToDo = docInfos.length;
-
-  function checkAllDocsDone() {
-    if (++docsDone === docsToDo && overallCallback) {
-      overallCallback();
-    }
-  }
-
-  docInfos.forEach(function (currentDoc, resultsIdx) {
-
-    if (currentDoc._id && isLocalId(currentDoc._id)) {
-      api[currentDoc._deleted ? '_removeLocal' : '_putLocal'](
-        currentDoc, {ctx: tx}, function (err) {
-          if (err) {
-            results[resultsIdx] = err;
-          } else {
-            results[resultsIdx] = {ok: true};
-          }
-          checkAllDocsDone();
-        });
-      return;
-    }
-
-    var id = currentDoc.metadata.id;
-    if (idsToDocs.has(id)) {
-      docsToDo--; // duplicate
-      idsToDocs.get(id).push([currentDoc, resultsIdx]);
-    } else {
-      idsToDocs.set(id, [[currentDoc, resultsIdx]]);
-    }
-  });
-
-  // in the case of new_edits, the user can provide multiple docs
-  // with the same id. these need to be processed sequentially
-  idsToDocs.forEach(function (docs, id) {
-    var numDone = 0;
-
-    function docWritten() {
-      if (++numDone < docs.length) {
-        nextDoc();
-      } else {
-        checkAllDocsDone();
-      }
-    }
-    function nextDoc() {
-      var value = docs[numDone];
-      var currentDoc = value[0];
-      var resultsIdx = value[1];
-
-      if (fetchedDocs.has(id)) {
-        updateDoc(fetchedDocs.get(id), currentDoc, results,
-          resultsIdx, docWritten, writeDoc, newEdits);
-      } else {
-        insertDoc(currentDoc, resultsIdx, docWritten);
-      }
-    }
-    nextDoc();
-  });
-}
-
-module.exports = processDocs;
-},{"../../merge":101,"../errors":81,"./isDeleted":71,"./isLocalId":72,"./updateDoc":78,"pouchdb-collections":120}],78:[function(require,module,exports){
-'use strict';
-
-var merge = require('../../merge');
-var errors = require('../errors');
-var isDeleted = require('./isDeleted');
-var parseDoc = require('./parseDoc').parseDoc;
-
-function updateDoc(prev, docInfo, results, i, cb, writeDoc, newEdits) {
-
-  if (merge.revExists(prev.rev_tree, docInfo.metadata.rev)) {
-    results[i] = docInfo;
-    return cb();
-  }
-
-  // sometimes this is pre-calculated. historically not always
-  var previousWinningRev = prev.winningRev || merge.winningRev(prev);
-  var previouslyDeleted = 'deleted' in prev ? prev.deleted :
-    isDeleted(prev, previousWinningRev);
-  var deleted = 'deleted' in docInfo.metadata ? docInfo.metadata.deleted :
-    isDeleted(docInfo.metadata);
-  var isRoot = /^1-/.test(docInfo.metadata.rev);
-
-  if (previouslyDeleted && !deleted && newEdits && isRoot) {
-    var newDoc = docInfo.data;
-    newDoc._rev = previousWinningRev;
-    newDoc._id = docInfo.metadata.id;
-    docInfo = parseDoc(newDoc, newEdits);
-  }
-
-  var merged = merge.merge(prev.rev_tree, docInfo.metadata.rev_tree[0], 1000);
-
-  var inConflict = newEdits && (((previouslyDeleted && deleted) ||
-    (!previouslyDeleted && merged.conflicts !== 'new_leaf') ||
-    (previouslyDeleted && !deleted && merged.conflicts === 'new_branch')));
-
-  if (inConflict) {
-    var err = errors.error(errors.REV_CONFLICT);
-    results[i] = err;
-    return cb();
-  }
-
-  var newRev = docInfo.metadata.rev;
-  docInfo.metadata.rev_tree = merged.tree;
-  /* istanbul ignore else */
-  if (prev.rev_map) {
-    docInfo.metadata.rev_map = prev.rev_map; // used only by leveldb
-  }
-
-  // recalculate
-  var winningRev = merge.winningRev(docInfo.metadata);
-  var winningRevIsDeleted = isDeleted(docInfo.metadata, winningRev);
-
-  // calculate the total number of documents that were added/removed,
-  // from the perspective of total_rows/doc_count
-  var delta = (previouslyDeleted === winningRevIsDeleted) ? 0 :
-    previouslyDeleted < winningRevIsDeleted ? -1 : 1;
-
-  var newRevIsDeleted;
-  if (newRev === winningRev) {
-    // if the new rev is the same as the winning rev, we can reuse that value
-    newRevIsDeleted = winningRevIsDeleted;
-  } else {
-    // if they're not the same, then we need to recalculate
-    newRevIsDeleted = isDeleted(docInfo.metadata, newRev);
-  }
-
-  writeDoc(docInfo, winningRev, winningRevIsDeleted, newRevIsDeleted,
-    true, delta, i, cb);
-}
-
-module.exports = updateDoc;
-},{"../../merge":101,"../errors":81,"./isDeleted":71,"./parseDoc":75}],79:[function(require,module,exports){
-'use strict';
-
-var isChromeApp = require('./isChromeApp');
-
-var hasLocal;
-
-if (isChromeApp()) {
-  hasLocal = false;
-} else {
-  try {
-    localStorage.setItem('_pouch_check_localstorage', 1);
-    hasLocal = !!localStorage.getItem('_pouch_check_localstorage');
-  } catch (e) {
-    hasLocal = false;
-  }
-}
-
-module.exports = function hasLocalStorage() {
-  return hasLocal;
-};
-},{"./isChromeApp":80}],80:[function(require,module,exports){
-'use strict';
-
-module.exports = function isChromeApp() {
-  return (typeof chrome !== "undefined" &&
-    typeof chrome.storage !== "undefined" &&
-    typeof chrome.storage.local !== "undefined");
-};
-},{}],81:[function(require,module,exports){
-"use strict";
-
-var inherits = require('inherits');
-inherits(PouchError, Error);
-
-function PouchError(opts) {
-  Error.call(opts.reason);
-  this.status = opts.status;
-  this.name = opts.error;
-  this.message = opts.reason;
-  this.error = true;
-}
-
-PouchError.prototype.toString = function () {
-  return JSON.stringify({
-    status: this.status,
-    name: this.name,
-    message: this.message
-  });
-};
-
-exports.UNAUTHORIZED = new PouchError({
-  status: 401,
-  error: 'unauthorized',
-  reason: "Name or password is incorrect."
-});
-
-exports.MISSING_BULK_DOCS = new PouchError({
-  status: 400,
-  error: 'bad_request',
-  reason: "Missing JSON list of 'docs'"
-});
-
-exports.MISSING_DOC = new PouchError({
-  status: 404,
-  error: 'not_found',
-  reason: 'missing'
-});
-
-exports.REV_CONFLICT = new PouchError({
-  status: 409,
-  error: 'conflict',
-  reason: 'Document update conflict'
-});
-
-exports.INVALID_ID = new PouchError({
-  status: 400,
-  error: 'invalid_id',
-  reason: '_id field must contain a string'
-});
-
-exports.MISSING_ID = new PouchError({
-  status: 412,
-  error: 'missing_id',
-  reason: '_id is required for puts'
-});
-
-exports.RESERVED_ID = new PouchError({
-  status: 400,
-  error: 'bad_request',
-  reason: 'Only reserved document ids may start with underscore.'
-});
-
-exports.NOT_OPEN = new PouchError({
-  status: 412,
-  error: 'precondition_failed',
-  reason: 'Database not open'
-});
-
-exports.UNKNOWN_ERROR = new PouchError({
-  status: 500,
-  error: 'unknown_error',
-  reason: 'Database encountered an unknown error'
-});
-
-exports.BAD_ARG = new PouchError({
-  status: 500,
-  error: 'badarg',
-  reason: 'Some query argument is invalid'
-});
-
-exports.INVALID_REQUEST = new PouchError({
-  status: 400,
-  error: 'invalid_request',
-  reason: 'Request was invalid'
-});
-
-exports.QUERY_PARSE_ERROR = new PouchError({
-  status: 400,
-  error: 'query_parse_error',
-  reason: 'Some query parameter is invalid'
-});
-
-exports.DOC_VALIDATION = new PouchError({
-  status: 500,
-  error: 'doc_validation',
-  reason: 'Bad special document member'
-});
-
-exports.BAD_REQUEST = new PouchError({
-  status: 400,
-  error: 'bad_request',
-  reason: 'Something wrong with the request'
-});
-
-exports.NOT_AN_OBJECT = new PouchError({
-  status: 400,
-  error: 'bad_request',
-  reason: 'Document must be a JSON object'
-});
-
-exports.DB_MISSING = new PouchError({
-  status: 404,
-  error: 'not_found',
-  reason: 'Database not found'
-});
-
-exports.IDB_ERROR = new PouchError({
-  status: 500,
-  error: 'indexed_db_went_bad',
-  reason: 'unknown'
-});
-
-exports.WSQ_ERROR = new PouchError({
-  status: 500,
-  error: 'web_sql_went_bad',
-  reason: 'unknown'
-});
-
-exports.LDB_ERROR = new PouchError({
-  status: 500,
-  error: 'levelDB_went_went_bad',
-  reason: 'unknown'
-});
-
-exports.FORBIDDEN = new PouchError({
-  status: 403,
-  error: 'forbidden',
-  reason: 'Forbidden by design doc validate_doc_update function'
-});
-
-exports.INVALID_REV = new PouchError({
-  status: 400,
-  error: 'bad_request',
-  reason: 'Invalid rev format'
-});
-
-exports.FILE_EXISTS = new PouchError({
-  status: 412,
-  error: 'file_exists',
-  reason: 'The database could not be created, the file already exists.'
-});
-
-exports.MISSING_STUB = new PouchError({
-  status: 412,
-  error: 'missing_stub'
-});
-
-exports.error = function (error, reason, name) {
-  function CustomPouchError(reason) {
-    // inherit error properties from our parent error manually
-    // so as to allow proper JSON parsing.
-    /* jshint ignore:start */
-    for (var p in error) {
-      if (typeof error[p] !== 'function') {
-        this[p] = error[p];
-      }
-    }
-    /* jshint ignore:end */
-    if (name !== undefined) {
-      this.name = name;
-    }
-    if (reason !== undefined) {
-      this.reason = reason;
-    }
-  }
-  CustomPouchError.prototype = PouchError.prototype;
-  return new CustomPouchError(reason);
-};
-
-// Find one of the errors defined above based on the value
-// of the specified property.
-// If reason is provided prefer the error matching that reason.
-// This is for differentiating between errors with the same name and status,
-// eg, bad_request.
-exports.getErrorTypeByProp = function (prop, value, reason) {
-  var errors = exports;
-  var keys = Object.keys(errors).filter(function (key) {
-    var error = errors[key];
-    return typeof error !== 'function' && error[prop] === value;
-  });
-  var key = reason && keys.filter(function (key) {
-        var error = errors[key];
-        return error.message === reason;
-      })[0] || keys[0];
-  return (key) ? errors[key] : null;
-};
-
-exports.generateErrorFromResponse = function (res) {
-  var error, errName, errType, errMsg, errReason;
-  var errors = exports;
-
-  errName = (res.error === true && typeof res.name === 'string') ?
-              res.name :
-              res.error;
-  errReason = res.reason;
-  errType = errors.getErrorTypeByProp('name', errName, errReason);
-
-  if (res.missing ||
-      errReason === 'missing' ||
-      errReason === 'deleted' ||
-      errName === 'not_found') {
-    errType = errors.MISSING_DOC;
-  } else if (errName === 'doc_validation') {
-    // doc validation needs special treatment since
-    // res.reason depends on the validation error.
-    // see utils.js
-    errType = errors.DOC_VALIDATION;
-    errMsg = errReason;
-  } else if (errName === 'bad_request' && errType.message !== errReason) {
-    // if bad_request error already found based on reason don't override.
-    errType = errors.BAD_REQUEST;
-  }
-
-  // fallback to error by status or unknown error.
-  if (!errType) {
-    errType = errors.getErrorTypeByProp('status', res.status, errReason) ||
-                errors.UNKNOWN_ERROR;
-  }
-
-  error = errors.error(errType, errReason, errName);
-
-  // Keep custom message.
-  if (errMsg) {
-    error.message = errMsg;
-  }
-
-  // Keep helpful response data in our error messages.
-  if (res.id) {
-    error.id = res.id;
-  }
-  if (res.status) {
-    error.status = res.status;
-  }
-  if (res.missing) {
-    error.missing = res.missing;
-  }
-
-  return error;
-};
-
-},{"inherits":115}],82:[function(require,module,exports){
-'use strict';
-
-var clone = require('./clone');
-
-function extendInner(obj, otherObj) {
-  for (var key in otherObj) {
-    if (otherObj.hasOwnProperty(key)) {
-      var value = clone(otherObj[key]);
-      if (typeof value !== 'undefined') {
-        obj[key] = value;
-      }
-    }
-  }
-}
-
-module.exports = function extend(obj, obj2, obj3) {
-  extendInner(obj, obj2);
-  if (obj3) {
-    extendInner(obj, obj3);
-  }
-  return obj;
-};
-},{"./clone":70}],83:[function(require,module,exports){
-(function (global){
-'use strict';
-
-var toPromise = require('./toPromise');
-var base64 = require('./binary/base64');
-var Md5 = require('spark-md5');
-var setImmediateShim = global.setImmediate || global.setTimeout;
-var MD5_CHUNK_SIZE = 32768;
-
-// convert a 64-bit int to a binary string
-function intToString(int) {
-  return String.fromCharCode(int & 0xff) +
-    String.fromCharCode((int >>> 8) & 0xff) +
-    String.fromCharCode((int >>> 16) & 0xff) +
-    String.fromCharCode((int >>> 24) & 0xff);
-}
-
-// convert an array of 64-bit ints into
-// a base64-encoded string
-function rawToBase64(raw) {
-  var res = '';
-  for (var i = 0, len = raw.length; i < len; i++) {
-    res += intToString(raw[i]);
-  }
-  return base64.btoa(res);
-}
-
-function appendBuffer(buffer, data, start, end) {
-  if (start > 0 || end < data.byteLength) {
-    // only create a subarray if we really need to
-    data = new Uint8Array(data, start,
-      Math.min(end, data.byteLength) - start);
-  }
-  buffer.append(data);
-}
-
-function appendString(buffer, data, start, end) {
-  if (start > 0 || end < data.length) {
-    // only create a substring if we really need to
-    data = data.substring(start, end);
-  }
-  buffer.appendBinary(data);
-}
-
-module.exports = toPromise(function (data, callback) {
-  var inputIsString = typeof data === 'string';
-  var len = inputIsString ? data.length : data.byteLength;
-  var chunkSize = Math.min(MD5_CHUNK_SIZE, len);
-  var chunks = Math.ceil(len / chunkSize);
-  var currentChunk = 0;
-  var buffer = inputIsString ? new Md5() : new Md5.ArrayBuffer();
-
-  var append = inputIsString ? appendString : appendBuffer;
-
-  function loadNextChunk() {
-    var start = currentChunk * chunkSize;
-    var end = start + chunkSize;
-    currentChunk++;
-    if (currentChunk < chunks) {
-      append(buffer, data, start, end);
-      setImmediateShim(loadNextChunk);
-    } else {
-      append(buffer, data, start, end);
-      var raw = buffer.end(true);
-      var base64 = rawToBase64(raw);
-      callback(null, base64);
-      buffer.destroy();
-    }
-  }
-  loadNextChunk();
-});
-
-}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./binary/base64":61,"./toPromise":89,"spark-md5":121}],84:[function(require,module,exports){
-'use strict';
-
-var getArguments = require('argsarray');
-
-function once(fun) {
-  var called = false;
-  return getArguments(function (args) {
-    /* istanbul ignore if */
-    if (called) {
-      // this is a smoke test and should never actually happen
-      throw new Error('once called more than once');
-    } else {
-      called = true;
-      fun.apply(this, args);
-    }
-  });
-}
-
-module.exports = once;
-},{"argsarray":114}],85:[function(require,module,exports){
-'use strict';
-
-//
-// Parsing hex strings. Yeah.
-//
-// So basically we need this because of a bug in WebSQL:
-// https://code.google.com/p/chromium/issues/detail?id=422690
-// https://bugs.webkit.org/show_bug.cgi?id=137637
-//
-// UTF-8 and UTF-16 are provided as separate functions
-// for meager performance improvements
-//
-
-function decodeUtf8(str) {
-  return decodeURIComponent(window.escape(str));
-}
-
-function hexToInt(charCode) {
-  // '0'-'9' is 48-57
-  // 'A'-'F' is 65-70
-  // SQLite will only give us uppercase hex
-  return charCode < 65 ? (charCode - 48) : (charCode - 55);
-}
-
-
-// Example:
-// pragma encoding=utf8;
-// select hex('A');
-// returns '41'
-function parseHexUtf8(str, start, end) {
-  var result = '';
-  while (start < end) {
-    result += String.fromCharCode(
-      (hexToInt(str.charCodeAt(start++)) << 4) |
-        hexToInt(str.charCodeAt(start++)));
-  }
-  return result;
-}
-
-// Example:
-// pragma encoding=utf16;
-// select hex('A');
-// returns '4100'
-// notice that the 00 comes after the 41 (i.e. it's swizzled)
-function parseHexUtf16(str, start, end) {
-  var result = '';
-  while (start < end) {
-    // UTF-16, so swizzle the bytes
-    result += String.fromCharCode(
-      (hexToInt(str.charCodeAt(start + 2)) << 12) |
-        (hexToInt(str.charCodeAt(start + 3)) << 8) |
-        (hexToInt(str.charCodeAt(start)) << 4) |
-        hexToInt(str.charCodeAt(start + 1)));
-    start += 4;
-  }
-  return result;
-}
-
-function parseHexString(str, encoding) {
-  if (encoding === 'UTF-8') {
-    return decodeUtf8(parseHexUtf8(str, 0, str.length));
-  } else {
-    return parseHexUtf16(str, 0, str.length);
-  }
-}
-
-module.exports = parseHexString;
-},{}],86:[function(require,module,exports){
-'use strict';
-
-// originally parseUri 1.2.2, now patched by us
-// (c) Steven Levithan <stevenlevithan.com>
-// MIT License
-var keys = ["source", "protocol", "authority", "userInfo", "user", "password",
-    "host", "port", "relative", "path", "directory", "file", "query", "anchor"];
-var qName ="queryKey";
-var qParser = /(?:^|&)([^&=]*)=?([^&]*)/g;
-
-// use the "loose" parser
-/* jshint maxlen: false */
-var parser = /^(?:(?![^:@]+:[^:@\/]*@)([^:\/?#.]+):)?(?:\/\/)?((?:(([^:@]*)(?::([^:@]*))?)?@)?([^:\/?#]*)(?::(\d*))?)(((\/(?:[^?#](?![^?#\/]*\.[^?#\/.]+(?:[?#]|$)))*\/?)?([^?#\/]*))(?:\?([^#]*))?(?:#(.*))?)/;
-
-function parseUri(str) {
-  var m = parser.exec(str);
-  var uri = {};
-  var i = 14;
-
-  while (i--) {
-    var key = keys[i];
-    var value = m[i] || "";
-    var encoded = ['user', 'password'].indexOf(key) !== -1;
-    uri[key] = encoded ? decodeURIComponent(value) : value;
-  }
-
-  uri[qName] = {};
-  uri[keys[12]].replace(qParser, function ($0, $1, $2) {
-    if ($1) {
-      uri[qName][$1] = $2;
-    }
-  });
-
-  return uri;
-}
-
-module.exports = parseUri;
-},{}],87:[function(require,module,exports){
-'use strict';
-
-// like underscore/lodash _.pick()
-module.exports = function pick(obj, arr) {
-  var res = {};
-  for (var i = 0, len = arr.length; i < len; i++) {
-    var prop = arr[i];
-    if (prop in obj) {
-      res[prop] = obj[prop];
-    }
-  }
-  return res;
-};
-},{}],88:[function(require,module,exports){
-'use strict';
-/* istanbul ignore next */
-module.exports = typeof Promise === 'function' ? Promise : require('lie');
-
-},{"lie":116}],89:[function(require,module,exports){
-(function (process){
-'use strict';
-
-var Promise = require('./promise');
-var getArguments = require('argsarray');
-var once = require('./once');
-
-function toPromise(func) {
-  //create the function we will be returning
-  return getArguments(function (args) {
-    var self = this;
-    var tempCB =
-      (typeof args[args.length - 1] === 'function') ? args.pop() : false;
-    // if the last argument is a function, assume its a callback
-    var usedCB;
-    if (tempCB) {
-      // if it was a callback, create a new callback which calls it,
-      // but do so async so we don't trap any errors
-      usedCB = function (err, resp) {
-        process.nextTick(function () {
-          tempCB(err, resp);
-        });
-      };
-    }
-    var promise = new Promise(function (fulfill, reject) {
-      var resp;
-      try {
-        var callback = once(function (err, mesg) {
-          if (err) {
-            reject(err);
-          } else {
-            fulfill(mesg);
-          }
-        });
-        // create a callback for this invocation
-        // apply the function in the orig context
-        args.push(callback);
-        resp = func.apply(self, args);
-        if (resp && typeof resp.then === 'function') {
-          fulfill(resp);
-        }
-      } catch (e) {
-        reject(e);
-      }
-    });
-    // if there is a callback, call it back
-    if (usedCB) {
-      promise.then(function (result) {
-        usedCB(null, result);
-      }, usedCB);
-    }
-    return promise;
-  });
-}
-
-module.exports = toPromise;
-}).call(this,require('_process'))
-},{"./once":84,"./promise":88,"_process":135,"argsarray":114}],90:[function(require,module,exports){
-'use strict';
-
-var Promise = require('./promise');
-
-// this is essentially the "update sugar" function from daleharvey/pouchdb#1388
-// the diffFun tells us what delta to apply to the doc.  it either returns
-// the doc, or false if it doesn't need to do an update after all
-var upsert = module.exports = function upsert(db, docId, diffFun) {
-  return new Promise(function (fulfill, reject) {
-    if (typeof docId !== 'string') {
-      return reject(new Error('doc id is required'));
-    }
-
-    db.get(docId, function (err, doc) {
-      if (err) {
-        /* istanbul ignore next */
-        if (err.status !== 404) {
-          return reject(err);
-        }
-        doc = {};
-      }
-
-      // the user might change the _rev, so save it for posterity
-      var docRev = doc._rev;
-      var newDoc = diffFun(doc);
-
-      if (!newDoc) {
-        // if the diffFun returns falsy, we short-circuit as
-        // an optimization
-        return fulfill({updated: false, rev: docRev});
-      }
-
-      // users aren't allowed to modify these values,
-      // so reset them here
-      newDoc._id = docId;
-      newDoc._rev = docRev;
-      fulfill(tryAndPut(db, newDoc, diffFun));
-    });
-  });
-};
-
-function tryAndPut(db, doc, diffFun) {
-  return db.put(doc).then(function (res) {
-    return {
-      updated: true,
-      rev: res.rev
-    };
-  }, function (err) {
-    /* istanbul ignore next */
-    if (err.status !== 409) {
-      throw err;
-    }
-    return upsert(db, doc._id, diffFun);
-  });
-}
-
-},{"./promise":88}],91:[function(require,module,exports){
-"use strict";
-
-// BEGIN Math.uuid.js
-
-/*!
-Math.uuid.js (v1.4)
-http://www.broofa.com
-mailto:robert@broofa.com
-
-Copyright (c) 2010 Robert Kieffer
-Dual licensed under the MIT and GPL licenses.
-*/
-
-/*
- * Generate a random uuid.
- *
- * USAGE: Math.uuid(length, radix)
- *   length - the desired number of characters
- *   radix  - the number of allowable values for each character.
- *
- * EXAMPLES:
- *   // No arguments  - returns RFC4122, version 4 ID
- *   >>> Math.uuid()
- *   "92329D39-6F5C-4520-ABFC-AAB64544E172"
- *
- *   // One argument - returns ID of the specified length
- *   >>> Math.uuid(15)     // 15 character ID (default base=62)
- *   "VcydxgltxrVZSTV"
- *
- *   // Two arguments - returns ID of the specified length, and radix. 
- *   // (Radix must be <= 62)
- *   >>> Math.uuid(8, 2)  // 8 character ID (base=2)
- *   "01001010"
- *   >>> Math.uuid(8, 10) // 8 character ID (base=10)
- *   "47473046"
- *   >>> Math.uuid(8, 16) // 8 character ID (base=16)
- *   "098F4D35"
- */
-var chars = (
-  '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ' +
-  'abcdefghijklmnopqrstuvwxyz'
-).split('');
-function getValue(radix) {
-  return 0 | Math.random() * radix;
-}
-function uuid(len, radix) {
-  radix = radix || chars.length;
-  var out = '';
-  var i = -1;
-
-  if (len) {
-    // Compact form
-    while (++i < len) {
-      out += chars[getValue(radix)];
-    }
-    return out;
-  }
-    // rfc4122, version 4 form
-    // Fill in random data.  At i==19 set the high bits of clock sequence as
-    // per rfc4122, sec. 4.1.5
-  while (++i < 36) {
-    switch (i) {
-      case 8:
-      case 13:
-      case 18:
-      case 23:
-        out += '-';
-        break;
-      case 19:
-        out += chars[(getValue(16) & 0x3) | 0x8];
-        break;
-      default:
-        out += chars[getValue(16)];
-    }
-  }
-
-  return out;
-}
-
-
-
-module.exports = uuid;
-
-
-},{}],92:[function(require,module,exports){
-'use strict';
-
-module.exports = evalFilter;
-function evalFilter(input) {
-  /*jshint evil: true */
-  return eval([
-    '(function () { return ',
-    input,
-    ' })()'
-  ].join(''));
-}
-},{}],93:[function(require,module,exports){
-'use strict';
-
-module.exports = evalView;
-function evalView(input) {
-  /*jshint evil: true */
-  return eval([
-    '(function () {',
-    '  return function (doc) {',
-    '    var emitted = false;',
-    '    var emit = function (a, b) {',
-    '      emitted = true;',
-    '    };',
-    '    var view = ' + input + ';',
-    '    view(doc);',
-    '    if (emitted) {',
-    '      return true;',
-    '    }',
-    '  }',
-    '})()'
-  ].join('\n'));
-}
-},{}],94:[function(require,module,exports){
-"use strict";
-
-var PouchDB = require('./setup');
-
-module.exports = PouchDB;
-
-PouchDB.ajax = require('./deps/ajax/prequest');
-PouchDB.utils = require('./utils');
-PouchDB.Errors = require('./deps/errors');
-PouchDB.replicate = require('./replicate').replicate;
-PouchDB.sync = require('./sync');
-PouchDB.version = require('./version');
-var httpAdapter = require('./adapters/http');
-PouchDB.adapter('http', httpAdapter);
-PouchDB.adapter('https', httpAdapter);
-
-PouchDB.plugin(require('./mapreduce'));
-
-var adapters = require('./adapters');
-
-Object.keys(adapters).forEach(function (adapterName) {
-  PouchDB.adapter(adapterName, adapters[adapterName], true);
-});
-
-},{"./adapters":35,"./adapters/http":36,"./deps/ajax/prequest":58,"./deps/errors":81,"./mapreduce":97,"./replicate":106,"./setup":109,"./sync":110,"./utils":112,"./version":113}],95:[function(require,module,exports){
-'use strict';
-
-var upsert = require('../deps/upsert');
-var Promise = require('../deps/promise');
-var md5 = require('./md5');
-
-module.exports = function (opts) {
-  var sourceDB = opts.db;
-  var viewName = opts.viewName;
-  var mapFun = opts.map;
-  var reduceFun = opts.reduce;
-  var temporary = opts.temporary;
-
-  // the "undefined" part is for backwards compatibility
-  var viewSignature = mapFun.toString() + (reduceFun && reduceFun.toString()) +
-    'undefined';
-
-  if (!temporary && sourceDB._cachedViews) {
-    var cachedView = sourceDB._cachedViews[viewSignature];
-    if (cachedView) {
-      return Promise.resolve(cachedView);
-    }
-  }
-
-  return sourceDB.info().then(function (info) {
-
-    var depDbName = info.db_name + '-mrview-' +
-      (temporary ? 'temp' : md5(viewSignature));
-
-    // save the view name in the source db so it can be cleaned up if necessary
-    // (e.g. when the _design doc is deleted, remove all associated view data)
-    function diffFunction(doc) {
-      doc.views = doc.views || {};
-      var fullViewName = viewName;
-      if (fullViewName.indexOf('/') === -1) {
-        fullViewName = viewName + '/' + viewName;
-      }
-      var depDbs = doc.views[fullViewName] = doc.views[fullViewName] || {};
-      /* istanbul ignore if */
-      if (depDbs[depDbName]) {
-        return; // no update necessary
-      }
-      depDbs[depDbName] = true;
-      return doc;
-    }
-    return upsert(sourceDB, '_local/mrviews', diffFunction).then(function () {
-      return sourceDB.registerDependentDatabase(depDbName).then(function (res) {
-        var db = res.db;
-        db.auto_compaction = true;
-        var view = {
-          name: depDbName,
-          db: db,
-          sourceDB: sourceDB,
-          adapter: sourceDB.adapter,
-          mapFun: mapFun,
-          reduceFun: reduceFun
-        };
-        return view.db.get('_local/lastSeq').catch(function (err) {
-          /* istanbul ignore if */
-          if (err.status !== 404) {
-            throw err;
-          }
-        }).then(function (lastSeqDoc) {
-          view.seq = lastSeqDoc ? lastSeqDoc.seq : 0;
-          if (!temporary) {
-            sourceDB._cachedViews = sourceDB._cachedViews || {};
-            sourceDB._cachedViews[viewSignature] = view;
-            view.db.once('destroyed', function () {
-              delete sourceDB._cachedViews[viewSignature];
-            });
-          }
-          return view;
-        });
-      });
-    });
-  });
-};
-
-},{"../deps/promise":88,"../deps/upsert":90,"./md5":98}],96:[function(require,module,exports){
-'use strict';
-
-module.exports = function (func, emit, sum, log, isArray, toJSON) {
-  /*jshint evil:true,unused:false */
-  return eval("'use strict'; (" + func.replace(/;\s*$/, "") + ");");
-};
-
-},{}],97:[function(require,module,exports){
-(function (process){
-'use strict';
-
-var b64ToBluffer = require('../deps/binary/base64StringToBlobOrBuffer');
-var pouchCollate = require('pouchdb-collate');
-var TaskQueue = require('./taskqueue');
-var collate = pouchCollate.collate;
-var toIndexableString = pouchCollate.toIndexableString;
-var normalizeKey = pouchCollate.normalizeKey;
-var parseIndexableString = pouchCollate.parseIndexableString;
-var createView = require('./create-view');
-var evalFunc = require('./evalfunc');
-var log;
-/* istanbul ignore else */
-if ((typeof console !== 'undefined') && (typeof console.log === 'function')) {
-  log = Function.prototype.bind.call(console.log, console);
-} else {
-  log = function () {};
-}
-var utils = require('./utils');
-var Promise = require('../deps/promise');
-var inherits = require('inherits');
-var persistentQueues = {};
-var tempViewQueue = new TaskQueue();
-var CHANGES_BATCH_SIZE = 50;
-
-function parseViewName(name) {
-  // can be either 'ddocname/viewname' or just 'viewname'
-  // (where the ddoc name is the same)
-  return name.indexOf('/') === -1 ? [name, name] : name.split('/');
-}
-
-function isGenOne(changes) {
-  // only return true if the current change is 1-
-  // and there are no other leafs
-  return changes.length === 1 && /^1-/.test(changes[0].rev);
-}
-
-function emitError(db, e) {
-  try {
-    db.emit('error', e);
-  } catch (err) {
-    console.error(
-      'The user\'s map/reduce function threw an uncaught error.\n' +
-      'You can debug this error by doing:\n' +
-      'myDatabase.on(\'error\', function (err) { debugger; });\n' +
-      'Please double-check your map/reduce function.');
-    console.error(e);
-  }
-}
-
-function tryCode(db, fun, args) {
-  // emit an event if there was an error thrown by a map/reduce function.
-  // putting try/catches in a single function also avoids deoptimizations.
-  try {
-    return {
-      output : fun.apply(null, args)
-    };
-  } catch (e) {
-    emitError(db, e);
-    return {error: e};
-  }
-}
-
-function sortByKeyThenValue(x, y) {
-  var keyCompare = collate(x.key, y.key);
-  return keyCompare !== 0 ? keyCompare : collate(x.value, y.value);
-}
-
-function sliceResults(results, limit, skip) {
-  skip = skip || 0;
-  if (typeof limit === 'number') {
-    return results.slice(skip, limit + skip);
-  } else if (skip > 0) {
-    return results.slice(skip);
-  }
-  return results;
-}
-
-function rowToDocId(row) {
-  var val = row.value;
-  // Users can explicitly specify a joined doc _id, or it
-  // defaults to the doc _id that emitted the key/value.
-  var docId = (val && typeof val === 'object' && val._id) || row.id;
-  return docId;
-}
-
-function readAttachmentsAsBlobOrBuffer(res) {
-  res.rows.forEach(function (row) {
-    var atts = row.doc && row.doc._attachments;
-    if (!atts) {
-      return;
-    }
-    Object.keys(atts).forEach(function (filename) {
-      var att = atts[filename];
-      atts[filename].data = b64ToBluffer(att.data, att.content_type);
-    });
-  });
-}
-
-function postprocessAttachments(opts) {
-  return function (res) {
-    if (opts.include_docs && opts.attachments && opts.binary) {
-      readAttachmentsAsBlobOrBuffer(res);
-    }
-    return res;
-  };
-}
-
-function createBuiltInError(name) {
-  var message = 'builtin ' + name +
-    ' function requires map values to be numbers' +
-    ' or number arrays';
-  return new BuiltInError(message);
-}
-
-function sum(values) {
-  var result = 0;
-  for (var i = 0, len = values.length; i < len; i++) {
-    var num = values[i];
-    if (typeof num !== 'number') {
-      if (Array.isArray(num)) {
-        // lists of numbers are also allowed, sum them separately
-        result = typeof result === 'number' ? [result] : result;
-        for (var j = 0, jLen = num.length; j < jLen; j++) {
-          var jNum = num[j];
-          if (typeof jNum !== 'number') {
-            throw createBuiltInError('_sum');
-          } else if (typeof result[j] === 'undefined') {
-            result.push(jNum);
-          } else {
-            result[j] += jNum;
-          }
-        }
-      } else { // not array/number
-        throw createBuiltInError('_sum');
-      }
-    } else if (typeof result === 'number') {
-      result += num;
-    } else { // add number to array
-      result[0] += num;
-    }
-  }
-  return result;
-}
-
-var builtInReduce = {
-  _sum: function (keys, values) {
-    return sum(values);
-  },
-
-  _count: function (keys, values) {
-    return values.length;
-  },
-
-  _stats: function (keys, values) {
-    // no need to implement rereduce=true, because Pouch
-    // will never call it
-    function sumsqr(values) {
-      var _sumsqr = 0;
-      for (var i = 0, len = values.length; i < len; i++) {
-        var num = values[i];
-        _sumsqr += (num * num);
-      }
-      return _sumsqr;
-    }
-    return {
-      sum     : sum(values),
-      min     : Math.min.apply(null, values),
-      max     : Math.max.apply(null, values),
-      count   : values.length,
-      sumsqr : sumsqr(values)
-    };
-  }
-};
-
-function addHttpParam(paramName, opts, params, asJson) {
-  // add an http param from opts to params, optionally json-encoded
-  var val = opts[paramName];
-  if (typeof val !== 'undefined') {
-    if (asJson) {
-      val = encodeURIComponent(JSON.stringify(val));
-    }
-    params.push(paramName + '=' + val);
-  }
-}
-
-function checkQueryParseError(options, fun) {
-  var startkeyName = options.descending ? 'endkey' : 'startkey';
-  var endkeyName = options.descending ? 'startkey' : 'endkey';
-
-  if (typeof options[startkeyName] !== 'undefined' &&
-    typeof options[endkeyName] !== 'undefined' &&
-    collate(options[startkeyName], options[endkeyName]) > 0) {
-    throw new QueryParseError('No rows can match your key range, ' +
-    'reverse your start_key and end_key or set {descending : true}');
-  } else if (fun.reduce && options.reduce !== false) {
-    if (options.include_docs) {
-      throw new QueryParseError('{include_docs:true} is invalid for reduce');
-    } else if (options.keys && options.keys.length > 1 &&
-        !options.group && !options.group_level) {
-      throw new QueryParseError('Multi-key fetches for reduce views must use ' +
-      '{group: true}');
-    }
-  }
-  if (options.group_level) {
-    if (typeof options.group_level !== 'number') {
-      throw new QueryParseError('Invalid value for integer: "' +
-      options.group_level + '"');
-    }
-    if (options.group_level < 0) {
-      throw new QueryParseError('Invalid value for positive integer: ' +
-        '"' + options.group_level + '"');
-    }
-  }
-}
-
-function httpQuery(db, fun, opts) {
-  // List of parameters to add to the PUT request
-  var params = [];
-  var body;
-  var method = 'GET';
-
-  // If opts.reduce exists and is defined, then add it to the list
-  // of parameters.
-  // If reduce=false then the results are that of only the map function
-  // not the final result of map and reduce.
-  addHttpParam('reduce', opts, params);
-  addHttpParam('include_docs', opts, params);
-  addHttpParam('attachments', opts, params);
-  addHttpParam('limit', opts, params);
-  addHttpParam('descending', opts, params);
-  addHttpParam('group', opts, params);
-  addHttpParam('group_level', opts, params);
-  addHttpParam('skip', opts, params);
-  addHttpParam('stale', opts, params);
-  addHttpParam('conflicts', opts, params);
-  addHttpParam('startkey', opts, params, true);
-  addHttpParam('start_key', opts, params, true);
-  addHttpParam('endkey', opts, params, true);
-  addHttpParam('end_key', opts, params, true);
-  addHttpParam('inclusive_end', opts, params);
-  addHttpParam('key', opts, params, true);
-
-  // Format the list of parameters into a valid URI query string
-  params = params.join('&');
-  params = params === '' ? '' : '?' + params;
-
-  // If keys are supplied, issue a POST to circumvent GET query string limits
-  // see http://wiki.apache.org/couchdb/HTTP_view_API#Querying_Options
-  if (typeof opts.keys !== 'undefined') {
-    var MAX_URL_LENGTH = 2000;
-    // according to http://stackoverflow.com/a/417184/680742,
-    // the de facto URL length limit is 2000 characters
-
-    var keysAsString =
-      'keys=' + encodeURIComponent(JSON.stringify(opts.keys));
-    if (keysAsString.length + params.length + 1 <= MAX_URL_LENGTH) {
-      // If the keys are short enough, do a GET. we do this to work around
-      // Safari not understanding 304s on POSTs (see pouchdb/pouchdb#1239)
-      params += (params[0] === '?' ? '&' : '?') + keysAsString;
-    } else {
-      method = 'POST';
-      if (typeof fun === 'string') {
-        body = JSON.stringify({keys: opts.keys});
-      } else { // fun is {map : mapfun}, so append to this
-        fun.keys = opts.keys;
-      }
-    }
-  }
-
-  // We are referencing a query defined in the design doc
-  if (typeof fun === 'string') {
-    var parts = parseViewName(fun);
-    return db.request({
-      method: method,
-      url: '_design/' + parts[0] + '/_view/' + parts[1] + params,
-      body: body
-    }).then(postprocessAttachments(opts));
-  }
-
-  // We are using a temporary view, terrible for performance, good for testing
-  body = body || {};
-  Object.keys(fun).forEach(function (key) {
-    if (Array.isArray(fun[key])) {
-      body[key] = fun[key];
-    } else {
-      body[key] = fun[key].toString();
-    }
-  });
-  return db.request({
-    method: 'POST',
-    url: '_temp_view' + params,
-    body: body
-  }).then(postprocessAttachments(opts));
-}
-
-function defaultsTo(value) {
-  return function (reason) {
-    /* istanbul ignore else */
-    if (reason.status === 404) {
-      return value;
-    } else {
-      throw reason;
-    }
-  };
-}
-
-// returns a promise for a list of docs to update, based on the input docId.
-// the order doesn't matter, because post-3.2.0, bulkDocs
-// is an atomic operation in all three adapters.
-function getDocsToPersist(docId, view, docIdsToChangesAndEmits) {
-  var metaDocId = '_local/doc_' + docId;
-  var defaultMetaDoc = {_id: metaDocId, keys: []};
-  var docData = docIdsToChangesAndEmits[docId];
-  var indexableKeysToKeyValues = docData.indexableKeysToKeyValues;
-  var changes = docData.changes;
-
-  function getMetaDoc() {
-    if (isGenOne(changes)) {
-      // generation 1, so we can safely assume initial state
-      // for performance reasons (avoids unnecessary GETs)
-      return Promise.resolve(defaultMetaDoc);
-    }
-    return view.db.get(metaDocId).catch(defaultsTo(defaultMetaDoc));
-  }
-
-  function getKeyValueDocs(metaDoc) {
-    if (!metaDoc.keys.length) {
-      // no keys, no need for a lookup
-      return Promise.resolve({rows: []});
-    }
-    return view.db.allDocs({
-      keys: metaDoc.keys,
-      include_docs: true
-    });
-  }
-
-  function processKvDocs(metaDoc, kvDocsRes) {
-    var kvDocs = [];
-    var oldKeysMap = {};
-
-    for (var i = 0, len = kvDocsRes.rows.length; i < len; i++) {
-      var row = kvDocsRes.rows[i];
-      var doc = row.doc;
-      if (!doc) { // deleted
-        continue;
-      }
-      kvDocs.push(doc);
-      oldKeysMap[doc._id] = true;
-      doc._deleted = !indexableKeysToKeyValues[doc._id];
-      if (!doc._deleted) {
-        var keyValue = indexableKeysToKeyValues[doc._id];
-        if ('value' in keyValue) {
-          doc.value = keyValue.value;
-        }
-      }
-    }
-
-    var newKeys = Object.keys(indexableKeysToKeyValues);
-    newKeys.forEach(function (key) {
-      if (!oldKeysMap[key]) {
-        // new doc
-        var kvDoc = {
-          _id: key
-        };
-        var keyValue = indexableKeysToKeyValues[key];
-        if ('value' in keyValue) {
-          kvDoc.value = keyValue.value;
-        }
-        kvDocs.push(kvDoc);
-      }
-    });
-    metaDoc.keys = utils.uniq(newKeys.concat(metaDoc.keys));
-    kvDocs.push(metaDoc);
-
-    return kvDocs;
-  }
-
-  return getMetaDoc().then(function (metaDoc) {
-    return getKeyValueDocs(metaDoc).then(function (kvDocsRes) {
-      return processKvDocs(metaDoc, kvDocsRes);
-    });
-  });
-}
-
-// updates all emitted key/value docs and metaDocs in the mrview database
-// for the given batch of documents from the source database
-function saveKeyValues(view, docIdsToChangesAndEmits, seq) {
-  var seqDocId = '_local/lastSeq';
-  return view.db.get(seqDocId)
-  .catch(defaultsTo({_id: seqDocId, seq: 0}))
-  .then(function (lastSeqDoc) {
-    var docIds = Object.keys(docIdsToChangesAndEmits);
-    return Promise.all(docIds.map(function (docId) {
-      return getDocsToPersist(docId, view, docIdsToChangesAndEmits);
-    })).then(function (listOfDocsToPersist) {
-      var docsToPersist = utils.flatten(listOfDocsToPersist);
-      lastSeqDoc.seq = seq;
-      docsToPersist.push(lastSeqDoc);
-      // write all docs in a single operation, update the seq once
-      return view.db.bulkDocs({docs : docsToPersist});
-    });
-  });
-}
-
-function getQueue(view) {
-  var viewName = typeof view === 'string' ? view : view.name;
-  var queue = persistentQueues[viewName];
-  if (!queue) {
-    queue = persistentQueues[viewName] = new TaskQueue();
-  }
-  return queue;
-}
-
-function updateView(view) {
-  return utils.sequentialize(getQueue(view), function () {
-    return updateViewInQueue(view);
-  })();
-}
-
-function updateViewInQueue(view) {
-  // bind the emit function once
-  var mapResults;
-  var doc;
-
-  function emit(key, value) {
-    var output = {id: doc._id, key: normalizeKey(key)};
-    // Don't explicitly store the value unless it's defined and non-null.
-    // This saves on storage space, because often people don't use it.
-    if (typeof value !== 'undefined' && value !== null) {
-      output.value = normalizeKey(value);
-    }
-    mapResults.push(output);
-  }
-
-  var mapFun;
-  // for temp_views one can use emit(doc, emit), see #38
-  if (typeof view.mapFun === "function" && view.mapFun.length === 2) {
-    var origMap = view.mapFun;
-    mapFun = function (doc) {
-      return origMap(doc, emit);
-    };
-  } else {
-    mapFun = evalFunc(view.mapFun.toString(), emit, sum, log, Array.isArray,
-      JSON.parse);
-  }
-
-  var currentSeq = view.seq || 0;
-
-  function processChange(docIdsToChangesAndEmits, seq) {
-    return function () {
-      return saveKeyValues(view, docIdsToChangesAndEmits, seq);
-    };
-  }
-
-  var queue = new TaskQueue();
-  // TODO(neojski): https://github.com/daleharvey/pouchdb/issues/1521
-
-  return new Promise(function (resolve, reject) {
-
-    function complete() {
-      queue.finish().then(function () {
-        view.seq = currentSeq;
-        resolve();
-      });
-    }
-
-    function processNextBatch() {
-      view.sourceDB.changes({
-        conflicts: true,
-        include_docs: true,
-        style: 'all_docs',
-        since: currentSeq,
-        limit: CHANGES_BATCH_SIZE
-      }).on('complete', function (response) {
-        var results = response.results;
-        if (!results.length) {
-          return complete();
-        }
-        var docIdsToChangesAndEmits = {};
-        for (var i = 0, l = results.length; i < l; i++) {
-          var change = results[i];
-          if (change.doc._id[0] !== '_') {
-            mapResults = [];
-            doc = change.doc;
-
-            if (!doc._deleted) {
-              tryCode(view.sourceDB, mapFun, [doc]);
-            }
-            mapResults.sort(sortByKeyThenValue);
-
-            var indexableKeysToKeyValues = {};
-            var lastKey;
-            for (var j = 0, jl = mapResults.length; j < jl; j++) {
-              var obj = mapResults[j];
-              var complexKey = [obj.key, obj.id];
-              if (collate(obj.key, lastKey) === 0) {
-                complexKey.push(j); // dup key+id, so make it unique
-              }
-              var indexableKey = toIndexableString(complexKey);
-              indexableKeysToKeyValues[indexableKey] = obj;
-              lastKey = obj.key;
-            }
-            docIdsToChangesAndEmits[change.doc._id] = {
-              indexableKeysToKeyValues: indexableKeysToKeyValues,
-              changes: change.changes
-            };
-          }
-          currentSeq = change.seq;
-        }
-        queue.add(processChange(docIdsToChangesAndEmits, currentSeq));
-        if (results.length < CHANGES_BATCH_SIZE) {
-          return complete();
-        }
-        return processNextBatch();
-      }).on('error', onError);
-      /* istanbul ignore next */
-      function onError(err) {
-        reject(err);
-      }
-    }
-
-    processNextBatch();
-  });
-}
-
-function reduceView(view, results, options) {
-  if (options.group_level === 0) {
-    delete options.group_level;
-  }
-
-  var shouldGroup = options.group || options.group_level;
-
-  var reduceFun;
-  if (builtInReduce[view.reduceFun]) {
-    reduceFun = builtInReduce[view.reduceFun];
-  } else {
-    reduceFun = evalFunc(
-      view.reduceFun.toString(), null, sum, log, Array.isArray, JSON.parse);
-  }
-
-  var groups = [];
-  var lvl = options.group_level;
-  results.forEach(function (e) {
-    var last = groups[groups.length - 1];
-    var key = shouldGroup ? e.key : null;
-
-    // only set group_level for array keys
-    if (shouldGroup && Array.isArray(key) && typeof lvl === 'number') {
-      key = key.length > lvl ? key.slice(0, lvl) : key;
-    }
-
-    if (last && collate(last.key[0][0], key) === 0) {
-      last.key.push([key, e.id]);
-      last.value.push(e.value);
-      return;
-    }
-    groups.push({key: [
-      [key, e.id]
-    ], value: [e.value]});
-  });
-  for (var i = 0, len = groups.length; i < len; i++) {
-    var e = groups[i];
-    var reduceTry = tryCode(view.sourceDB, reduceFun, [e.key, e.value, false]);
-    if (reduceTry.error && reduceTry.error instanceof BuiltInError) {
-      // CouchDB returns an error if a built-in errors out
-      throw reduceTry.error;
-    }
-    // CouchDB just sets the value to null if a non-built-in errors out
-    e.value = reduceTry.error ? null : reduceTry.output;
-    e.key = e.key[0][0];
-  }
-  // no total_rows/offset when reducing
-  return {rows: sliceResults(groups, options.limit, options.skip)};
-}
-
-function queryView(view, opts) {
-  return utils.sequentialize(getQueue(view), function () {
-    return queryViewInQueue(view, opts);
-  })();
-}
-
-function queryViewInQueue(view, opts) {
-  var totalRows;
-  var shouldReduce = view.reduceFun && opts.reduce !== false;
-  var skip = opts.skip || 0;
-  if (typeof opts.keys !== 'undefined' && !opts.keys.length) {
-    // equivalent query
-    opts.limit = 0;
-    delete opts.keys;
-  }
-
-  function fetchFromView(viewOpts) {
-    viewOpts.include_docs = true;
-    return view.db.allDocs(viewOpts).then(function (res) {
-      totalRows = res.total_rows;
-      return res.rows.map(function (result) {
-
-        // implicit migration - in older versions of PouchDB,
-        // we explicitly stored the doc as {id: ..., key: ..., value: ...}
-        // this is tested in a migration test
-        /* istanbul ignore next */
-        if ('value' in result.doc && typeof result.doc.value === 'object' &&
-            result.doc.value !== null) {
-          var keys = Object.keys(result.doc.value).sort();
-          // this detection method is not perfect, but it's unlikely the user
-          // emitted a value which was an object with these 3 exact keys
-          var expectedKeys = ['id', 'key', 'value'];
-          if (!(keys < expectedKeys || keys > expectedKeys)) {
-            return result.doc.value;
-          }
-        }
-
-        var parsedKeyAndDocId = parseIndexableString(result.doc._id);
-        return {
-          key: parsedKeyAndDocId[0],
-          id: parsedKeyAndDocId[1],
-          value: ('value' in result.doc ? result.doc.value : null)
-        };
-      });
-    });
-  }
-
-  function onMapResultsReady(rows) {
-    var finalResults;
-    if (shouldReduce) {
-      finalResults = reduceView(view, rows, opts);
-    } else {
-      finalResults = {
-        total_rows: totalRows,
-        offset: skip,
-        rows: rows
-      };
-    }
-    if (opts.include_docs) {
-      var docIds = utils.uniq(rows.map(rowToDocId));
-
-      return view.sourceDB.allDocs({
-        keys: docIds,
-        include_docs: true,
-        conflicts: opts.conflicts,
-        attachments: opts.attachments,
-        binary: opts.binary
-      }).then(function (allDocsRes) {
-        var docIdsToDocs = {};
-        allDocsRes.rows.forEach(function (row) {
-          if (row.doc) {
-            docIdsToDocs['$' + row.id] = row.doc;
-          }
-        });
-        rows.forEach(function (row) {
-          var docId = rowToDocId(row);
-          var doc = docIdsToDocs['$' + docId];
-          if (doc) {
-            row.doc = doc;
-          }
-        });
-        return finalResults;
-      });
-    } else {
-      return finalResults;
-    }
-  }
-
-  var flatten = function (array) {
-    return array.reduce(function (prev, cur) {
-      return prev.concat(cur);
-    });
-  };
-
-  if (typeof opts.keys !== 'undefined') {
-    var keys = opts.keys;
-    var fetchPromises = keys.map(function (key) {
-      var viewOpts = {
-        startkey : toIndexableString([key]),
-        endkey   : toIndexableString([key, {}])
-      };
-      return fetchFromView(viewOpts);
-    });
-    return Promise.all(fetchPromises).then(flatten).then(onMapResultsReady);
-  } else { // normal query, no 'keys'
-    var viewOpts = {
-      descending : opts.descending
-    };
-    if (opts.start_key) {
-        opts.startkey = opts.start_key;
-    }
-    if (opts.end_key) {
-        opts.endkey = opts.end_key;
-    }
-    if (typeof opts.startkey !== 'undefined') {
-      viewOpts.startkey = opts.descending ?
-        toIndexableString([opts.startkey, {}]) :
-        toIndexableString([opts.startkey]);
-    }
-    if (typeof opts.endkey !== 'undefined') {
-      var inclusiveEnd = opts.inclusive_end !== false;
-      if (opts.descending) {
-        inclusiveEnd = !inclusiveEnd;
-      }
-
-      viewOpts.endkey = toIndexableString(
-        inclusiveEnd ? [opts.endkey, {}] : [opts.endkey]);
-    }
-    if (typeof opts.key !== 'undefined') {
-      var keyStart = toIndexableString([opts.key]);
-      var keyEnd = toIndexableString([opts.key, {}]);
-      if (viewOpts.descending) {
-        viewOpts.endkey = keyStart;
-        viewOpts.startkey = keyEnd;
-      } else {
-        viewOpts.startkey = keyStart;
-        viewOpts.endkey = keyEnd;
-      }
-    }
-    if (!shouldReduce) {
-      if (typeof opts.limit === 'number') {
-        viewOpts.limit = opts.limit;
-      }
-      viewOpts.skip = skip;
-    }
-    return fetchFromView(viewOpts).then(onMapResultsReady);
-  }
-}
-
-function httpViewCleanup(db) {
-  return db.request({
-    method: 'POST',
-    url: '_view_cleanup'
-  });
-}
-
-function localViewCleanup(db) {
-  return db.get('_local/mrviews').then(function (metaDoc) {
-    var docsToViews = {};
-    Object.keys(metaDoc.views).forEach(function (fullViewName) {
-      var parts = parseViewName(fullViewName);
-      var designDocName = '_design/' + parts[0];
-      var viewName = parts[1];
-      docsToViews[designDocName] = docsToViews[designDocName] || {};
-      docsToViews[designDocName][viewName] = true;
-    });
-    var opts = {
-      keys : Object.keys(docsToViews),
-      include_docs : true
-    };
-    return db.allDocs(opts).then(function (res) {
-      var viewsToStatus = {};
-      res.rows.forEach(function (row) {
-        var ddocName = row.key.substring(8);
-        Object.keys(docsToViews[row.key]).forEach(function (viewName) {
-          var fullViewName = ddocName + '/' + viewName;
-          /* istanbul ignore if */
-          if (!metaDoc.views[fullViewName]) {
-            // new format, without slashes, to support PouchDB 2.2.0
-            // migration test in pouchdb's browser.migration.js verifies this
-            fullViewName = viewName;
-          }
-          var viewDBNames = Object.keys(metaDoc.views[fullViewName]);
-          // design doc deleted, or view function nonexistent
-          var statusIsGood = row.doc && row.doc.views &&
-            row.doc.views[viewName];
-          viewDBNames.forEach(function (viewDBName) {
-            viewsToStatus[viewDBName] =
-              viewsToStatus[viewDBName] || statusIsGood;
-          });
-        });
-      });
-      var dbsToDelete = Object.keys(viewsToStatus).filter(
-        function (viewDBName) { return !viewsToStatus[viewDBName]; });
-      var destroyPromises = dbsToDelete.map(function (viewDBName) {
-        return utils.sequentialize(getQueue(viewDBName), function () {
-          return new db.constructor(viewDBName, db.__opts).destroy();
-        })();
-      });
-      return Promise.all(destroyPromises).then(function () {
-        return {ok: true};
-      });
-    });
-  }, defaultsTo({ok: true}));
-}
-
-exports.viewCleanup = utils.callbackify(function () {
-  var db = this;
-  if (db.type() === 'http') {
-    return httpViewCleanup(db);
-  }
-  return localViewCleanup(db);
-});
-
-function queryPromised(db, fun, opts) {
-  if (db.type() === 'http') {
-    return httpQuery(db, fun, opts);
-  }
-
-  if (typeof fun !== 'string') {
-    // temp_view
-    checkQueryParseError(opts, fun);
-
-    var createViewOpts = {
-      db : db,
-      viewName : 'temp_view/temp_view',
-      map : fun.map,
-      reduce : fun.reduce,
-      temporary : true
-    };
-    tempViewQueue.add(function () {
-      return createView(createViewOpts).then(function (view) {
-        function cleanup() {
-          return view.db.destroy();
-        }
-        return utils.fin(updateView(view).then(function () {
-          return queryView(view, opts);
-        }), cleanup);
-      });
-    });
-    return tempViewQueue.finish();
-  } else {
-    // persistent view
-    var fullViewName = fun;
-    var parts = parseViewName(fullViewName);
-    var designDocName = parts[0];
-    var viewName = parts[1];
-    return db.get('_design/' + designDocName).then(function (doc) {
-      var fun = doc.views && doc.views[viewName];
-
-      if (!fun || typeof fun.map !== 'string') {
-        throw new NotFoundError('ddoc ' + designDocName +
-        ' has no view named ' + viewName);
-      }
-      checkQueryParseError(opts, fun);
-
-      var createViewOpts = {
-        db : db,
-        viewName : fullViewName,
-        map : fun.map,
-        reduce : fun.reduce
-      };
-      return createView(createViewOpts).then(function (view) {
-        if (opts.stale === 'ok' || opts.stale === 'update_after') {
-          if (opts.stale === 'update_after') {
-            process.nextTick(function () {
-              updateView(view);
-            });
-          }
-          return queryView(view, opts);
-        } else { // stale not ok
-          return updateView(view).then(function () {
-            return queryView(view, opts);
-          });
-        }
-      });
-    });
-  }
-}
-
-exports.query = function (fun, opts, callback) {
-  if (typeof opts === 'function') {
-    callback = opts;
-    opts = {};
-  }
-  opts = opts || {};
-
-  if (typeof fun === 'function') {
-    fun = {map : fun};
-  }
-
-  var db = this;
-  var promise = Promise.resolve().then(function () {
-    return queryPromised(db, fun, opts);
-  });
-  utils.promisedCallback(promise, callback);
-  return promise;
-};
-
-function QueryParseError(message) {
-  this.status = 400;
-  this.name = 'query_parse_error';
-  this.message = message;
-  this.error = true;
-  try {
-    Error.captureStackTrace(this, QueryParseError);
-  } catch (e) {}
-}
-
-inherits(QueryParseError, Error);
-
-function NotFoundError(message) {
-  this.status = 404;
-  this.name = 'not_found';
-  this.message = message;
-  this.error = true;
-  try {
-    Error.captureStackTrace(this, NotFoundError);
-  } catch (e) {}
-}
-
-inherits(NotFoundError, Error);
-
-function BuiltInError(message) {
-  this.status = 500;
-  this.name = 'invalid_value';
-  this.message = message;
-  this.error = true;
-  try {
-    Error.captureStackTrace(this, BuiltInError);
-  } catch (e) {}
-}
-
-inherits(BuiltInError, Error);
-
-}).call(this,require('_process'))
-},{"../deps/binary/base64StringToBlobOrBuffer":62,"../deps/promise":88,"./create-view":95,"./evalfunc":96,"./taskqueue":99,"./utils":100,"_process":135,"inherits":115,"pouchdb-collate":118}],98:[function(require,module,exports){
-'use strict';
-
-var Md5 = require('spark-md5');
-
-module.exports = function (string) {
-  return Md5.hash(string);
-};
-},{"spark-md5":121}],99:[function(require,module,exports){
-'use strict';
-/*
- * Simple task queue to sequentialize actions. Assumes
- * callbacks will eventually fire (once).
- */
-
-var Promise = require('../deps/promise');
-
-function TaskQueue() {
-  this.promise = new Promise(function (fulfill) {fulfill(); });
-}
-TaskQueue.prototype.add = function (promiseFactory) {
-  this.promise = this.promise.catch(function () {
-    // just recover
-  }).then(function () {
-    return promiseFactory();
-  });
-  return this.promise;
-};
-TaskQueue.prototype.finish = function () {
-  return this.promise;
-};
-
-module.exports = TaskQueue;
-
-},{"../deps/promise":88}],100:[function(require,module,exports){
-(function (process){
-'use strict';
-
-var argsarray = require('argsarray');
-
-exports.promisedCallback = function (promise, callback) {
-  if (callback) {
-    promise.then(function (res) {
-      process.nextTick(function () {
-        callback(null, res);
-      });
-    }, function (reason) {
-      process.nextTick(function () {
-        callback(reason);
-      });
-    });
-  }
-  return promise;
-};
-
-exports.callbackify = function (fun) {
-  return argsarray(function (args) {
-    var cb = args.pop();
-    var promise = fun.apply(this, args);
-    if (typeof cb === 'function') {
-      exports.promisedCallback(promise, cb);
-    }
-    return promise;
-  });
-};
-
-// Promise finally util similar to Q.finally
-exports.fin = function (promise, finalPromiseFactory) {
-  return promise.then(function (res) {
-    return finalPromiseFactory().then(function () {
-      return res;
-    });
-  }, function (reason) {
-    return finalPromiseFactory().then(function () {
-      throw reason;
-    });
-  });
-};
-
-exports.sequentialize = function (queue, promiseFactory) {
-  return function () {
-    var args = arguments;
-    var that = this;
-    return queue.add(function () {
-      return promiseFactory.apply(that, args);
-    });
-  };
-};
-
-exports.flatten = function (arrs) {
-  var res = [];
-  for (var i = 0, len = arrs.length; i < len; i++) {
-    res = res.concat(arrs[i]);
-  }
-  return res;
-};
-
-// uniq an array of strings, order not guaranteed
-// similar to underscore/lodash _.uniq
-exports.uniq = function (arr) {
-  var map = {};
-
-  for (var i = 0, len = arr.length; i < len; i++) {
-    map['$' + arr[i]] = true;
-  }
-
-  var keys = Object.keys(map);
-  var output = new Array(keys.length);
-
-  for (i = 0, len = keys.length; i < len; i++) {
-    output[i] = keys[i].substring(1);
-  }
-  return output;
-};
-}).call(this,require('_process'))
-},{"_process":135,"argsarray":114}],101:[function(require,module,exports){
-'use strict';
-
-// for a better overview of what this is doing, read:
-// https://github.com/apache/couchdb/blob/master/src/couchdb/couch_key_tree.erl
-//
-// But for a quick intro, CouchDB uses a revision tree to store a documents
-// history, A -> B -> C, when a document has conflicts, that is a branch in the
-// tree, A -> (B1 | B2 -> C), We store these as a nested array in the format
-//
-// KeyTree = [Path ... ]
-// Path = {pos: position_from_root, ids: Tree}
-// Tree = [Key, Opts, [Tree, ...]], in particular single node: [Key, []]
-
-// classic binary search
-function binarySearch(arr, item, comparator) {
-  var low = 0;
-  var high = arr.length;
-  var mid;
-  while (low < high) {
-    mid = (low + high) >>> 1;
-    if (comparator(arr[mid], item) < 0) {
-      low = mid + 1;
-    } else {
-      high = mid;
-    }
-  }
-  return low;
-}
-
-function sortByPos(a, b) {
-  return a.pos - b.pos;
-}
-
-// assuming the arr is sorted, insert the item in the proper place
-function insertSorted(arr, item, comparator) {
-  var idx = binarySearch(arr, item, comparator);
-  arr.splice(idx, 0, item);
-}
-
-// Turn a path as a flat array into a tree with a single branch.
-// If any should be stemmed from the beginning of the array, that's passed
-// in as the second argument
-function pathToTree(path, numStemmed) {
-  var root;
-  var leaf;
-  for (var i = numStemmed, len = path.length; i < len; i++) {
-    var node = path[i];
-    var currentLeaf = [node.id, node.opts, []];
-    if (leaf) {
-      leaf[2].push(currentLeaf);
-      leaf = currentLeaf;
-    } else {
-      root = leaf = currentLeaf;
-    }
-  }
-  return root;
-}
-
-// compare the IDs of two trees
-function compareTree(a, b) {
-  return a[0] < b[0] ? -1 : 1;
-}
-
-// Merge two trees together
-// The roots of tree1 and tree2 must be the same revision
-function mergeTree(in_tree1, in_tree2) {
-  var queue = [{tree1: in_tree1, tree2: in_tree2}];
-  var conflicts = false;
-  while (queue.length > 0) {
-    var item = queue.pop();
-    var tree1 = item.tree1;
-    var tree2 = item.tree2;
-
-    if (tree1[1].status || tree2[1].status) {
-      tree1[1].status =
-        (tree1[1].status ===  'available' ||
-         tree2[1].status === 'available') ? 'available' : 'missing';
-    }
-
-    for (var i = 0; i < tree2[2].length; i++) {
-      if (!tree1[2][0]) {
-        conflicts = 'new_leaf';
-        tree1[2][0] = tree2[2][i];
-        continue;
-      }
-
-      var merged = false;
-      for (var j = 0; j < tree1[2].length; j++) {
-        if (tree1[2][j][0] === tree2[2][i][0]) {
-          queue.push({tree1: tree1[2][j], tree2: tree2[2][i]});
-          merged = true;
-        }
-      }
-      if (!merged) {
-        conflicts = 'new_branch';
-        insertSorted(tree1[2], tree2[2][i], compareTree);
-      }
-    }
-  }
-  return {conflicts: conflicts, tree: in_tree1};
-}
-
-function doMerge(tree, path, dontExpand) {
-  var restree = [];
-  var conflicts = false;
-  var merged = false;
-  var res;
-
-  if (!tree.length) {
-    return {tree: [path], conflicts: 'new_leaf'};
-  }
-
-  for (var i = 0, len = tree.length; i < len; i++) {
-    var branch = tree[i];
-    if (branch.pos === path.pos && branch.ids[0] === path.ids[0]) {
-      // Paths start at the same position and have the same root, so they need
-      // merged
-      res = mergeTree(branch.ids, path.ids);
-      restree.push({pos: branch.pos, ids: res.tree});
-      conflicts = conflicts || res.conflicts;
-      merged = true;
-    } else if (dontExpand !== true) {
-      // The paths start at a different position, take the earliest path and
-      // traverse up until it as at the same point from root as the path we
-      // want to merge.  If the keys match we return the longer path with the
-      // other merged After stemming we dont want to expand the trees
-
-      var t1 = branch.pos < path.pos ? branch : path;
-      var t2 = branch.pos < path.pos ? path : branch;
-      var diff = t2.pos - t1.pos;
-
-      var candidateParents = [];
-
-      var trees = [];
-      trees.push({ids: t1.ids, diff: diff, parent: null, parentIdx: null});
-      while (trees.length > 0) {
-        var item = trees.pop();
-        if (item.diff === 0) {
-          if (item.ids[0] === t2.ids[0]) {
-            candidateParents.push(item);
-          }
-          continue;
-        }
-        var elements = item.ids[2];
-        for (var j = 0, elementsLen = elements.length; j < elementsLen; j++) {
-          trees.push({
-            ids: elements[j],
-            diff: item.diff - 1,
-            parent: item.ids,
-            parentIdx: j
-          });
-        }
-      }
-
-      var el = candidateParents[0];
-
-      if (!el) {
-        restree.push(branch);
-      } else {
-        res = mergeTree(el.ids, t2.ids);
-        el.parent[2][el.parentIdx] = res.tree;
-        restree.push({pos: t1.pos, ids: t1.ids});
-        conflicts = conflicts || res.conflicts;
-        merged = true;
-      }
-    } else {
-      restree.push(branch);
-    }
-  }
-
-  // We didnt find
-  if (!merged) {
-    restree.push(path);
-  }
-
-  restree.sort(sortByPos);
-
-  return {
-    tree: restree,
-    conflicts: conflicts || 'internal_node'
-  };
-}
-
-// To ensure we dont grow the revision tree infinitely, we stem old revisions
-function stem(tree, depth) {
-  // First we break out the tree into a complete list of root to leaf paths
-  var paths = PouchMerge.rootToLeaf(tree);
-  var result;
-  for (var i = 0, len = paths.length; i < len; i++) {
-    // Then for each path, we cut off the start of the path based on the
-    // `depth` to stem to, and generate a new set of flat trees
-    var path = paths[i];
-    var stemmed = path.ids;
-    var numStemmed = Math.max(0, stemmed.length - depth);
-    var stemmedNode = {
-      pos: path.pos + numStemmed,
-      ids: pathToTree(stemmed, numStemmed)
-    };
-    // Then we remerge all those flat trees together, ensuring that we dont
-    // connect trees that would go beyond the depth limit
-    if (result) {
-      result = doMerge(result, stemmedNode, true).tree;
-    } else {
-      result = [stemmedNode];
-    }
-  }
-  return result;
-}
-
-var PouchMerge = {};
-
-PouchMerge.merge = function (tree, path, depth) {
-  var newTree = doMerge(tree, path);
-  return {
-    tree: stem(newTree.tree, depth),
-    conflicts: newTree.conflicts
-  };
-};
-
-// We fetch all leafs of the revision tree, and sort them based on tree length
-// and whether they were deleted, undeleted documents with the longest revision
-// tree (most edits) win
-// The final sort algorithm is slightly documented in a sidebar here:
-// http://guide.couchdb.org/draft/conflicts.html
-PouchMerge.winningRev = function (metadata) {
-  var winningId;
-  var winningPos;
-  var winningDeleted;
-  var toVisit = metadata.rev_tree.slice();
-  var node;
-  while ((node = toVisit.pop())) {
-    var tree = node.ids;
-    var branches = tree[2];
-    var pos = node.pos;
-    if (branches.length) { // non-leaf
-      for (var i = 0, len = branches.length; i < len; i++) {
-        toVisit.push({pos: pos + 1, ids: branches[i]});
-      }
-      continue;
-    }
-    var deleted = !!tree[1].deleted;
-    var id = tree[0];
-    // sort by deleted, then pos, then id
-    if (!winningId || (winningDeleted !== deleted ? winningDeleted :
-        winningPos !== pos ? winningPos < pos : winningId < id)) {
-      winningId = id;
-      winningPos = pos;
-      winningDeleted = deleted;
-    }
-  }
-
-  return winningPos + '-' + winningId;
-};
-
-// Pretty much all below can be combined into a higher order function to
-// traverse revisions
-// The return value from the callback will be passed as context to all
-// children of that node
-PouchMerge.traverseRevTree = function (revs, callback) {
-  var toVisit = revs.slice();
-
-  var node;
-  while ((node = toVisit.pop())) {
-    var pos = node.pos;
-    var tree = node.ids;
-    var branches = tree[2];
-    var newCtx =
-      callback(branches.length === 0, pos, tree[0], node.ctx, tree[1]);
-    for (var i = 0, len = branches.length; i < len; i++) {
-      toVisit.push({pos: pos + 1, ids: branches[i], ctx: newCtx});
-    }
-  }
-};
-
-// return true if a rev exists in the rev tree, false otherwise
-PouchMerge.revExists = function (revs, rev) {
-  var toVisit = revs.slice();
-  var splitRev = rev.split('-');
-  var targetPos = parseInt(splitRev[0], 10);
-  var targetId = splitRev[1];
-
-  var node;
-  while ((node = toVisit.pop())) {
-    if (node.pos === targetPos && node.ids[0] === targetId) {
-      return true;
-    }
-    var branches = node.ids[2];
-    for (var i = 0, len = branches.length; i < len; i++) {
-      toVisit.push({pos: node.pos + 1, ids: branches[i]});
-    }
-  }
-  return false;
-};
-
-PouchMerge.collectLeaves = function (revs) {
-  var leaves = [];
-  PouchMerge.traverseRevTree(revs, function (isLeaf, pos, id, acc, opts) {
-    if (isLeaf) {
-      leaves.push({rev: pos + "-" + id, pos: pos, opts: opts});
-    }
-  });
-  leaves.sort(sortByPos).reverse();
-  for (var i = 0, len = leaves.length; i < len; i++) {
-    delete leaves[i].pos;
-  }
-  return leaves;
-};
-
-// returns revs of all conflicts that is leaves such that
-// 1. are not deleted and
-// 2. are different than winning revision
-PouchMerge.collectConflicts = function (metadata) {
-  var win = PouchMerge.winningRev(metadata);
-  var leaves = PouchMerge.collectLeaves(metadata.rev_tree);
-  var conflicts = [];
-  for (var i = 0, len = leaves.length; i < len; i++) {
-    var leaf = leaves[i];
-    if (leaf.rev !== win && !leaf.opts.deleted) {
-      conflicts.push(leaf.rev);
-    }
-  }
-  return conflicts;
-};
-
-// build up a list of all the paths to the leafs in this revision tree
-PouchMerge.rootToLeaf = function (revs) {
-  var paths = [];
-  var toVisit = revs.slice();
-  var node;
-  while ((node = toVisit.pop())) {
-    var pos = node.pos;
-    var tree = node.ids;
-    var id = tree[0];
-    var opts = tree[1];
-    var branches = tree[2];
-    var isLeaf = branches.length === 0;
-
-    var history = node.history ? node.history.slice() : [];
-    history.push({id: id, opts: opts});
-    if (isLeaf) {
-      paths.push({pos: (pos + 1 - history.length), ids: history});
-    }
-    for (var i = 0, len = branches.length; i < len; i++) {
-      toVisit.push({pos: pos + 1, ids: branches[i], history: history});
-    }
-  }
-  return paths.reverse();
-};
-
-
-module.exports = PouchMerge;
-
-},{}],102:[function(require,module,exports){
-'use strict';
-
-var STARTING_BACK_OFF = 0;
-
-function randomNumber(min, max) {
-  min = parseInt(min, 10);
-  max = parseInt(max, 10);
-  if (min !== min) {
-    min = 0;
-  }
-  if (max !== max || max <= min) {
-    max = (min || 1) << 1; //doubling
-  } else {
-    max = max + 1;
-  }
-  var ratio = Math.random();
-  var range = max - min;
-
-  return ~~(range * ratio + min); // ~~ coerces to an int, but fast.
-}
-
-function defaultBackOff(min) {
-  var max = 0;
-  if (!min) {
-    max = 2000;
-  }
-  return randomNumber(min, max);
-}
-
-function backOff(opts, returnValue, error, callback) {
-  if (opts.retry === false) {
-    returnValue.emit('error', error);
-    returnValue.removeAllListeners();
-    return;
-  }
-  if (typeof opts.back_off_function !== 'function') {
-    opts.back_off_function = defaultBackOff;
-  }
-  returnValue.emit('requestError', error);
-  if (returnValue.state === 'active') {
-    returnValue.emit('paused', error);
-    returnValue.state = 'stopped';
-    returnValue.once('active', function () {
-      opts.current_back_off = STARTING_BACK_OFF;
-    });
-  }
-
-  opts.current_back_off = opts.current_back_off || STARTING_BACK_OFF;
-  opts.current_back_off = opts.back_off_function(opts.current_back_off);
-  setTimeout(callback, opts.current_back_off);
-}
-
-module.exports = backOff;
-},{}],103:[function(require,module,exports){
-'use strict';
-
-var Promise = require('./../deps/promise');
-var explain404 = require('./../deps/ajax/explain404');
-var pouchCollate = require('pouchdb-collate');
-var collate = pouchCollate.collate;
-
-var CHECKPOINT_VERSION = 1;
-var REPLICATOR = "pouchdb";
-// This is an arbitrary number to limit the
-// amount of replication history we save in the checkpoint.
-// If we save too much, the checkpoing docs will become very big,
-// if we save fewer, we'll run a greater risk of having to
-// read all the changes from 0 when checkpoint PUTs fail
-// CouchDB 2.0 has a more involved history pruning,
-// but let's go for the simple version for now.
-var CHECKPOINT_HISTORY_SIZE = 5;
-var LOWEST_SEQ = 0;
-
-function updateCheckpoint(db, id, checkpoint, session, returnValue) {
-  return db.get(id).catch(function (err) {
-    if (err.status === 404) {
-      if (db.type() === 'http') {
-        explain404('PouchDB is just checking if a remote checkpoint exists.');
-      }
-      return {
-        session_id: session,
-        _id: id,
-        history: [],
-        replicator: REPLICATOR,
-        version: CHECKPOINT_VERSION
-      };
-    }
-    throw err;
-  }).then(function (doc) {
-    if (returnValue.cancelled) {
-      return;
-    }
-    // Filter out current entry for this replication
-    doc.history = (doc.history || []).filter(function (item) {
-      return item.session_id !== session;
-    });
-
-    // Add the latest checkpoint to history
-    doc.history.unshift({
-      last_seq: checkpoint,
-      session_id: session
-    });
-
-    // Just take the last pieces in history, to
-    // avoid really big checkpoint docs.
-    // see comment on history size above
-    doc.history = doc.history.slice(0, CHECKPOINT_HISTORY_SIZE);
-
-    doc.version = CHECKPOINT_VERSION;
-    doc.replicator = REPLICATOR;
-
-    doc.session_id = session;
-    doc.last_seq = checkpoint;
-
-    return db.put(doc).catch(function (err) {
-      if (err.status === 409) {
-        // retry; someone is trying to write a checkpoint simultaneously
-        return updateCheckpoint(db, id, checkpoint, session, returnValue);
-      }
-      throw err;
-    });
-  });
-}
-
-function Checkpointer(src, target, id, returnValue) {
-  this.src = src;
-  this.target = target;
-  this.id = id;
-  this.returnValue = returnValue;
-}
-
-Checkpointer.prototype.writeCheckpoint = function (checkpoint, session) {
-  var self = this;
-  return this.updateTarget(checkpoint, session).then(function () {
-    return self.updateSource(checkpoint, session);
-  });
-};
-
-Checkpointer.prototype.updateTarget = function (checkpoint, session) {
-  return updateCheckpoint(this.target, this.id, checkpoint,
-      session, this.returnValue);
-};
-
-Checkpointer.prototype.updateSource = function (checkpoint, session) {
-  var self = this;
-  if (this.readOnlySource) {
-    return Promise.resolve(true);
-  }
-  return updateCheckpoint(this.src, this.id, checkpoint,
-      session, this.returnValue)
-    .catch(function (err) {
-      var isForbidden = typeof err.status === 'number' &&
-        Math.floor(err.status / 100) === 4;
-      if (isForbidden) {
-        self.readOnlySource = true;
-        return true;
-      }
-      throw err;
-    });
-};
-
-var comparisons = {
-  "undefined": function(targetDoc, sourceDoc) {
-    // This is the previous comparison function
-    if (collate(targetDoc.last_seq, sourceDoc.last_seq) === 0) {
-      return sourceDoc.last_seq;
-    }
-
-    return 0;
-  },
-  "1": function(targetDoc, sourceDoc) {
-    // This is the comparison function ported from CouchDB
-    return compareReplicationLogs(sourceDoc, targetDoc).last_seq;
-  }
-};
-
-Checkpointer.prototype.getCheckpoint = function () {
-  var self = this;
-  return self.target.get(self.id).then(function (targetDoc) {
-    return self.src.get(self.id).then(function (sourceDoc) {
-      // Since we can't migrate an old version doc to a new one
-      // (no session id), we just go with the lowest seq in this case
-      if (targetDoc.version !==
-         sourceDoc.version) {
-        return LOWEST_SEQ;
-      }
-
-      var version;
-      if (targetDoc.version) {
-        version = targetDoc.version.toString();
-      } else {
-        version = "undefined";
-      }
-
-      if (version in comparisons) {
-        return comparisons[version](targetDoc, sourceDoc);
-      }
-
-      return LOWEST_SEQ;
-    }, function (err) {
-      if (err.status === 404 && targetDoc.last_seq) {
-        return self.src.put({
-          _id: self.id,
-          last_seq: LOWEST_SEQ
-        }).then(function () {
-          return LOWEST_SEQ;
-        }, function (err) {
-          if (err.status === 401) {
-            self.readOnlySource = true;
-            return targetDoc.last_seq;
-          }
-          return LOWEST_SEQ;
-        });
-      }
-      throw err;
-    });
-  }).catch(function (err) {
-    if (err.status !== 404) {
-      throw err;
-    }
-    return LOWEST_SEQ;
-  });
-};
-// This checkpoint comparison is ported from CouchDBs source
-// they come from here:
-// https://github.com/apache/couchdb-couch-replicator/blob/master/src/couch_replicator.erl#L863-L906
-
-function compareReplicationLogs (srcDoc, tgtDoc) {
-  if (srcDoc.session_id === tgtDoc.session_id) {
-    return {
-      last_seq: srcDoc.last_seq,
-      history: srcDoc.history || []
-    };
-  }
-
-  var sourceHistory = srcDoc.history || [];
-  var targetHistory = tgtDoc.history || [];
-  return compareReplicationHistory(sourceHistory, targetHistory);
-}
-
-function compareReplicationHistory (sourceHistory, targetHistory) {
-  // the erlang loop via function arguments is not so easy to repeat in JS
-  // therefore, doing this as recursion
-  var S = sourceHistory[0];
-  var sourceRest = sourceHistory.slice(1);
-  var T = targetHistory[0];
-  var targetRest = targetHistory.slice(1);
-
-  if (!S || targetHistory.length === 0) {
-    return {
-      last_seq: LOWEST_SEQ,
-      history: []
-    };
-  }
-
-  var sourceId = S.session_id;
-  if (hasSessionId(sourceId, targetHistory)) {
-    return {
-      last_seq: S.last_seq,
-      history: sourceHistory
-    };
-  }
-
-  var targetId = T.session_id;
-  if (hasSessionId(targetId, sourceRest)) {
-    return {
-      last_seq: T.last_seq,
-      history: targetRest
-    };
-  }
-
-  return compareReplicationHistory(sourceRest, targetRest);
-}
-
-function hasSessionId (sessionId, history) {
-  var props = history[0];
-  var rest = history.slice(1);
-
-  if (!sessionId || history.length === 0) {
-    return false;
-  }
-
-  if (sessionId === props.session_id) {
-    return true;
-  }
-
-  return hasSessionId(sessionId, rest);
-}
-
-
-module.exports = Checkpointer;
-
-},{"./../deps/ajax/explain404":55,"./../deps/promise":88,"pouchdb-collate":118}],104:[function(require,module,exports){
-'use strict';
-
-var md5 = require('../deps/md5');
-var collate = require('pouchdb-collate').collate;
-
-function sortObjectPropertiesByKey(queryParams) {
-  return Object.keys(queryParams).sort(collate).reduce(function (result, key) {
-    result[key] = queryParams[key];
-    return result;
-  }, {});
-}
-
-// Generate a unique id particular to this replication.
-// Not guaranteed to align perfectly with CouchDB's rep ids.
-function generateReplicationId(src, target, opts) {
-  var docIds = opts.doc_ids ? opts.doc_ids.sort(collate) : '';
-  var filterFun = opts.filter ? opts.filter.toString() : '';
-  var queryParams = '';
-  var filterViewName =  '';
-
-  if (opts.filter && opts.query_params) {
-    queryParams = JSON.stringify(sortObjectPropertiesByKey(opts.query_params));
-  }
-
-  if (opts.filter && opts.filter === '_view') {
-    filterViewName = opts.view.toString();
-  }
-
-  return src.id().then(function (src_id) {
-    return target.id().then(function (target_id) {
-      var queryData = src_id + target_id + filterFun + filterViewName +
-        queryParams + docIds;
-      return md5(queryData).then(function (md5sum) {
-        // can't use straight-up md5 alphabet, because
-        // the char '/' is interpreted as being for attachments,
-        // and + is also not url-safe
-        md5sum = md5sum.replace(/\//g, '.').replace(/\+/g, '_');
-        return '_local/' + md5sum;
-      });
-    });
-  });
-}
-
-module.exports = generateReplicationId;
-
-},{"../deps/md5":83,"pouchdb-collate":118}],105:[function(require,module,exports){
-'use strict';
-
-var utils = require('./../utils');
-var clone = utils.clone;
-var Promise = utils.Promise;
-
-var MAX_SIMULTANEOUS_REVS = 50;
-
-function isGenOne(rev) {
-  return /^1-/.test(rev);
-}
-
-//
-// Fetch all the documents from the src as described in the "diffs",
-// which is a mapping of docs IDs to revisions. If the state ever
-// changes to "cancelled", then the returned promise will be rejected.
-// Else it will be resolved with a list of fetched documents.
-//
-function getDocs(src, diffs, state) {
-  diffs = clone(diffs); // we do not need to modify this
-
-  var resultDocs = [];
-
-  function fetchMissingRevs(id, missingRevs) {
-    var opts = {
-      revs: true,
-      open_revs: missingRevs,
-      attachments: true,
-      binary: true
-    };
-    return src.get(id, opts).then(function (docs) {
-      if (state.cancelled) {
-        throw new Error('cancelled');
-      }
-      docs.forEach(function (doc) {
-        if (doc.ok) {
-          resultDocs.push(doc.ok);
-        }
-      });
-    });
-  }
-
-  function processDiffDoc(id) {
-    var missing = diffs[id].missing;
-    // avoid url too long error by batching
-    var missingBatches = [];
-    for (var i = 0; i < missing.length; i += MAX_SIMULTANEOUS_REVS) {
-      var missingBatch = missing.slice(i,
-        Math.min(missing.length, i + MAX_SIMULTANEOUS_REVS));
-      missingBatches.push(missingBatch);
-    }
-
-    return Promise.all(missingBatches.map(function (missingRevs) {
-      return fetchMissingRevs(id, missingRevs);
-    }));
-  }
-
-  function getAllDocs() {
-    var diffKeys = Object.keys(diffs);
-    return Promise.all(diffKeys.map(processDiffDoc));
-  }
-
-  function hasAttachments(doc) {
-    return doc._attachments && Object.keys(doc._attachments).length > 0;
-  }
-
-  function fetchRevisionOneDocs(ids) {
-    // Optimization: fetch gen-1 docs and attachments in
-    // a single request using _all_docs
-    return src.allDocs({
-      keys: ids,
-      include_docs: true
-    }).then(function (res) {
-      if (state.cancelled) {
-        throw new Error('cancelled');
-      }
-      res.rows.forEach(function (row) {
-        if (row.deleted || !row.doc || !isGenOne(row.value.rev) ||
-            hasAttachments(row.doc)) {
-          // if any of these conditions apply, we need to fetch using get()
-          return;
-        }
-
-        // the doc we got back from allDocs() is sufficient
-        resultDocs.push(row.doc);
-        delete diffs[row.id];
-      });
-    });
-  }
-
-  function getRevisionOneDocs() {
-    // filter out the generation 1 docs and get them
-    // leaving the non-generation one docs to be got otherwise
-    var ids = Object.keys(diffs).filter(function (id) {
-      var missing = diffs[id].missing;
-      return missing.length === 1 && isGenOne(missing[0]);
-    });
-    if (ids.length > 0) {
-      return fetchRevisionOneDocs(ids);
-    }
-  }
-
-  function returnDocs() {
-    return resultDocs;
-  }
-
-  return Promise.resolve()
-    .then(getRevisionOneDocs)
-    .then(getAllDocs)
-    .then(returnDocs);
-}
-
-module.exports = getDocs;
-},{"./../utils":112}],106:[function(require,module,exports){
-'use strict';
-
-var utils = require('../utils');
-var replicate = require('./replicate');
-var Replication = require('./replication');
-
-var errors = require('../deps/errors');
-
-function toPouch(db, opts) {
-  var PouchConstructor = opts.PouchConstructor;
-  if (typeof db === 'string') {
-    return new PouchConstructor(db, opts);
-  } else {
-    return db;
-  }
-}
-
-function replicateWrapper(src, target, opts, callback) {
-  if (typeof opts === 'function') {
-    callback = opts;
-    opts = {};
-  }
-  if (typeof opts === 'undefined') {
-    opts = {};
-  }
-
-  if (opts.doc_ids && !Array.isArray(opts.doc_ids)) {
-    throw errors.error(errors.BAD_REQUEST,
-                       "`doc_ids` filter parameter is not a list.");
-  }
-
-  opts.complete = callback;
-  opts = utils.clone(opts);
-  opts.continuous = opts.continuous || opts.live;
-  opts.retry = ('retry' in opts) ? opts.retry : false;
-  /*jshint validthis:true */
-  opts.PouchConstructor = opts.PouchConstructor || this;
-  var replicateRet = new Replication(opts);
-  var srcPouch = toPouch(src, opts);
-  var targetPouch = toPouch(target, opts);
-  replicate(srcPouch, targetPouch, opts, replicateRet);
-  return replicateRet;
-}
-
-module.exports = {
-  replicate: replicateWrapper,
-  toPouch: toPouch
-};
-
-},{"../deps/errors":81,"../utils":112,"./replicate":107,"./replication":108}],107:[function(require,module,exports){
-'use strict';
-
-var utils = require('./../utils');
-var Checkpointer = require('./checkpointer');
-var backOff = require('./backoff');
-var generateReplicationId = require('./generateReplicationId');
-var getDocs = require('./getDocs');
-
-function replicate(src, target, opts, returnValue, result) {
-  var batches = [];               // list of batches to be processed
-  var currentBatch;               // the batch currently being processed
-  var pendingBatch = {
-    seq: 0,
-    changes: [],
-    docs: []
-  }; // next batch, not yet ready to be processed
-  var writingCheckpoint = false;  // true while checkpoint is being written
-  var changesCompleted = false;   // true when all changes received
-  var replicationCompleted = false; // true when replication has completed
-  var last_seq = 0;
-  var continuous = opts.continuous || opts.live || false;
-  var batch_size = opts.batch_size || 100;
-  var batches_limit = opts.batches_limit || 10;
-  var changesPending = false;     // true while src.changes is running
-  var doc_ids = opts.doc_ids;
-  var state = {
-    cancelled: false
-  };
-  var repId;
-  var checkpointer;
-  var allErrors = [];
-  var changedDocs = [];
-  // Like couchdb, every replication gets a unique session id
-  var session = utils.uuid();
-
-  result = result || {
-    ok: true,
-    start_time: new Date(),
-    docs_read: 0,
-    docs_written: 0,
-    doc_write_failures: 0,
-    errors: []
-  };
-
-  var changesOpts = {};
-  returnValue.ready(src, target);
-
-  function initCheckpointer() {
-    if (checkpointer) {
-      return utils.Promise.resolve();
-    }
-    return generateReplicationId(src, target, opts).then(function (res) {
-      repId = res;
-      checkpointer = new Checkpointer(src, target, repId, state);
-    });
-  }
-
-  function writeDocs() {
-    if (currentBatch.docs.length === 0) {
-      return;
-    }
-    var docs = currentBatch.docs;
-    return target.bulkDocs({docs: docs, new_edits: false}).then(function (res) {
-      if (state.cancelled) {
-        completeReplication();
-        throw new Error('cancelled');
-      }
-      var errors = [];
-      var errorsById = {};
-      res.forEach(function (res) {
-        if (res.error) {
-          result.doc_write_failures++;
-          errors.push(res);
-          errorsById[res.id] = res;
-        }
-      });
-      allErrors = allErrors.concat(errors);
-      result.docs_written += currentBatch.docs.length - errors.length;
-      var non403s = errors.filter(function (error) {
-        return error.name !== 'unauthorized' && error.name !== 'forbidden';
-      });
-
-      changedDocs = [];
-      docs.forEach(function(doc) {
-        var error = errorsById[doc._id];
-        if (error) {
-          returnValue.emit('denied', utils.clone(error));
-        } else {
-          changedDocs.push(doc);
-        }
-      });
-
-      if (non403s.length > 0) {
-        var error = new Error('bulkDocs error');
-        error.other_errors = errors;
-        abortReplication('target.bulkDocs failed to write docs', error);
-        throw new Error('bulkWrite partial failure');
-      }
-    }, function (err) {
-      result.doc_write_failures += docs.length;
-      throw err;
-    });
-  }
-
-  function finishBatch() {
-    writingCheckpoint = true;
-    return checkpointer.writeCheckpoint(currentBatch.seq,
-        session).then(function () {
-      writingCheckpoint = false;
-      if (state.cancelled) {
-        completeReplication();
-        throw new Error('cancelled');
-      }
-      result.last_seq = last_seq = currentBatch.seq;
-      var outResult = utils.clone(result);
-      outResult.docs = changedDocs;
-      returnValue.emit('change', outResult);
-      currentBatch = undefined;
-      getChanges();
-    }).catch(function (err) {
-      writingCheckpoint = false;
-      abortReplication('writeCheckpoint completed with error', err);
-      throw err;
-    });
-  }
-
-  function getDiffs() {
-    var diff = {};
-    currentBatch.changes.forEach(function (change) {
-      // Couchbase Sync Gateway emits these, but we can ignore them
-      if (change.id === "_user/") {
-        return;
-      }
-      diff[change.id] = change.changes.map(function (x) {
-        return x.rev;
-      });
-    });
-    return target.revsDiff(diff).then(function (diffs) {
-      if (state.cancelled) {
-        completeReplication();
-        throw new Error('cancelled');
-      }
-      // currentBatch.diffs elements are deleted as the documents are written
-      currentBatch.diffs = diffs;
-    });
-  }
-
-  function getBatchDocs() {
-    return getDocs(src, currentBatch.diffs, state).then(function (docs) {
-      docs.forEach(function (doc) {
-        delete currentBatch.diffs[doc._id];
-        result.docs_read++;
-        currentBatch.docs.push(doc);
-      });
-    });
-  }
-
-  function startNextBatch() {
-    if (state.cancelled || currentBatch) {
-      return;
-    }
-    if (batches.length === 0) {
-      processPendingBatch(true);
-      return;
-    }
-    currentBatch = batches.shift();
-    getDiffs()
-      .then(getBatchDocs)
-      .then(writeDocs)
-      .then(finishBatch)
-      .then(startNextBatch)
-      .catch(function (err) {
-        abortReplication('batch processing terminated with error', err);
-      });
-  }
-
-
-  function processPendingBatch(immediate) {
-    if (pendingBatch.changes.length === 0) {
-      if (batches.length === 0 && !currentBatch) {
-        if ((continuous && changesOpts.live) || changesCompleted) {
-          returnValue.state = 'pending';
-          returnValue.emit('paused');
-        }
-        if (changesCompleted) {
-          completeReplication();
-        }
-      }
-      return;
-    }
-    if (
-      immediate ||
-      changesCompleted ||
-      pendingBatch.changes.length >= batch_size
-    ) {
-      batches.push(pendingBatch);
-      pendingBatch = {
-        seq: 0,
-        changes: [],
-        docs: []
-      };
-      if (returnValue.state === 'pending' || returnValue.state === 'stopped') {
-        returnValue.state = 'active';
-        returnValue.emit('active');
-      }
-      startNextBatch();
-    }
-  }
-
-
-  function abortReplication(reason, err) {
-    if (replicationCompleted) {
-      return;
-    }
-    if (!err.message) {
-      err.message = reason;
-    }
-    result.ok = false;
-    result.status = 'aborting';
-    result.errors.push(err);
-    allErrors = allErrors.concat(err);
-    batches = [];
-    pendingBatch = {
-      seq: 0,
-      changes: [],
-      docs: []
-    };
-    completeReplication();
-  }
-
-
-  function completeReplication() {
-    if (replicationCompleted) {
-      return;
-    }
-    if (state.cancelled) {
-      result.status = 'cancelled';
-      if (writingCheckpoint) {
-        return;
-      }
-    }
-    result.status = result.status || 'complete';
-    result.end_time = new Date();
-    result.last_seq = last_seq;
-    replicationCompleted = state.cancelled = true;
-    var non403s = allErrors.filter(function (error) {
-      return error.name !== 'unauthorized' && error.name !== 'forbidden';
-    });
-    if (non403s.length > 0) {
-      var error = allErrors.pop();
-      if (allErrors.length > 0) {
-        error.other_errors = allErrors;
-      }
-      error.result = result;
-      backOff(opts, returnValue, error, function () {
-        replicate(src, target, opts, returnValue);
-      });
-    } else {
-      result.errors = allErrors;
-      returnValue.emit('complete', result);
-      returnValue.removeAllListeners();
-    }
-  }
-
-
-  function onChange(change) {
-    if (state.cancelled) {
-      return completeReplication();
-    }
-    var filter = utils.filterChange(opts)(change);
-    if (!filter) {
-      return;
-    }
-    pendingBatch.seq = change.seq;
-    pendingBatch.changes.push(change);
-    processPendingBatch(batches.length === 0);
-  }
-
-
-  function onChangesComplete(changes) {
-    changesPending = false;
-    if (state.cancelled) {
-      return completeReplication();
-    }
-
-    // if no results were returned then we're done,
-    // else fetch more
-    if (changes.results.length > 0) {
-      changesOpts.since = changes.last_seq;
-      getChanges();
-    } else {
-      if (continuous) {
-        changesOpts.live = true;
-        getChanges();
-      } else {
-        changesCompleted = true;
-      }
-    }
-    processPendingBatch(true);
-  }
-
-
-  function onChangesError(err) {
-    changesPending = false;
-    if (state.cancelled) {
-      return completeReplication();
-    }
-    abortReplication('changes rejected', err);
-  }
-
-
-  function getChanges() {
-    if (!(
-      !changesPending &&
-      !changesCompleted &&
-      batches.length < batches_limit
-      )) {
-      return;
-    }
-    changesPending = true;
-    function abortChanges() {
-      changes.cancel();
-    }
-    function removeListener() {
-      returnValue.removeListener('cancel', abortChanges);
-    }
-
-    if (returnValue._changes) { // remove old changes() and listeners
-      returnValue.removeListener('cancel', returnValue._abortChanges);
-      returnValue._changes.cancel();
-    }
-    returnValue.once('cancel', abortChanges);
-
-    var changes = src.changes(changesOpts)
-      .on('change', onChange);
-    changes.then(removeListener, removeListener);
-    changes.then(onChangesComplete)
-      .catch(onChangesError);
-
-    if (opts.retry) {
-      // save for later so we can cancel if necessary
-      returnValue._changes = changes;
-      returnValue._abortChanges = abortChanges;
-    }
-  }
-
-
-  function startChanges() {
-    initCheckpointer().then(function () {
-      if (state.cancelled) {
-        completeReplication();
-        return;
-      }
-      return checkpointer.getCheckpoint().then(function (checkpoint) {
-        last_seq = checkpoint;
-        changesOpts = {
-          since: last_seq,
-          limit: batch_size,
-          batch_size: batch_size,
-          style: 'all_docs',
-          doc_ids: doc_ids,
-          returnDocs: true // required so we know when we're done
-        };
-        if (opts.filter) {
-          if (typeof opts.filter !== 'string') {
-            // required for the client-side filter in onChange
-            changesOpts.include_docs = true;
-          } else { // ddoc filter
-            changesOpts.filter = opts.filter;
-          }
-        }
-        if (opts.query_params) {
-          changesOpts.query_params = opts.query_params;
-        }
-        if (opts.view) {
-          changesOpts.view = opts.view;
-        }
-        getChanges();
-      });
-    }).catch(function (err) {
-      abortReplication('getCheckpoint rejected with ', err);
-    });
-  }
-
-  if (returnValue.cancelled) { // cancelled immediately
-    completeReplication();
-    return;
-  }
-
-  if (!returnValue._addedListeners) {
-    returnValue.once('cancel', completeReplication);
-
-    if (typeof opts.complete === 'function') {
-      returnValue.once('error', opts.complete);
-      returnValue.once('complete', function (result) {
-        opts.complete(null, result);
-      });
-    }
-    returnValue._addedListeners = true;
-  }
-
-  if (typeof opts.since === 'undefined') {
-    startChanges();
-  } else {
-    initCheckpointer().then(function () {
-      writingCheckpoint = true;
-      return checkpointer.writeCheckpoint(opts.since, session);
-    }).then(function () {
-      writingCheckpoint = false;
-      if (state.cancelled) {
-        completeReplication();
-        return;
-      }
-      last_seq = opts.since;
-      startChanges();
-    }).catch(function (err) {
-      writingCheckpoint = false;
-      abortReplication('writeCheckpoint completed with error', err);
-      throw err;
-    });
-  }
-}
-
-module.exports = replicate;
-
-},{"./../utils":112,"./backoff":102,"./checkpointer":103,"./generateReplicationId":104,"./getDocs":105}],108:[function(require,module,exports){
-'use strict';
-
-var utils = require('./../utils');
-var EE = require('events').EventEmitter;
-var Promise = utils.Promise;
-
-// We create a basic promise so the caller can cancel the replication possibly
-// before we have actually started listening to changes etc
-utils.inherits(Replication, EE);
-function Replication() {
-  EE.call(this);
-  this.cancelled = false;
-  this.state = 'pending';
-  var self = this;
-  var promise = new Promise(function (fulfill, reject) {
-    self.once('complete', fulfill);
-    self.once('error', reject);
-  });
-  self.then = function (resolve, reject) {
-    return promise.then(resolve, reject);
-  };
-  self.catch = function (reject) {
-    return promise.catch(reject);
-  };
-  // As we allow error handling via "error" event as well,
-  // put a stub in here so that rejecting never throws UnhandledError.
-  self.catch(function () {});
-}
-
-Replication.prototype.cancel = function () {
-  this.cancelled = true;
-  this.state = 'cancelled';
-  this.emit('cancel');
-};
-
-Replication.prototype.ready = function (src, target) {
-  var self = this;
-  if (self._readyCalled) {
-    return;
-  }
-  self._readyCalled = true;
-
-  function onDestroy() {
-    self.cancel();
-  }
-  src.once('destroyed', onDestroy);
-  target.once('destroyed', onDestroy);
-  function cleanup() {
-    src.removeListener('destroyed', onDestroy);
-    target.removeListener('destroyed', onDestroy);
-  }
-  self.once('complete', cleanup);
-};
-
-module.exports = Replication;
-},{"./../utils":112,"events":132}],109:[function(require,module,exports){
-"use strict";
-
-var PouchDB = require("./constructor");
-var utils = require('./utils');
-var EE = require('events').EventEmitter;
-var hasLocalStorage = require('./deps/env/hasLocalStorage');
-
-PouchDB.adapters = {};
-PouchDB.preferredAdapters = [];
-
-PouchDB.prefix = '_pouch_';
-
-var eventEmitter = new EE();
-
-function setUpEventEmitter(Pouch) {
-  Object.keys(EE.prototype).forEach(function (key) {
-    if (typeof EE.prototype[key] === 'function') {
-      Pouch[key] = eventEmitter[key].bind(eventEmitter);
-    }
-  });
-
-  // these are created in constructor.js, and allow us to notify each DB with
-  // the same name that it was destroyed, via the constructor object
-  var destructionListeners = Pouch._destructionListeners = new utils.Map();
-  Pouch.on('destroyed', function onConstructorDestroyed(name) {
-    if (!destructionListeners.has(name)) {
-      return;
-    }
-    destructionListeners.get(name).forEach(function (callback) {
-      callback();
-    });
-    destructionListeners.delete(name);
-  });
-}
-
-setUpEventEmitter(PouchDB);
-
-PouchDB.parseAdapter = function (name, opts) {
-  var match = name.match(/([a-z\-]*):\/\/(.*)/);
-  var adapter, adapterName;
-  if (match) {
-    // the http adapter expects the fully qualified name
-    name = /http(s?)/.test(match[1]) ? match[1] + '://' + match[2] : match[2];
-    adapter = match[1];
-    if (!PouchDB.adapters[adapter].valid()) {
-      throw 'Invalid adapter';
-    }
-    return {name: name, adapter: match[1]};
-  }
-
-  // check for browsers that have been upgraded from websql-only to websql+idb
-  var skipIdb = 'idb' in PouchDB.adapters && 'websql' in PouchDB.adapters &&
-    hasLocalStorage() &&
-    localStorage['_pouch__websqldb_' + PouchDB.prefix + name];
-
-
-  if (opts.adapter) {
-    adapterName = opts.adapter;
-  } else if (typeof opts !== 'undefined' && opts.db) {
-    adapterName = 'leveldb';
-  } else { // automatically determine adapter
-    for (var i = 0; i < PouchDB.preferredAdapters.length; ++i) {
-      adapterName = PouchDB.preferredAdapters[i];
-      if (adapterName in PouchDB.adapters) {
-        if (skipIdb && adapterName === 'idb') {
-          // log it, because this can be confusing during development
-          console.log('PouchDB is downgrading "' + name + '" to WebSQL to' +
-            ' avoid data loss, because it was already opened with WebSQL.');
-          continue; // keep using websql to avoid user data loss
-        }
-        break;
-      }
-    }
-  }
-
-  adapter = PouchDB.adapters[adapterName];
-
-  // if adapter is invalid, then an error will be thrown later
-  var usePrefix = (adapter && 'use_prefix' in adapter) ?
-      adapter.use_prefix : true;
-
-  return {
-    name: usePrefix ? (PouchDB.prefix + name) : name,
-    adapter: adapterName
-  };
-};
-
-PouchDB.destroy = utils.toPromise(function (name, opts, callback) {
-  console.log('PouchDB.destroy() is deprecated and will be removed. ' +
-              'Please use db.destroy() instead.');
-
-  if (typeof opts === 'function' || typeof opts === 'undefined') {
-    callback = opts;
-    opts = {};
-  }
-  if (name && typeof name === 'object') {
-    opts = name;
-    name = undefined;
-  }
-
-  new PouchDB(name, opts, function (err, db) {
-    if (err) {
-      return callback(err);
-    }
-    db.destroy(callback);
-  });
-});
-
-PouchDB.adapter = function (id, obj, addToPreferredAdapters) {
-  if (obj.valid()) {
-    PouchDB.adapters[id] = obj;
-    if (addToPreferredAdapters) {
-      PouchDB.preferredAdapters.push(id);
-    }
-  }
-};
-
-PouchDB.plugin = function (obj) {
-  Object.keys(obj).forEach(function (id) {
-    PouchDB.prototype[id] = obj[id];
-  });
-
-  return PouchDB;
-};
-
-PouchDB.defaults = function (defaultOpts) {
-  function PouchAlt(name, opts, callback) {
-    if (!(this instanceof PouchAlt)) {
-      return new PouchAlt(name, opts, callback);
-    }
-
-    if (typeof opts === 'function' || typeof opts === 'undefined') {
-      callback = opts;
-      opts = {};
-    }
-    if (name && typeof name === 'object') {
-      opts = name;
-      name = undefined;
-    }
-
-    opts = utils.extend({}, defaultOpts, opts);
-    PouchDB.call(this, name, opts, callback);
-  }
-
-  utils.inherits(PouchAlt, PouchDB);
-
-  PouchAlt.destroy = utils.toPromise(function (name, opts, callback) {
-    if (typeof opts === 'function' || typeof opts === 'undefined') {
-      callback = opts;
-      opts = {};
-    }
-
-    if (name && typeof name === 'object') {
-      opts = name;
-      name = undefined;
-    }
-    opts = utils.extend({}, defaultOpts, opts);
-    return PouchDB.destroy(name, opts, callback);
-  });
-
-  setUpEventEmitter(PouchAlt);
-
-  PouchAlt.preferredAdapters = PouchDB.preferredAdapters.slice();
-  Object.keys(PouchDB).forEach(function (key) {
-    if (!(key in PouchAlt)) {
-      PouchAlt[key] = PouchDB[key];
-    }
-  });
-
-  return PouchAlt;
-};
-
-module.exports = PouchDB;
-
-},{"./constructor":49,"./deps/env/hasLocalStorage":79,"./utils":112,"events":132}],110:[function(require,module,exports){
-'use strict';
-
-var utils = require('./utils');
-var replication = require('./replicate');
-var replicate = replication.replicate;
-var EE = require('events').EventEmitter;
-
-utils.inherits(Sync, EE);
-module.exports = sync;
-function sync(src, target, opts, callback) {
-  if (typeof opts === 'function') {
-    callback = opts;
-    opts = {};
-  }
-  if (typeof opts === 'undefined') {
-    opts = {};
-  }
-  opts = utils.clone(opts);
-  /*jshint validthis:true */
-  opts.PouchConstructor = opts.PouchConstructor || this;
-  src = replication.toPouch(src, opts);
-  target = replication.toPouch(target, opts);
-  return new Sync(src, target, opts, callback);
-}
-
-function Sync(src, target, opts, callback) {
-  var self = this;
-  this.canceled = false;
-
-  this.push = replicate(src, target, opts);
-  this.pull = replicate(target, src, opts);
-
-  function pullChange(change) {
-    self.emit('change', {
-      direction: 'pull',
-      change: change
-    });
-  }
-  function pushChange(change) {
-    self.emit('change', {
-      direction: 'push',
-      change: change
-    });
-  }
-  function pushDenied(doc) {
-    self.emit('denied', {
-      direction: 'push',
-      doc: doc
-    });
-  }
-  function pullDenied(doc) {
-    self.emit('denied', {
-      direction: 'pull',
-      doc: doc
-    });
-  }
-
-  var listeners = {};
-  var removed = {};
-
-  function removeAll(type) { // type is 'push' or 'pull'
-    return function (event, func) {
-      var isChange = event === 'change' &&
-        (func === pullChange || func === pushChange);
-      var isOtherEvent = event in listeners;
-
-      if (isChange || isOtherEvent) {
-        if (!(event in removed)) {
-          removed[event] = {};
-        }
-        removed[event][type] = true;
-        if (Object.keys(removed[event]).length === 2) {
-          // both push and pull have asked to be removed
-          self.removeAllListeners(event);
-        }
-      }
-    };
-  }
-
-  if (opts.live) {
-    this.push.on('complete', self.pull.cancel.bind(self.pull));
-    this.pull.on('complete', self.push.cancel.bind(self.push));
-  }
-
-  this.on('newListener', function (event) {
-    if (event === 'change') {
-      self.pull.on('change', pullChange);
-      self.push.on('change', pushChange);
-    } else if (event === 'denied') {
-      self.pull.on('denied', pullDenied);
-      self.push.on('denied', pushDenied);
-    }
-  });
-
-  this.on('removeListener', function (event) {
-    if (event === 'change') {
-      self.pull.removeListener('change', pullChange);
-      self.push.removeListener('change', pushChange);
-    }
-  });
-
-  this.pull.on('removeListener', removeAll('pull'));
-  this.push.on('removeListener', removeAll('push'));
-
-  var promise = utils.Promise.all([
-    this.push,
-    this.pull
-  ]).then(function (resp) {
-    var out = {
-      push: resp[0],
-      pull: resp[1]
-    };
-    self.emit('complete', out);
-    if (callback) {
-      callback(null, out);
-    }
-    self.removeAllListeners();
-    return out;
-  }, function (err) {
-    self.cancel();
-    if (callback) {
-      // if there's a callback, then the callback can receive
-      // the error event
-      callback(err);
-    } else {
-      // if there's no callback, then we're safe to emit an error
-      // event, which would otherwise throw an unhandled error
-      // due to 'error' being a special event in EventEmitters
-      self.emit('error', err);
-    }
-    self.removeAllListeners();
-    if (callback) {
-      // no sense throwing if we're already emitting an 'error' event
-      throw err;
-    }
-  });
-
-  this.then = function (success, err) {
-    return promise.then(success, err);
-  };
-
-  this.catch = function (err) {
-    return promise.catch(err);
-  };
-}
-
-Sync.prototype.cancel = function () {
-  if (!this.canceled) {
-    this.canceled = true;
-    this.push.cancel();
-    this.pull.cancel();
-  }
-};
-
-},{"./replicate":106,"./utils":112,"events":132}],111:[function(require,module,exports){
-'use strict';
-
-module.exports = TaskQueue;
-
-function TaskQueue() {
-  this.isReady = false;
-  this.failed = false;
-  this.queue = [];
-}
-
-TaskQueue.prototype.execute = function () {
-  var fun;
-  if (this.failed) {
-    while ((fun = this.queue.shift())) {
-      fun(this.failed);
-    }
-  } else {
-    while ((fun = this.queue.shift())) {
-      fun();
-    }
-  }
-};
-
-TaskQueue.prototype.fail = function (err) {
-  this.failed = err;
-  this.execute();
-};
-
-TaskQueue.prototype.ready = function (db) {
-  this.isReady = true;
-  this.db = db;
-  this.execute();
-};
-
-TaskQueue.prototype.addTask = function (fun) {
-  this.queue.push(fun);
-  if (this.failed) {
-    this.execute();
-  }
-};
-
-},{}],112:[function(require,module,exports){
-/*jshint strict: false */
-var merge = require('./merge');
-exports.ajax = require('./deps/ajax/prequest');
-exports.uuid = require('./deps/uuid');
-exports.getArguments = require('argsarray');
-var collections = require('pouchdb-collections');
-exports.Map = collections.Map;
-exports.Set = collections.Set;
-var parseDoc = require('./deps/docs/parseDoc');
-
-var Promise = require('./deps/promise');
-exports.Promise = Promise;
-
-var base64 = require('./deps/binary/base64');
-
-// TODO: don't export these
-exports.atob = base64.atob;
-exports.btoa = base64.btoa;
-
-var binStringToBlobOrBuffer =
-  require('./deps/binary/binaryStringToBlobOrBuffer');
-
-// TODO: only used by the integration tests
-exports.binaryStringToBlobOrBuffer = binStringToBlobOrBuffer;
-
-exports.clone = require('./deps/clone');
-exports.extend = require('./deps/extend');
-
-exports.pick = require('./deps/pick');
-exports.inherits = require('inherits');
-
-exports.filterChange = function filterChange(opts) {
-  var req = {};
-  var hasFilter = opts.filter && typeof opts.filter === 'function';
-  req.query = opts.query_params;
-
-  return function filter(change) {
-    if (!change.doc) {
-      // CSG sends events on the changes feed that don't have documents,
-      // this hack makes a whole lot of existing code robust.
-      change.doc = {};
-    }
-    if (opts.filter && hasFilter && !opts.filter.call(this, change.doc, req)) {
-      return false;
-    }
-    if (!opts.include_docs) {
-      delete change.doc;
-    } else if (!opts.attachments) {
-      for (var att in change.doc._attachments) {
-        /* istanbul ignore else */
-        if (change.doc._attachments.hasOwnProperty(att)) {
-          change.doc._attachments[att].stub = true;
-        }
-      }
-    }
-    return true;
-  };
-};
-
-exports.parseDoc = parseDoc.parseDoc;
-exports.invalidIdError = parseDoc.invalidIdError;
-
-exports.isCordova = function () {
-  return (typeof cordova !== "undefined" ||
-          typeof PhoneGap !== "undefined" ||
-          typeof phonegap !== "undefined");
-};
-
-exports.Changes = require('./changesHandler');
-
-exports.once = require('./deps/once');
-
-exports.toPromise = require('./deps/toPromise');
-
-exports.adapterFun = function (name, callback) {
-  var log = require('debug')('pouchdb:api');
-
-  function logApiCall(self, name, args) {
-    /* istanbul ignore if */
-    if (log.enabled) {
-      var logArgs = [self._db_name, name];
-      for (var i = 0; i < args.length - 1; i++) {
-        logArgs.push(args[i]);
-      }
-      log.apply(null, logArgs);
-
-      // override the callback itself to log the response
-      var origCallback = args[args.length - 1];
-      args[args.length - 1] = function (err, res) {
-        var responseArgs = [self._db_name, name];
-        responseArgs = responseArgs.concat(
-          err ? ['error', err] : ['success', res]
-        );
-        log.apply(null, responseArgs);
-        origCallback(err, res);
-      };
-    }
-  }
-
-
-  return exports.toPromise(exports.getArguments(function (args) {
-    if (this._closed) {
-      return Promise.reject(new Error('database is closed'));
-    }
-    var self = this;
-    logApiCall(self, name, args);
-    if (!this.taskqueue.isReady) {
-      return new Promise(function (fulfill, reject) {
-        self.taskqueue.addTask(function (failed) {
-          if (failed) {
-            reject(failed);
-          } else {
-            fulfill(self[name].apply(self, args));
-          }
-        });
-      });
-    }
-    return callback.apply(this, args);
-  }));
-};
-
-exports.explain404 = require('./deps/ajax/explain404');
-
-exports.parseUri = require('./deps/parseUri');
-
-exports.compare = function (left, right) {
-  return left < right ? -1 : left > right ? 1 : 0;
-};
-
-
-// compact a tree by marking its non-leafs as missing,
-// and return a list of revs to delete
-exports.compactTree = function compactTree(metadata) {
-  var revs = [];
-  merge.traverseRevTree(metadata.rev_tree, function (isLeaf, pos,
-                                                     revHash, ctx, opts) {
-    if (opts.status === 'available' && !isLeaf) {
-      revs.push(pos + '-' + revHash);
-      opts.status = 'missing';
-    }
-  });
-  return revs;
-};
-
-var vuvuzela = require('vuvuzela');
-
-exports.safeJsonParse = function safeJsonParse(str) {
-  try {
-    return JSON.parse(str);
-  } catch (e) {
-    return vuvuzela.parse(str);
-  }
-};
-
-exports.safeJsonStringify = function safeJsonStringify(json) {
-  try {
-    return JSON.stringify(json);
-  } catch (e) {
-    return vuvuzela.stringify(json);
-  }
-};
-
-},{"./changesHandler":48,"./deps/ajax/explain404":55,"./deps/ajax/prequest":58,"./deps/binary/base64":61,"./deps/binary/binaryStringToBlobOrBuffer":64,"./deps/clone":70,"./deps/docs/parseDoc":75,"./deps/extend":82,"./deps/once":84,"./deps/parseUri":86,"./deps/pick":87,"./deps/promise":88,"./deps/toPromise":89,"./deps/uuid":91,"./merge":101,"argsarray":114,"debug":"debug","inherits":115,"pouchdb-collections":120,"vuvuzela":122}],113:[function(require,module,exports){
-module.exports = "4.0.1";
-
-},{}],114:[function(require,module,exports){
-'use strict';
-
-module.exports = argsArray;
-
-function argsArray(fun) {
-  return function () {
-    var len = arguments.length;
-    if (len) {
-      var args = [];
-      var i = -1;
-      while (++i < len) {
-        args[i] = arguments[i];
-      }
-      return fun.call(this, args);
-    } else {
-      return fun.call(this, []);
-    }
-  };
-}
-},{}],115:[function(require,module,exports){
-arguments[4][7][0].apply(exports,arguments)
-},{"dup":7}],116:[function(require,module,exports){
-'use strict';
-var immediate = require('immediate');
-
-/* istanbul ignore next */
-function INTERNAL() {}
-
-var handlers = {};
-
-var REJECTED = ['REJECTED'];
-var FULFILLED = ['FULFILLED'];
-var PENDING = ['PENDING'];
-var UNHANDLED;
-
-module.exports = exports = Promise;
-
-function Promise(resolver) {
-  if (typeof resolver !== 'function') {
-    throw new TypeError('resolver must be a function');
-  }
-  this.state = PENDING;
-  this.queue = [];
-  this.outcome = void 0;
-  if (resolver !== INTERNAL) {
-    safelyResolveThenable(this, resolver);
-  }
-}
-
-Promise.prototype["catch"] = function (onRejected) {
-  return this.then(null, onRejected);
-};
-Promise.prototype.then = function (onFulfilled, onRejected) {
-  if (typeof onFulfilled !== 'function' && this.state === FULFILLED ||
-    typeof onRejected !== 'function' && this.state === REJECTED) {
-    return this;
-  }
-  var promise = new this.constructor(INTERNAL);
-  if (this.state !== PENDING) {
-    var resolver = this.state === FULFILLED ? onFulfilled : onRejected;
-    unwrap(promise, resolver, this.outcome);
-  } else {
-    this.queue.push(new QueueItem(promise, onFulfilled, onRejected));
-  }
-
-  return promise;
-};
-function QueueItem(promise, onFulfilled, onRejected) {
-  this.promise = promise;
-  if (typeof onFulfilled === 'function') {
-    this.onFulfilled = onFulfilled;
-    this.callFulfilled = this.otherCallFulfilled;
-  }
-  if (typeof onRejected === 'function') {
-    this.onRejected = onRejected;
-    this.callRejected = this.otherCallRejected;
-  }
-}
-QueueItem.prototype.callFulfilled = function (value) {
-  handlers.resolve(this.promise, value);
-};
-QueueItem.prototype.otherCallFulfilled = function (value) {
-  unwrap(this.promise, this.onFulfilled, value);
-};
-QueueItem.prototype.callRejected = function (value) {
-  handlers.reject(this.promise, value);
-};
-QueueItem.prototype.otherCallRejected = function (value) {
-  unwrap(this.promise, this.onRejected, value);
-};
-
-function unwrap(promise, func, value) {
-  immediate(function () {
-    var returnValue;
-    try {
-      returnValue = func(value);
-    } catch (e) {
-      return handlers.reject(promise, e);
-    }
-    if (returnValue === promise) {
-      handlers.reject(promise, new TypeError('Cannot resolve promise with itself'));
-    } else {
-      handlers.resolve(promise, returnValue);
-    }
-  });
-}
-
-handlers.resolve = function (self, value) {
-  var result = tryCatch(getThen, value);
-  if (result.status === 'error') {
-    return handlers.reject(self, result.value);
-  }
-  var thenable = result.value;
-
-  if (thenable) {
-    safelyResolveThenable(self, thenable);
-  } else {
-    self.state = FULFILLED;
-    self.outcome = value;
-    var i = -1;
-    var len = self.queue.length;
-    while (++i < len) {
-      self.queue[i].callFulfilled(value);
-    }
-  }
-  return self;
-};
-handlers.reject = function (self, error) {
-  self.state = REJECTED;
-  self.outcome = error;
-  var i = -1;
-  var len = self.queue.length;
-  while (++i < len) {
-    self.queue[i].callRejected(error);
-  }
-  return self;
-};
-
-function getThen(obj) {
-  // Make sure we only access the accessor once as required by the spec
-  var then = obj && obj.then;
-  if (obj && typeof obj === 'object' && typeof then === 'function') {
-    return function appyThen() {
-      then.apply(obj, arguments);
-    };
-  }
-}
-
-function safelyResolveThenable(self, thenable) {
-  // Either fulfill, reject or reject with error
-  var called = false;
-  function onError(value) {
-    if (called) {
-      return;
-    }
-    called = true;
-    handlers.reject(self, value);
-  }
-
-  function onSuccess(value) {
-    if (called) {
-      return;
-    }
-    called = true;
-    handlers.resolve(self, value);
-  }
-
-  function tryToUnwrap() {
-    thenable(onSuccess, onError);
-  }
-
-  var result = tryCatch(tryToUnwrap);
-  if (result.status === 'error') {
-    onError(result.value);
-  }
-}
-
-function tryCatch(func, value) {
-  var out = {};
-  try {
-    out.value = func(value);
-    out.status = 'success';
-  } catch (e) {
-    out.status = 'error';
-    out.value = e;
-  }
-  return out;
-}
-
-exports.resolve = resolve;
-function resolve(value) {
-  if (value instanceof this) {
-    return value;
-  }
-  return handlers.resolve(new this(INTERNAL), value);
-}
-
-exports.reject = reject;
-function reject(reason) {
-  var promise = new this(INTERNAL);
-  return handlers.reject(promise, reason);
-}
-
-exports.all = all;
-function all(iterable) {
-  var self = this;
-  if (Object.prototype.toString.call(iterable) !== '[object Array]') {
-    return this.reject(new TypeError('must be an array'));
-  }
-
-  var len = iterable.length;
-  var called = false;
-  if (!len) {
-    return this.resolve([]);
-  }
-
-  var values = new Array(len);
-  var resolved = 0;
-  var i = -1;
-  var promise = new this(INTERNAL);
-
-  while (++i < len) {
-    allResolver(iterable[i], i);
-  }
-  return promise;
-  function allResolver(value, i) {
-    self.resolve(value).then(resolveFromAll, function (error) {
-      if (!called) {
-        called = true;
-        handlers.reject(promise, error);
-      }
-    });
-    function resolveFromAll(outValue) {
-      values[i] = outValue;
-      if (++resolved === len && !called) {
-        called = true;
-        handlers.resolve(promise, values);
-      }
-    }
-  }
-}
-
-exports.race = race;
-function race(iterable) {
-  var self = this;
-  if (Object.prototype.toString.call(iterable) !== '[object Array]') {
-    return this.reject(new TypeError('must be an array'));
-  }
-
-  var len = iterable.length;
-  var called = false;
-  if (!len) {
-    return this.resolve([]);
-  }
-
-  var i = -1;
-  var promise = new this(INTERNAL);
-
-  while (++i < len) {
-    resolver(iterable[i]);
-  }
-  return promise;
-  function resolver(value) {
-    self.resolve(value).then(function (response) {
-      if (!called) {
-        called = true;
-        handlers.resolve(promise, response);
-      }
-    }, function (error) {
-      if (!called) {
-        called = true;
-        handlers.reject(promise, error);
-      }
-    });
-  }
-}
-
-},{"immediate":117}],117:[function(require,module,exports){
-(function (global){
-'use strict';
-var Mutation = global.MutationObserver || global.WebKitMutationObserver;
-
-var scheduleDrain;
-
-{
-  if (Mutation) {
-    var called = 0;
-    var observer = new Mutation(nextTick);
-    var element = global.document.createTextNode('');
-    observer.observe(element, {
-      characterData: true
-    });
-    scheduleDrain = function () {
-      element.data = (called = ++called % 2);
-    };
-  } else if (!global.setImmediate && typeof global.MessageChannel !== 'undefined') {
-    var channel = new global.MessageChannel();
-    channel.port1.onmessage = nextTick;
-    scheduleDrain = function () {
-      channel.port2.postMessage(0);
-    };
-  } else if ('document' in global && 'onreadystatechange' in global.document.createElement('script')) {
-    scheduleDrain = function () {
-
-      // Create a <script> element; its readystatechange event will be fired asynchronously once it is inserted
-      // into the document. Do so, thus queuing up the task. Remember to clean up once it's been called.
-      var scriptEl = global.document.createElement('script');
-      scriptEl.onreadystatechange = function () {
-        nextTick();
-
-        scriptEl.onreadystatechange = null;
-        scriptEl.parentNode.removeChild(scriptEl);
-        scriptEl = null;
-      };
-      global.document.documentElement.appendChild(scriptEl);
-    };
-  } else {
-    scheduleDrain = function () {
-      setTimeout(nextTick, 0);
-    };
-  }
-}
-
-var draining;
-var queue = [];
-//named nextTick for less confusing stack traces
-function nextTick() {
-  draining = true;
-  var i, oldQueue;
-  var len = queue.length;
-  while (len) {
-    oldQueue = queue;
-    queue = [];
-    i = -1;
-    while (++i < len) {
-      oldQueue[i]();
-    }
-    len = queue.length;
-  }
-  draining = false;
-}
-
-module.exports = immediate;
-function immediate(task) {
-  if (queue.push(task) === 1 && !draining) {
-    scheduleDrain();
-  }
-}
-
-}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],118:[function(require,module,exports){
-'use strict';
-
-var MIN_MAGNITUDE = -324; // verified by -Number.MIN_VALUE
-var MAGNITUDE_DIGITS = 3; // ditto
-var SEP = ''; // set to '_' for easier debugging 
-
-var utils = require('./utils');
-
-exports.collate = function (a, b) {
-
-  if (a === b) {
-    return 0;
-  }
-
-  a = exports.normalizeKey(a);
-  b = exports.normalizeKey(b);
-
-  var ai = collationIndex(a);
-  var bi = collationIndex(b);
-  if ((ai - bi) !== 0) {
-    return ai - bi;
-  }
-  if (a === null) {
-    return 0;
-  }
-  switch (typeof a) {
-    case 'number':
-      return a - b;
-    case 'boolean':
-      return a === b ? 0 : (a < b ? -1 : 1);
-    case 'string':
-      return stringCollate(a, b);
-  }
-  return Array.isArray(a) ? arrayCollate(a, b) : objectCollate(a, b);
-};
-
-// couch considers null/NaN/Infinity/-Infinity === undefined,
-// for the purposes of mapreduce indexes. also, dates get stringified.
-exports.normalizeKey = function (key) {
-  switch (typeof key) {
-    case 'undefined':
-      return null;
-    case 'number':
-      if (key === Infinity || key === -Infinity || isNaN(key)) {
-        return null;
-      }
-      return key;
-    case 'object':
-      var origKey = key;
-      if (Array.isArray(key)) {
-        var len = key.length;
-        key = new Array(len);
-        for (var i = 0; i < len; i++) {
-          key[i] = exports.normalizeKey(origKey[i]);
-        }
-      } else if (key instanceof Date) {
-        return key.toJSON();
-      } else if (key !== null) { // generic object
-        key = {};
-        for (var k in origKey) {
-          if (origKey.hasOwnProperty(k)) {
-            var val = origKey[k];
-            if (typeof val !== 'undefined') {
-              key[k] = exports.normalizeKey(val);
-            }
-          }
-        }
-      }
-  }
-  return key;
-};
-
-function indexify(key) {
-  if (key !== null) {
-    switch (typeof key) {
-      case 'boolean':
-        return key ? 1 : 0;
-      case 'number':
-        return numToIndexableString(key);
-      case 'string':
-        // We've to be sure that key does not contain \u0000
-        // Do order-preserving replacements:
-        // 0 -> 1, 1
-        // 1 -> 1, 2
-        // 2 -> 2, 2
-        return key
-          .replace(/\u0002/g, '\u0002\u0002')
-          .replace(/\u0001/g, '\u0001\u0002')
-          .replace(/\u0000/g, '\u0001\u0001');
-      case 'object':
-        var isArray = Array.isArray(key);
-        var arr = isArray ? key : Object.keys(key);
-        var i = -1;
-        var len = arr.length;
-        var result = '';
-        if (isArray) {
-          while (++i < len) {
-            result += exports.toIndexableString(arr[i]);
-          }
-        } else {
-          while (++i < len) {
-            var objKey = arr[i];
-            result += exports.toIndexableString(objKey) +
-                exports.toIndexableString(key[objKey]);
-          }
-        }
-        return result;
-    }
-  }
-  return '';
-}
-
-// convert the given key to a string that would be appropriate
-// for lexical sorting, e.g. within a database, where the
-// sorting is the same given by the collate() function.
-exports.toIndexableString = function (key) {
-  var zero = '\u0000';
-  key = exports.normalizeKey(key);
-  return collationIndex(key) + SEP + indexify(key) + zero;
-};
-
-function parseNumber(str, i) {
-  var originalIdx = i;
-  var num;
-  var zero = str[i] === '1';
-  if (zero) {
-    num = 0;
-    i++;
-  } else {
-    var neg = str[i] === '0';
-    i++;
-    var numAsString = '';
-    var magAsString = str.substring(i, i + MAGNITUDE_DIGITS);
-    var magnitude = parseInt(magAsString, 10) + MIN_MAGNITUDE;
-    if (neg) {
-      magnitude = -magnitude;
-    }
-    i += MAGNITUDE_DIGITS;
-    while (true) {
-      var ch = str[i];
-      if (ch === '\u0000') {
-        break;
-      } else {
-        numAsString += ch;
-      }
-      i++;
-    }
-    numAsString = numAsString.split('.');
-    if (numAsString.length === 1) {
-      num = parseInt(numAsString, 10);
-    } else {
-      num = parseFloat(numAsString[0] + '.' + numAsString[1]);
-    }
-    if (neg) {
-      num = num - 10;
-    }
-    if (magnitude !== 0) {
-      // parseFloat is more reliable than pow due to rounding errors
-      // e.g. Number.MAX_VALUE would return Infinity if we did
-      // num * Math.pow(10, magnitude);
-      num = parseFloat(num + 'e' + magnitude);
-    }
-  }
-  return {num: num, length : i - originalIdx};
-}
-
-// move up the stack while parsing
-// this function moved outside of parseIndexableString for performance
-function pop(stack, metaStack) {
-  var obj = stack.pop();
-
-  if (metaStack.length) {
-    var lastMetaElement = metaStack[metaStack.length - 1];
-    if (obj === lastMetaElement.element) {
-      // popping a meta-element, e.g. an object whose value is another object
-      metaStack.pop();
-      lastMetaElement = metaStack[metaStack.length - 1];
-    }
-    var element = lastMetaElement.element;
-    var lastElementIndex = lastMetaElement.index;
-    if (Array.isArray(element)) {
-      element.push(obj);
-    } else if (lastElementIndex === stack.length - 2) { // obj with key+value
-      var key = stack.pop();
-      element[key] = obj;
-    } else {
-      stack.push(obj); // obj with key only
-    }
-  }
-}
-
-exports.parseIndexableString = function (str) {
-  var stack = [];
-  var metaStack = []; // stack for arrays and objects
-  var i = 0;
-
-  while (true) {
-    var collationIndex = str[i++];
-    if (collationIndex === '\u0000') {
-      if (stack.length === 1) {
-        return stack.pop();
-      } else {
-        pop(stack, metaStack);
-        continue;
-      }
-    }
-    switch (collationIndex) {
-      case '1':
-        stack.push(null);
-        break;
-      case '2':
-        stack.push(str[i] === '1');
-        i++;
-        break;
-      case '3':
-        var parsedNum = parseNumber(str, i);
-        stack.push(parsedNum.num);
-        i += parsedNum.length;
-        break;
-      case '4':
-        var parsedStr = '';
-        while (true) {
-          var ch = str[i];
-          if (ch === '\u0000') {
-            break;
-          }
-          parsedStr += ch;
-          i++;
-        }
-        // perform the reverse of the order-preserving replacement
-        // algorithm (see above)
-        parsedStr = parsedStr.replace(/\u0001\u0001/g, '\u0000')
-          .replace(/\u0001\u0002/g, '\u0001')
-          .replace(/\u0002\u0002/g, '\u0002');
-        stack.push(parsedStr);
-        break;
-      case '5':
-        var arrayElement = { element: [], index: stack.length };
-        stack.push(arrayElement.element);
-        metaStack.push(arrayElement);
-        break;
-      case '6':
-        var objElement = { element: {}, index: stack.length };
-        stack.push(objElement.element);
-        metaStack.push(objElement);
-        break;
-      default:
-        throw new Error(
-          'bad collationIndex or unexpectedly reached end of input: ' + collationIndex);
-    }
-  }
-};
-
-function arrayCollate(a, b) {
-  var len = Math.min(a.length, b.length);
-  for (var i = 0; i < len; i++) {
-    var sort = exports.collate(a[i], b[i]);
-    if (sort !== 0) {
-      return sort;
-    }
-  }
-  return (a.length === b.length) ? 0 :
-    (a.length > b.length) ? 1 : -1;
-}
-function stringCollate(a, b) {
-  // See: https://github.com/daleharvey/pouchdb/issues/40
-  // This is incompatible with the CouchDB implementation, but its the
-  // best we can do for now
-  return (a === b) ? 0 : ((a > b) ? 1 : -1);
-}
-function objectCollate(a, b) {
-  var ak = Object.keys(a), bk = Object.keys(b);
-  var len = Math.min(ak.length, bk.length);
-  for (var i = 0; i < len; i++) {
-    // First sort the keys
-    var sort = exports.collate(ak[i], bk[i]);
-    if (sort !== 0) {
-      return sort;
-    }
-    // if the keys are equal sort the values
-    sort = exports.collate(a[ak[i]], b[bk[i]]);
-    if (sort !== 0) {
-      return sort;
-    }
-
-  }
-  return (ak.length === bk.length) ? 0 :
-    (ak.length > bk.length) ? 1 : -1;
-}
-// The collation is defined by erlangs ordered terms
-// the atoms null, true, false come first, then numbers, strings,
-// arrays, then objects
-// null/undefined/NaN/Infinity/-Infinity are all considered null
-function collationIndex(x) {
-  var id = ['boolean', 'number', 'string', 'object'];
-  var idx = id.indexOf(typeof x);
-  //false if -1 otherwise true, but fast!!!!1
-  if (~idx) {
-    if (x === null) {
-      return 1;
-    }
-    if (Array.isArray(x)) {
-      return 5;
-    }
-    return idx < 3 ? (idx + 2) : (idx + 3);
-  }
-  if (Array.isArray(x)) {
-    return 5;
-  }
-}
-
-// conversion:
-// x yyy zz...zz
-// x = 0 for negative, 1 for 0, 2 for positive
-// y = exponent (for negative numbers negated) moved so that it's >= 0
-// z = mantisse
-function numToIndexableString(num) {
-
-  if (num === 0) {
-    return '1';
-  }
-
-  // convert number to exponential format for easier and
-  // more succinct string sorting
-  var expFormat = num.toExponential().split(/e\+?/);
-  var magnitude = parseInt(expFormat[1], 10);
-
-  var neg = num < 0;
-
-  var result = neg ? '0' : '2';
-
-  // first sort by magnitude
-  // it's easier if all magnitudes are positive
-  var magForComparison = ((neg ? -magnitude : magnitude) - MIN_MAGNITUDE);
-  var magString = utils.padLeft((magForComparison).toString(), '0', MAGNITUDE_DIGITS);
-
-  result += SEP + magString;
-
-  // then sort by the factor
-  var factor = Math.abs(parseFloat(expFormat[0])); // [1..10)
-  if (neg) { // for negative reverse ordering
-    factor = 10 - factor;
-  }
-
-  var factorStr = factor.toFixed(20);
-
-  // strip zeros from the end
-  factorStr = factorStr.replace(/\.?0+$/, '');
-
-  result += SEP + factorStr;
-
-  return result;
-}
-
-},{"./utils":119}],119:[function(require,module,exports){
-'use strict';
-
-function pad(str, padWith, upToLength) {
-  var padding = '';
-  var targetLength = upToLength - str.length;
-  while (padding.length < targetLength) {
-    padding += padWith;
-  }
-  return padding;
-}
-
-exports.padLeft = function (str, padWith, upToLength) {
-  var padding = pad(str, padWith, upToLength);
-  return padding + str;
-};
-
-exports.padRight = function (str, padWith, upToLength) {
-  var padding = pad(str, padWith, upToLength);
-  return str + padding;
-};
-
-exports.stringLexCompare = function (a, b) {
-
-  var aLen = a.length;
-  var bLen = b.length;
-
-  var i;
-  for (i = 0; i < aLen; i++) {
-    if (i === bLen) {
-      // b is shorter substring of a
-      return 1;
-    }
-    var aChar = a.charAt(i);
-    var bChar = b.charAt(i);
-    if (aChar !== bChar) {
-      return aChar < bChar ? -1 : 1;
-    }
-  }
-
-  if (aLen < bLen) {
-    // a is shorter substring of b
-    return -1;
-  }
-
-  return 0;
-};
-
-/*
- * returns the decimal form for the given integer, i.e. writes
- * out all the digits (in base-10) instead of using scientific notation
- */
-exports.intToDecimalForm = function (int) {
-
-  var isNeg = int < 0;
-  var result = '';
-
-  do {
-    var remainder = isNeg ? -Math.ceil(int % 10) : Math.floor(int % 10);
-
-    result = remainder + result;
-    int = isNeg ? Math.ceil(int / 10) : Math.floor(int / 10);
-  } while (int);
-
-
-  if (isNeg && result !== '0') {
-    result = '-' + result;
-  }
-
-  return result;
-};
-},{}],120:[function(require,module,exports){
-'use strict';
-exports.Map = LazyMap; // TODO: use ES6 map
-exports.Set = LazySet; // TODO: use ES6 set
-// based on https://github.com/montagejs/collections
-function LazyMap() {
-  this.store = {};
-}
-LazyMap.prototype.mangle = function (key) {
-  if (typeof key !== "string") {
-    throw new TypeError("key must be a string but Got " + key);
-  }
-  return '$' + key;
-};
-LazyMap.prototype.unmangle = function (key) {
-  return key.substring(1);
-};
-LazyMap.prototype.get = function (key) {
-  var mangled = this.mangle(key);
-  if (mangled in this.store) {
-    return this.store[mangled];
-  }
-  return void 0;
-};
-LazyMap.prototype.set = function (key, value) {
-  var mangled = this.mangle(key);
-  this.store[mangled] = value;
-  return true;
-};
-LazyMap.prototype.has = function (key) {
-  var mangled = this.mangle(key);
-  return mangled in this.store;
-};
-LazyMap.prototype.delete = function (key) {
-  var mangled = this.mangle(key);
-  if (mangled in this.store) {
-    delete this.store[mangled];
-    return true;
-  }
-  return false;
-};
-LazyMap.prototype.forEach = function (cb) {
-  var keys = Object.keys(this.store);
-  for (var i = 0, len = keys.length; i < len; i++) {
-    var key = keys[i];
-    var value = this.store[key];
-    key = this.unmangle(key);
-    cb(value, key);
-  }
-};
-
-function LazySet(array) {
-  this.store = new LazyMap();
-
-  // init with an array
-  if (array && Array.isArray(array)) {
-    for (var i = 0, len = array.length; i < len; i++) {
-      this.add(array[i]);
-    }
-  }
-}
-LazySet.prototype.add = function (key) {
-  return this.store.set(key, true);
-};
-LazySet.prototype.has = function (key) {
-  return this.store.has(key);
-};
-LazySet.prototype.delete = function (key) {
-  return this.store.delete(key);
-};
-
-},{}],121:[function(require,module,exports){
-/*jshint bitwise:false*/
-/*global unescape*/
-
-(function (factory) {
-    if (typeof exports === 'object') {
-        // Node/CommonJS
-        module.exports = factory();
-    } else if (typeof define === 'function' && define.amd) {
-        // AMD
-        define(factory);
-    } else {
-        // Browser globals (with support for web workers)
-        var glob;
-        try {
-            glob = window;
-        } catch (e) {
-            glob = self;
-        }
-
-        glob.SparkMD5 = factory();
-    }
-}(function (undefined) {
-
-    'use strict';
-
-    ////////////////////////////////////////////////////////////////////////////
-
-    /*
-     * Fastest md5 implementation around (JKM md5)
-     * Credits: Joseph Myers
-     *
-     * @see http://www.myersdaily.org/joseph/javascript/md5-text.html
-     * @see http://jsperf.com/md5-shootout/7
-     */
-
-    /* this function is much faster,
-      so if possible we use it. Some IEs
-      are the only ones I know of that
-      need the idiotic second function,
-      generated by an if clause.  */
-    var add32 = function (a, b) {
-        return (a + b) & 0xFFFFFFFF;
-    },
-
-    cmn = function (q, a, b, x, s, t) {
-        a = add32(add32(a, q), add32(x, t));
-        return add32((a << s) | (a >>> (32 - s)), b);
-    },
-
-    ff = function (a, b, c, d, x, s, t) {
-        return cmn((b & c) | ((~b) & d), a, b, x, s, t);
-    },
-
-    gg = function (a, b, c, d, x, s, t) {
-        return cmn((b & d) | (c & (~d)), a, b, x, s, t);
-    },
-
-    hh = function (a, b, c, d, x, s, t) {
-        return cmn(b ^ c ^ d, a, b, x, s, t);
-    },
-
-    ii = function (a, b, c, d, x, s, t) {
-        return cmn(c ^ (b | (~d)), a, b, x, s, t);
-    },
-
-    md5cycle = function (x, k) {
-        var a = x[0],
-            b = x[1],
-            c = x[2],
-            d = x[3];
-
-        a = ff(a, b, c, d, k[0], 7, -680876936);
-        d = ff(d, a, b, c, k[1], 12, -389564586);
-        c = ff(c, d, a, b, k[2], 17, 606105819);
-        b = ff(b, c, d, a, k[3], 22, -1044525330);
-        a = ff(a, b, c, d, k[4], 7, -176418897);
-        d = ff(d, a, b, c, k[5], 12, 1200080426);
-        c = ff(c, d, a, b, k[6], 17, -1473231341);
-        b = ff(b, c, d, a, k[7], 22, -45705983);
-        a = ff(a, b, c, d, k[8], 7, 1770035416);
-        d = ff(d, a, b, c, k[9], 12, -1958414417);
-        c = ff(c, d, a, b, k[10], 17, -42063);
-        b = ff(b, c, d, a, k[11], 22, -1990404162);
-        a = ff(a, b, c, d, k[12], 7, 1804603682);
-        d = ff(d, a, b, c, k[13], 12, -40341101);
-        c = ff(c, d, a, b, k[14], 17, -1502002290);
-        b = ff(b, c, d, a, k[15], 22, 1236535329);
-
-        a = gg(a, b, c, d, k[1], 5, -165796510);
-        d = gg(d, a, b, c, k[6], 9, -1069501632);
-        c = gg(c, d, a, b, k[11], 14, 643717713);
-        b = gg(b, c, d, a, k[0], 20, -373897302);
-        a = gg(a, b, c, d, k[5], 5, -701558691);
-        d = gg(d, a, b, c, k[10], 9, 38016083);
-        c = gg(c, d, a, b, k[15], 14, -660478335);
-        b = gg(b, c, d, a, k[4], 20, -405537848);
-        a = gg(a, b, c, d, k[9], 5, 568446438);
-        d = gg(d, a, b, c, k[14], 9, -1019803690);
-        c = gg(c, d, a, b, k[3], 14, -187363961);
-        b = gg(b, c, d, a, k[8], 20, 1163531501);
-        a = gg(a, b, c, d, k[13], 5, -1444681467);
-        d = gg(d, a, b, c, k[2], 9, -51403784);
-        c = gg(c, d, a, b, k[7], 14, 1735328473);
-        b = gg(b, c, d, a, k[12], 20, -1926607734);
-
-        a = hh(a, b, c, d, k[5], 4, -378558);
-        d = hh(d, a, b, c, k[8], 11, -2022574463);
-        c = hh(c, d, a, b, k[11], 16, 1839030562);
-        b = hh(b, c, d, a, k[14], 23, -35309556);
-        a = hh(a, b, c, d, k[1], 4, -1530992060);
-        d = hh(d, a, b, c, k[4], 11, 1272893353);
-        c = hh(c, d, a, b, k[7], 16, -155497632);
-        b = hh(b, c, d, a, k[10], 23, -1094730640);
-        a = hh(a, b, c, d, k[13], 4, 681279174);
-        d = hh(d, a, b, c, k[0], 11, -358537222);
-        c = hh(c, d, a, b, k[3], 16, -722521979);
-        b = hh(b, c, d, a, k[6], 23, 76029189);
-        a = hh(a, b, c, d, k[9], 4, -640364487);
-        d = hh(d, a, b, c, k[12], 11, -421815835);
-        c = hh(c, d, a, b, k[15], 16, 530742520);
-        b = hh(b, c, d, a, k[2], 23, -995338651);
-
-        a = ii(a, b, c, d, k[0], 6, -198630844);
-        d = ii(d, a, b, c, k[7], 10, 1126891415);
-        c = ii(c, d, a, b, k[14], 15, -1416354905);
-        b = ii(b, c, d, a, k[5], 21, -57434055);
-        a = ii(a, b, c, d, k[12], 6, 1700485571);
-        d = ii(d, a, b, c, k[3], 10, -1894986606);
-        c = ii(c, d, a, b, k[10], 15, -1051523);
-        b = ii(b, c, d, a, k[1], 21, -2054922799);
-        a = ii(a, b, c, d, k[8], 6, 1873313359);
-        d = ii(d, a, b, c, k[15], 10, -30611744);
-        c = ii(c, d, a, b, k[6], 15, -1560198380);
-        b = ii(b, c, d, a, k[13], 21, 1309151649);
-        a = ii(a, b, c, d, k[4], 6, -145523070);
-        d = ii(d, a, b, c, k[11], 10, -1120210379);
-        c = ii(c, d, a, b, k[2], 15, 718787259);
-        b = ii(b, c, d, a, k[9], 21, -343485551);
-
-        x[0] = add32(a, x[0]);
-        x[1] = add32(b, x[1]);
-        x[2] = add32(c, x[2]);
-        x[3] = add32(d, x[3]);
-    },
-
-    /* there needs to be support for Unicode here,
-       * unless we pretend that we can redefine the MD-5
-       * algorithm for multi-byte characters (perhaps
-       * by adding every four 16-bit characters and
-       * shortening the sum to 32 bits). Otherwise
-       * I suggest performing MD-5 as if every character
-       * was two bytes--e.g., 0040 0025 = @%--but then
-       * how will an ordinary MD-5 sum be matched?
-       * There is no way to standardize text to something
-       * like UTF-8 before transformation; speed cost is
-       * utterly prohibitive. The JavaScript standard
-       * itself needs to look at this: it should start
-       * providing access to strings as preformed UTF-8
-       * 8-bit unsigned value arrays.
-       */
-    md5blk = function (s) {
-        var md5blks = [],
-            i; /* Andy King said do it this way. */
-
-        for (i = 0; i < 64; i += 4) {
-            md5blks[i >> 2] = s.charCodeAt(i) + (s.charCodeAt(i + 1) << 8) + (s.charCodeAt(i + 2) << 16) + (s.charCodeAt(i + 3) << 24);
-        }
-        return md5blks;
-    },
-
-    md5blk_array = function (a) {
-        var md5blks = [],
-            i; /* Andy King said do it this way. */
-
-        for (i = 0; i < 64; i += 4) {
-            md5blks[i >> 2] = a[i] + (a[i + 1] << 8) + (a[i + 2] << 16) + (a[i + 3] << 24);
-        }
-        return md5blks;
-    },
-
-    md51 = function (s) {
-        var n = s.length,
-            state = [1732584193, -271733879, -1732584194, 271733878],
-            i,
-            length,
-            tail,
-            tmp,
-            lo,
-            hi;
-
-        for (i = 64; i <= n; i += 64) {
-            md5cycle(state, md5blk(s.substring(i - 64, i)));
-        }
-        s = s.substring(i - 64);
-        length = s.length;
-        tail = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        for (i = 0; i < length; i += 1) {
-            tail[i >> 2] |= s.charCodeAt(i) << ((i % 4) << 3);
-        }
-        tail[i >> 2] |= 0x80 << ((i % 4) << 3);
-        if (i > 55) {
-            md5cycle(state, tail);
-            for (i = 0; i < 16; i += 1) {
-                tail[i] = 0;
-            }
-        }
-
-        // Beware that the final length might not fit in 32 bits so we take care of that
-        tmp = n * 8;
-        tmp = tmp.toString(16).match(/(.*?)(.{0,8})$/);
-        lo = parseInt(tmp[2], 16);
-        hi = parseInt(tmp[1], 16) || 0;
-
-        tail[14] = lo;
-        tail[15] = hi;
-
-        md5cycle(state, tail);
-        return state;
-    },
-
-    md51_array = function (a) {
-        var n = a.length,
-            state = [1732584193, -271733879, -1732584194, 271733878],
-            i,
-            length,
-            tail,
-            tmp,
-            lo,
-            hi;
-
-        for (i = 64; i <= n; i += 64) {
-            md5cycle(state, md5blk_array(a.subarray(i - 64, i)));
-        }
-
-        // Not sure if it is a bug, however IE10 will always produce a sub array of length 1
-        // containing the last element of the parent array if the sub array specified starts
-        // beyond the length of the parent array - weird.
-        // https://connect.microsoft.com/IE/feedback/details/771452/typed-array-subarray-issue
-        a = (i - 64) < n ? a.subarray(i - 64) : new Uint8Array(0);
-
-        length = a.length;
-        tail = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-        for (i = 0; i < length; i += 1) {
-            tail[i >> 2] |= a[i] << ((i % 4) << 3);
-        }
-
-        tail[i >> 2] |= 0x80 << ((i % 4) << 3);
-        if (i > 55) {
-            md5cycle(state, tail);
-            for (i = 0; i < 16; i += 1) {
-                tail[i] = 0;
-            }
-        }
-
-        // Beware that the final length might not fit in 32 bits so we take care of that
-        tmp = n * 8;
-        tmp = tmp.toString(16).match(/(.*?)(.{0,8})$/);
-        lo = parseInt(tmp[2], 16);
-        hi = parseInt(tmp[1], 16) || 0;
-
-        tail[14] = lo;
-        tail[15] = hi;
-
-        md5cycle(state, tail);
-
-        return state;
-    },
-
-    hex_chr = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'],
-
-    rhex = function (n) {
-        var s = '',
-            j;
-        for (j = 0; j < 4; j += 1) {
-            s += hex_chr[(n >> (j * 8 + 4)) & 0x0F] + hex_chr[(n >> (j * 8)) & 0x0F];
-        }
-        return s;
-    },
-
-    hex = function (x) {
-        var i;
-        for (i = 0; i < x.length; i += 1) {
-            x[i] = rhex(x[i]);
-        }
-        return x.join('');
-    },
-
-    md5 = function (s) {
-        return hex(md51(s));
-    },
-
-
-
-    ////////////////////////////////////////////////////////////////////////////
-
-    /**
-     * SparkMD5 OOP implementation.
-     *
-     * Use this class to perform an incremental md5, otherwise use the
-     * static methods instead.
-     */
-    SparkMD5 = function () {
-        // call reset to init the instance
-        this.reset();
-    };
-
-
-    // In some cases the fast add32 function cannot be used..
-    if (md5('hello') !== '5d41402abc4b2a76b9719d911017c592') {
-        add32 = function (x, y) {
-            var lsw = (x & 0xFFFF) + (y & 0xFFFF),
-                msw = (x >> 16) + (y >> 16) + (lsw >> 16);
-            return (msw << 16) | (lsw & 0xFFFF);
-        };
-    }
-
-
-    /**
-     * Appends a string.
-     * A conversion will be applied if an utf8 string is detected.
-     *
-     * @param {String} str The string to be appended
-     *
-     * @return {SparkMD5} The instance itself
-     */
-    SparkMD5.prototype.append = function (str) {
-        // converts the string to utf8 bytes if necessary
-        if (/[\u0080-\uFFFF]/.test(str)) {
-            str = unescape(encodeURIComponent(str));
-        }
-
-        // then append as binary
-        this.appendBinary(str);
-
-        return this;
-    };
-
-    /**
-     * Appends a binary string.
-     *
-     * @param {String} contents The binary string to be appended
-     *
-     * @return {SparkMD5} The instance itself
-     */
-    SparkMD5.prototype.appendBinary = function (contents) {
-        this._buff += contents;
-        this._length += contents.length;
-
-        var length = this._buff.length,
-            i;
-
-        for (i = 64; i <= length; i += 64) {
-            md5cycle(this._state, md5blk(this._buff.substring(i - 64, i)));
-        }
-
-        this._buff = this._buff.substr(i - 64);
-
-        return this;
-    };
-
-    /**
-     * Finishes the incremental computation, reseting the internal state and
-     * returning the result.
-     * Use the raw parameter to obtain the raw result instead of the hex one.
-     *
-     * @param {Boolean} raw True to get the raw result, false to get the hex result
-     *
-     * @return {String|Array} The result
-     */
-    SparkMD5.prototype.end = function (raw) {
-        var buff = this._buff,
-            length = buff.length,
-            i,
-            tail = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            ret;
-
-        for (i = 0; i < length; i += 1) {
-            tail[i >> 2] |= buff.charCodeAt(i) << ((i % 4) << 3);
-        }
-
-        this._finish(tail, length);
-        ret = !!raw ? this._state : hex(this._state);
-
-        this.reset();
-
-        return ret;
-    };
-
-    /**
-     * Finish the final calculation based on the tail.
-     *
-     * @param {Array}  tail   The tail (will be modified)
-     * @param {Number} length The length of the remaining buffer
-     */
-    SparkMD5.prototype._finish = function (tail, length) {
-        var i = length,
-            tmp,
-            lo,
-            hi;
-
-        tail[i >> 2] |= 0x80 << ((i % 4) << 3);
-        if (i > 55) {
-            md5cycle(this._state, tail);
-            for (i = 0; i < 16; i += 1) {
-                tail[i] = 0;
-            }
-        }
-
-        // Do the final computation based on the tail and length
-        // Beware that the final length may not fit in 32 bits so we take care of that
-        tmp = this._length * 8;
-        tmp = tmp.toString(16).match(/(.*?)(.{0,8})$/);
-        lo = parseInt(tmp[2], 16);
-        hi = parseInt(tmp[1], 16) || 0;
-
-        tail[14] = lo;
-        tail[15] = hi;
-        md5cycle(this._state, tail);
-    };
-
-    /**
-     * Resets the internal state of the computation.
-     *
-     * @return {SparkMD5} The instance itself
-     */
-    SparkMD5.prototype.reset = function () {
-        this._buff = "";
-        this._length = 0;
-        this._state = [1732584193, -271733879, -1732584194, 271733878];
-
-        return this;
-    };
-
-    /**
-     * Releases memory used by the incremental buffer and other aditional
-     * resources. If you plan to use the instance again, use reset instead.
-     */
-    SparkMD5.prototype.destroy = function () {
-        delete this._state;
-        delete this._buff;
-        delete this._length;
-    };
-
-
-    /**
-     * Performs the md5 hash on a string.
-     * A conversion will be applied if utf8 string is detected.
-     *
-     * @param {String}  str The string
-     * @param {Boolean} raw True to get the raw result, false to get the hex result
-     *
-     * @return {String|Array} The result
-     */
-    SparkMD5.hash = function (str, raw) {
-        // converts the string to utf8 bytes if necessary
-        if (/[\u0080-\uFFFF]/.test(str)) {
-            str = unescape(encodeURIComponent(str));
-        }
-
-        var hash = md51(str);
-
-        return !!raw ? hash : hex(hash);
-    };
-
-    /**
-     * Performs the md5 hash on a binary string.
-     *
-     * @param {String}  content The binary string
-     * @param {Boolean} raw     True to get the raw result, false to get the hex result
-     *
-     * @return {String|Array} The result
-     */
-    SparkMD5.hashBinary = function (content, raw) {
-        var hash = md51(content);
-
-        return !!raw ? hash : hex(hash);
-    };
-
-    /**
-     * SparkMD5 OOP implementation for array buffers.
-     *
-     * Use this class to perform an incremental md5 ONLY for array buffers.
-     */
-    SparkMD5.ArrayBuffer = function () {
-        // call reset to init the instance
-        this.reset();
-    };
-
-    ////////////////////////////////////////////////////////////////////////////
-
-    /**
-     * Appends an array buffer.
-     *
-     * @param {ArrayBuffer} arr The array to be appended
-     *
-     * @return {SparkMD5.ArrayBuffer} The instance itself
-     */
-    SparkMD5.ArrayBuffer.prototype.append = function (arr) {
-        // TODO: we could avoid the concatenation here but the algorithm would be more complex
-        //       if you find yourself needing extra performance, please make a PR.
-        var buff = this._concatArrayBuffer(this._buff, arr),
-            length = buff.length,
-            i;
-
-        this._length += arr.byteLength;
-
-        for (i = 64; i <= length; i += 64) {
-            md5cycle(this._state, md5blk_array(buff.subarray(i - 64, i)));
-        }
-
-        // Avoids IE10 weirdness (documented above)
-        this._buff = (i - 64) < length ? buff.subarray(i - 64) : new Uint8Array(0);
-
-        return this;
-    };
-
-    /**
-     * Finishes the incremental computation, reseting the internal state and
-     * returning the result.
-     * Use the raw parameter to obtain the raw result instead of the hex one.
-     *
-     * @param {Boolean} raw True to get the raw result, false to get the hex result
-     *
-     * @return {String|Array} The result
-     */
-    SparkMD5.ArrayBuffer.prototype.end = function (raw) {
-        var buff = this._buff,
-            length = buff.length,
-            tail = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            i,
-            ret;
-
-        for (i = 0; i < length; i += 1) {
-            tail[i >> 2] |= buff[i] << ((i % 4) << 3);
-        }
-
-        this._finish(tail, length);
-        ret = !!raw ? this._state : hex(this._state);
-
-        this.reset();
-
-        return ret;
-    };
-
-    SparkMD5.ArrayBuffer.prototype._finish = SparkMD5.prototype._finish;
-
-    /**
-     * Resets the internal state of the computation.
-     *
-     * @return {SparkMD5.ArrayBuffer} The instance itself
-     */
-    SparkMD5.ArrayBuffer.prototype.reset = function () {
-        this._buff = new Uint8Array(0);
-        this._length = 0;
-        this._state = [1732584193, -271733879, -1732584194, 271733878];
-
-        return this;
-    };
-
-    /**
-     * Releases memory used by the incremental buffer and other aditional
-     * resources. If you plan to use the instance again, use reset instead.
-     */
-    SparkMD5.ArrayBuffer.prototype.destroy = SparkMD5.prototype.destroy;
-
-    /**
-     * Concats two array buffers, returning a new one.
-     *
-     * @param  {ArrayBuffer} first  The first array buffer
-     * @param  {ArrayBuffer} second The second array buffer
-     *
-     * @return {ArrayBuffer} The new array buffer
-     */
-    SparkMD5.ArrayBuffer.prototype._concatArrayBuffer = function (first, second) {
-        var firstLength = first.length,
-            result = new Uint8Array(firstLength + second.byteLength);
-
-        result.set(first);
-        result.set(new Uint8Array(second), firstLength);
-
-        return result;
-    };
-
-    /**
-     * Performs the md5 hash on an array buffer.
-     *
-     * @param {ArrayBuffer} arr The array buffer
-     * @param {Boolean}     raw True to get the raw result, false to get the hex result
-     *
-     * @return {String|Array} The result
-     */
-    SparkMD5.ArrayBuffer.hash = function (arr, raw) {
-        var hash = md51_array(new Uint8Array(arr));
-
-        return !!raw ? hash : hex(hash);
-    };
-
-    return SparkMD5;
-}));
-
-},{}],122:[function(require,module,exports){
-'use strict';
-
-/**
- * Stringify/parse functions that don't operate
- * recursively, so they avoid call stack exceeded
- * errors.
- */
-exports.stringify = function stringify(input) {
-  var queue = [];
-  queue.push({obj: input});
-
-  var res = '';
-  var next, obj, prefix, val, i, arrayPrefix, keys, k, key, value, objPrefix;
-  while ((next = queue.pop())) {
-    obj = next.obj;
-    prefix = next.prefix || '';
-    val = next.val || '';
-    res += prefix;
-    if (val) {
-      res += val;
-    } else if (typeof obj !== 'object') {
-      res += typeof obj === 'undefined' ? null : JSON.stringify(obj);
-    } else if (obj === null) {
-      res += 'null';
-    } else if (Array.isArray(obj)) {
-      queue.push({val: ']'});
-      for (i = obj.length - 1; i >= 0; i--) {
-        arrayPrefix = i === 0 ? '' : ',';
-        queue.push({obj: obj[i], prefix: arrayPrefix});
-      }
-      queue.push({val: '['});
-    } else { // object
-      keys = [];
-      for (k in obj) {
-        if (obj.hasOwnProperty(k)) {
-          keys.push(k);
-        }
-      }
-      queue.push({val: '}'});
-      for (i = keys.length - 1; i >= 0; i--) {
-        key = keys[i];
-        value = obj[key];
-        objPrefix = (i > 0 ? ',' : '');
-        objPrefix += JSON.stringify(key) + ':';
-        queue.push({obj: value, prefix: objPrefix});
-      }
-      queue.push({val: '{'});
-    }
-  }
-  return res;
-};
-
-// Convenience function for the parse function.
-// This pop function is basically copied from
-// pouchCollate.parseIndexableString
-function pop(obj, stack, metaStack) {
-  var lastMetaElement = metaStack[metaStack.length - 1];
-  if (obj === lastMetaElement.element) {
-    // popping a meta-element, e.g. an object whose value is another object
-    metaStack.pop();
-    lastMetaElement = metaStack[metaStack.length - 1];
-  }
-  var element = lastMetaElement.element;
-  var lastElementIndex = lastMetaElement.index;
-  if (Array.isArray(element)) {
-    element.push(obj);
-  } else if (lastElementIndex === stack.length - 2) { // obj with key+value
-    var key = stack.pop();
-    element[key] = obj;
-  } else {
-    stack.push(obj); // obj with key only
-  }
-}
-
-exports.parse = function (str) {
-  var stack = [];
-  var metaStack = []; // stack for arrays and objects
-  var i = 0;
-  var collationIndex,parsedNum,numChar;
-  var parsedString,lastCh,numConsecutiveSlashes,ch;
-  var arrayElement, objElement;
-  while (true) {
-    collationIndex = str[i++];
-    if (collationIndex === '}' ||
-        collationIndex === ']' ||
-        typeof collationIndex === 'undefined') {
-      if (stack.length === 1) {
-        return stack.pop();
-      } else {
-        pop(stack.pop(), stack, metaStack);
-        continue;
-      }
-    }
-    switch (collationIndex) {
-      case ' ':
-      case '\t':
-      case '\n':
-      case ':':
-      case ',':
-        break;
-      case 'n':
-        i += 3; // 'ull'
-        pop(null, stack, metaStack);
-        break;
-      case 't':
-        i += 3; // 'rue'
-        pop(true, stack, metaStack);
-        break;
-      case 'f':
-        i += 4; // 'alse'
-        pop(false, stack, metaStack);
-        break;
-      case '0':
-      case '1':
-      case '2':
-      case '3':
-      case '4':
-      case '5':
-      case '6':
-      case '7':
-      case '8':
-      case '9':
-      case '-':
-        parsedNum = '';
-        i--;
-        while (true) {
-          numChar = str[i++];
-          if (/[\d\.\-e\+]/.test(numChar)) {
-            parsedNum += numChar;
-          } else {
-            i--;
-            break;
-          }
-        }
-        pop(parseFloat(parsedNum), stack, metaStack);
-        break;
-      case '"':
-        parsedString = '';
-        lastCh = void 0;
-        numConsecutiveSlashes = 0;
-        while (true) {
-          ch = str[i++];
-          if (ch !== '"' || (lastCh === '\\' &&
-              numConsecutiveSlashes % 2 === 1)) {
-            parsedString += ch;
-            lastCh = ch;
-            if (lastCh === '\\') {
-              numConsecutiveSlashes++;
-            } else {
-              numConsecutiveSlashes = 0;
-            }
-          } else {
-            break;
-          }
-        }
-        pop(JSON.parse('"' + parsedString + '"'), stack, metaStack);
-        break;
-      case '[':
-        arrayElement = { element: [], index: stack.length };
-        stack.push(arrayElement.element);
-        metaStack.push(arrayElement);
-        break;
-      case '{':
-        objElement = { element: {}, index: stack.length };
-        stack.push(objElement.element);
-        metaStack.push(objElement);
-        break;
-      default:
-        throw new Error(
-          'unexpectedly reached end of input: ' + collationIndex);
-    }
-  }
-};
-
-},{}],123:[function(require,module,exports){
-var PouchDB = require('pouchdb')
-
-function Connection () {
-  this.db = new PouchDB('userinfo')
-  this.remoteCouch = false
-  this.CONNECTED = 'connected'
-  this.CONNECTING = 'connecting'
-  this.DISCONNECTED = 'disconnected'
-  this.status = this.DISCONNECTED
-}
-
-},{"pouchdb":94}],124:[function(require,module,exports){
-// var h = require('hyperscript')
-// var Shares = require('./shares')
-// var shares = new Shares()
-// shares.all(function (err, data) {
-//   for (var i = 0; i < data.length; i++) {
-//     document.getElementById('page').appendChild(
-//       h('div', 'SOME TEXT')
-//     )
-//   }
-// })
-
-var connection = require('./connection')
-
-function updateWebviews () {
-  var webview = document.getElementById('wv')
-  // webview.style.height = document.documentElement.clientHeight + "px"
-  webview.style.width = document.documentElement.clientWidth + 'px'
-  webview.style.height = (document.documentElement.clientHeight - 100) + 'px'
-}
-function load () {
-  updateWebviews()
-}
-window.onresize = updateWebviews
-window.onload = load
-document.getElementById('homepage').hidden = false
-document.getElementById('listpages').hidden = true
-document.getElementById('sharepages').hidden = true
-document.getElementById('createpage').hidden = true
-
-document.getElementById('btnConnection').addEventListener('click', function (evt) {
-  if (connection.status === connection.DISCONNECTED) {
-    var msg = {}
-    msg.type = 'service'
-    msg.action = 'start'
-    chrome.runtime.sendMessage([JSON.stringify(msg)])
-    connection.status = connection.CONNECTING
-    // Set icon to yellow
-  }
-})
-
-chrome.runtime.onMessage.addListener(function (event) {
-  console.log('Got message from webpage: ' + event)
-  var msg = JSON.parse(event)
-  if (msg.type === 'service') {
-    switch (msg.action) {
-      case 'started' :
-        // set the icon to green
-        break
-      default :
-        break
-    }
-  }
-})
-
-document.getElementById('btnCreate').addEventListener('click', function (evt) {
-  document.getElementById('homepage').hidden = true
-  document.getElementById('listpages').hidden = true
-  document.getElementById('sharepages').hidden = true
-  document.getElementById('createpage').hidden = false
-// document.getElementById('wv').style.left = '-100px'
-})
-
-document.getElementById('btnHome').addEventListener('click', function (evt) {
-  document.getElementById('homepage').hidden = false
-  document.getElementById('listpages').hidden = true
-  document.getElementById('sharepages').hidden = true
-  document.getElementById('createpage').hidden = true
-})
-document.getElementById('btnAll').addEventListener('click', function (evt) {
-  document.getElementById('homepage').hidden = true
-  document.getElementById('listpages').hidden = false
-  document.getElementById('sharepages').hidden = true
-  document.getElementById('createpage').hidden = true
-})
-
-document.getElementById('btnShare').addEventListener('click', function (evt) {
-  document.getElementById('homepage').hidden = true
-  document.getElementById('listpages').hidden = true
-  document.getElementById('sharepages').hidden = false
-  document.getElementById('createpage').hidden = true
-})
-
-document.getElementById('btnSave').addEventListener('click', function (evt) {
-  document.getElementById('wv').contentWindow.postMessage('Message from Chrome APP!', '*')
-})
-
-var messageHandler = function (event) {
-  console.log('Got message from webpage back: ' + event.data)
-}
-window.addEventListener('message', messageHandler, false)
-
-},{"./connection":123}],125:[function(require,module,exports){
 // http://wiki.commonjs.org/wiki/Unit_Testing/1.0
 //
 // THIS IS NOT TESTED NOR LIKELY TO WORK OUTSIDE V8!
@@ -17703,15 +359,143 @@ var objectKeys = Object.keys || function (obj) {
   return keys;
 };
 
-},{"util/":156}],126:[function(require,module,exports){
+},{"util/":33}],2:[function(require,module,exports){
+var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
-},{}],127:[function(require,module,exports){
+;(function (exports) {
+	'use strict';
+
+  var Arr = (typeof Uint8Array !== 'undefined')
+    ? Uint8Array
+    : Array
+
+	var PLUS   = '+'.charCodeAt(0)
+	var SLASH  = '/'.charCodeAt(0)
+	var NUMBER = '0'.charCodeAt(0)
+	var LOWER  = 'a'.charCodeAt(0)
+	var UPPER  = 'A'.charCodeAt(0)
+	var PLUS_URL_SAFE = '-'.charCodeAt(0)
+	var SLASH_URL_SAFE = '_'.charCodeAt(0)
+
+	function decode (elt) {
+		var code = elt.charCodeAt(0)
+		if (code === PLUS ||
+		    code === PLUS_URL_SAFE)
+			return 62 // '+'
+		if (code === SLASH ||
+		    code === SLASH_URL_SAFE)
+			return 63 // '/'
+		if (code < NUMBER)
+			return -1 //no match
+		if (code < NUMBER + 10)
+			return code - NUMBER + 26 + 26
+		if (code < UPPER + 26)
+			return code - UPPER
+		if (code < LOWER + 26)
+			return code - LOWER + 26
+	}
+
+	function b64ToByteArray (b64) {
+		var i, j, l, tmp, placeHolders, arr
+
+		if (b64.length % 4 > 0) {
+			throw new Error('Invalid string. Length must be a multiple of 4')
+		}
+
+		// the number of equal signs (place holders)
+		// if there are two placeholders, than the two characters before it
+		// represent one byte
+		// if there is only one, then the three characters before it represent 2 bytes
+		// this is just a cheap hack to not do indexOf twice
+		var len = b64.length
+		placeHolders = '=' === b64.charAt(len - 2) ? 2 : '=' === b64.charAt(len - 1) ? 1 : 0
+
+		// base64 is 4/3 + up to two characters of the original data
+		arr = new Arr(b64.length * 3 / 4 - placeHolders)
+
+		// if there are placeholders, only get up to the last complete 4 chars
+		l = placeHolders > 0 ? b64.length - 4 : b64.length
+
+		var L = 0
+
+		function push (v) {
+			arr[L++] = v
+		}
+
+		for (i = 0, j = 0; i < l; i += 4, j += 3) {
+			tmp = (decode(b64.charAt(i)) << 18) | (decode(b64.charAt(i + 1)) << 12) | (decode(b64.charAt(i + 2)) << 6) | decode(b64.charAt(i + 3))
+			push((tmp & 0xFF0000) >> 16)
+			push((tmp & 0xFF00) >> 8)
+			push(tmp & 0xFF)
+		}
+
+		if (placeHolders === 2) {
+			tmp = (decode(b64.charAt(i)) << 2) | (decode(b64.charAt(i + 1)) >> 4)
+			push(tmp & 0xFF)
+		} else if (placeHolders === 1) {
+			tmp = (decode(b64.charAt(i)) << 10) | (decode(b64.charAt(i + 1)) << 4) | (decode(b64.charAt(i + 2)) >> 2)
+			push((tmp >> 8) & 0xFF)
+			push(tmp & 0xFF)
+		}
+
+		return arr
+	}
+
+	function uint8ToBase64 (uint8) {
+		var i,
+			extraBytes = uint8.length % 3, // if we have 1 byte left, pad 2 bytes
+			output = "",
+			temp, length
+
+		function encode (num) {
+			return lookup.charAt(num)
+		}
+
+		function tripletToBase64 (num) {
+			return encode(num >> 18 & 0x3F) + encode(num >> 12 & 0x3F) + encode(num >> 6 & 0x3F) + encode(num & 0x3F)
+		}
+
+		// go through the array every three bytes, we'll deal with trailing stuff later
+		for (i = 0, length = uint8.length - extraBytes; i < length; i += 3) {
+			temp = (uint8[i] << 16) + (uint8[i + 1] << 8) + (uint8[i + 2])
+			output += tripletToBase64(temp)
+		}
+
+		// pad the end with zeros, but make sure to not forget the extra bytes
+		switch (extraBytes) {
+			case 1:
+				temp = uint8[uint8.length - 1]
+				output += encode(temp >> 2)
+				output += encode((temp << 4) & 0x3F)
+				output += '=='
+				break
+			case 2:
+				temp = (uint8[uint8.length - 2] << 8) + (uint8[uint8.length - 1])
+				output += encode(temp >> 10)
+				output += encode((temp >> 4) & 0x3F)
+				output += encode((temp << 2) & 0x3F)
+				output += '='
+				break
+		}
+
+		return output
+	}
+
+	exports.toByteArray = b64ToByteArray
+	exports.fromByteArray = uint8ToBase64
+}(typeof exports === 'undefined' ? (this.base64js = {}) : exports))
+
+},{}],3:[function(require,module,exports){
+
+},{}],4:[function(require,module,exports){
+(function (global){
 /*!
  * The buffer module from node.js, for the browser.
  *
  * @author   Feross Aboukhadijeh <feross@feross.org> <http://feross.org>
  * @license  MIT
  */
+/* eslint-disable no-proto */
 
 var base64 = require('base64-js')
 var ieee754 = require('ieee754')
@@ -17751,20 +535,22 @@ var rootParent = {}
  * We detect these buggy browsers and set `Buffer.TYPED_ARRAY_SUPPORT` to `false` so they
  * get the Object implementation, which is slower but behaves correctly.
  */
-Buffer.TYPED_ARRAY_SUPPORT = (function () {
-  function Bar () {}
-  try {
-    var arr = new Uint8Array(1)
-    arr.foo = function () { return 42 }
-    arr.constructor = Bar
-    return arr.foo() === 42 && // typed array instances can be augmented
-        arr.constructor === Bar && // constructor can be set
-        typeof arr.subarray === 'function' && // chrome 9-10 lack `subarray`
-        arr.subarray(1, 1).byteLength === 0 // ie10 has broken `subarray`
-  } catch (e) {
-    return false
-  }
-})()
+Buffer.TYPED_ARRAY_SUPPORT = global.TYPED_ARRAY_SUPPORT !== undefined
+  ? global.TYPED_ARRAY_SUPPORT
+  : (function () {
+      function Bar () {}
+      try {
+        var arr = new Uint8Array(1)
+        arr.foo = function () { return 42 }
+        arr.constructor = Bar
+        return arr.foo() === 42 && // typed array instances can be augmented
+            arr.constructor === Bar && // constructor can be set
+            typeof arr.subarray === 'function' && // chrome 9-10 lack `subarray`
+            arr.subarray(1, 1).byteLength === 0 // ie10 has broken `subarray`
+      } catch (e) {
+        return false
+      }
+    })()
 
 function kMaxLength () {
   return Buffer.TYPED_ARRAY_SUPPORT
@@ -17920,10 +706,16 @@ function fromJsonObject (that, object) {
   return that
 }
 
+if (Buffer.TYPED_ARRAY_SUPPORT) {
+  Buffer.prototype.__proto__ = Uint8Array.prototype
+  Buffer.__proto__ = Uint8Array
+}
+
 function allocate (that, length) {
   if (Buffer.TYPED_ARRAY_SUPPORT) {
     // Return an augmented `Uint8Array` instance, for best performance
     that = Buffer._augment(new Uint8Array(length))
+    that.__proto__ = Buffer.prototype
   } else {
     // Fallback: Return an object instance of the Buffer class
     that.length = length
@@ -19240,254 +2032,8 @@ function blitBuffer (src, dst, offset, length) {
   return i
 }
 
-},{"base64-js":128,"ieee754":129,"is-array":130}],128:[function(require,module,exports){
-var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-
-;(function (exports) {
-	'use strict';
-
-  var Arr = (typeof Uint8Array !== 'undefined')
-    ? Uint8Array
-    : Array
-
-	var PLUS   = '+'.charCodeAt(0)
-	var SLASH  = '/'.charCodeAt(0)
-	var NUMBER = '0'.charCodeAt(0)
-	var LOWER  = 'a'.charCodeAt(0)
-	var UPPER  = 'A'.charCodeAt(0)
-	var PLUS_URL_SAFE = '-'.charCodeAt(0)
-	var SLASH_URL_SAFE = '_'.charCodeAt(0)
-
-	function decode (elt) {
-		var code = elt.charCodeAt(0)
-		if (code === PLUS ||
-		    code === PLUS_URL_SAFE)
-			return 62 // '+'
-		if (code === SLASH ||
-		    code === SLASH_URL_SAFE)
-			return 63 // '/'
-		if (code < NUMBER)
-			return -1 //no match
-		if (code < NUMBER + 10)
-			return code - NUMBER + 26 + 26
-		if (code < UPPER + 26)
-			return code - UPPER
-		if (code < LOWER + 26)
-			return code - LOWER + 26
-	}
-
-	function b64ToByteArray (b64) {
-		var i, j, l, tmp, placeHolders, arr
-
-		if (b64.length % 4 > 0) {
-			throw new Error('Invalid string. Length must be a multiple of 4')
-		}
-
-		// the number of equal signs (place holders)
-		// if there are two placeholders, than the two characters before it
-		// represent one byte
-		// if there is only one, then the three characters before it represent 2 bytes
-		// this is just a cheap hack to not do indexOf twice
-		var len = b64.length
-		placeHolders = '=' === b64.charAt(len - 2) ? 2 : '=' === b64.charAt(len - 1) ? 1 : 0
-
-		// base64 is 4/3 + up to two characters of the original data
-		arr = new Arr(b64.length * 3 / 4 - placeHolders)
-
-		// if there are placeholders, only get up to the last complete 4 chars
-		l = placeHolders > 0 ? b64.length - 4 : b64.length
-
-		var L = 0
-
-		function push (v) {
-			arr[L++] = v
-		}
-
-		for (i = 0, j = 0; i < l; i += 4, j += 3) {
-			tmp = (decode(b64.charAt(i)) << 18) | (decode(b64.charAt(i + 1)) << 12) | (decode(b64.charAt(i + 2)) << 6) | decode(b64.charAt(i + 3))
-			push((tmp & 0xFF0000) >> 16)
-			push((tmp & 0xFF00) >> 8)
-			push(tmp & 0xFF)
-		}
-
-		if (placeHolders === 2) {
-			tmp = (decode(b64.charAt(i)) << 2) | (decode(b64.charAt(i + 1)) >> 4)
-			push(tmp & 0xFF)
-		} else if (placeHolders === 1) {
-			tmp = (decode(b64.charAt(i)) << 10) | (decode(b64.charAt(i + 1)) << 4) | (decode(b64.charAt(i + 2)) >> 2)
-			push((tmp >> 8) & 0xFF)
-			push(tmp & 0xFF)
-		}
-
-		return arr
-	}
-
-	function uint8ToBase64 (uint8) {
-		var i,
-			extraBytes = uint8.length % 3, // if we have 1 byte left, pad 2 bytes
-			output = "",
-			temp, length
-
-		function encode (num) {
-			return lookup.charAt(num)
-		}
-
-		function tripletToBase64 (num) {
-			return encode(num >> 18 & 0x3F) + encode(num >> 12 & 0x3F) + encode(num >> 6 & 0x3F) + encode(num & 0x3F)
-		}
-
-		// go through the array every three bytes, we'll deal with trailing stuff later
-		for (i = 0, length = uint8.length - extraBytes; i < length; i += 3) {
-			temp = (uint8[i] << 16) + (uint8[i + 1] << 8) + (uint8[i + 2])
-			output += tripletToBase64(temp)
-		}
-
-		// pad the end with zeros, but make sure to not forget the extra bytes
-		switch (extraBytes) {
-			case 1:
-				temp = uint8[uint8.length - 1]
-				output += encode(temp >> 2)
-				output += encode((temp << 4) & 0x3F)
-				output += '=='
-				break
-			case 2:
-				temp = (uint8[uint8.length - 2] << 8) + (uint8[uint8.length - 1])
-				output += encode(temp >> 10)
-				output += encode((temp >> 4) & 0x3F)
-				output += encode((temp << 2) & 0x3F)
-				output += '='
-				break
-		}
-
-		return output
-	}
-
-	exports.toByteArray = b64ToByteArray
-	exports.fromByteArray = uint8ToBase64
-}(typeof exports === 'undefined' ? (this.base64js = {}) : exports))
-
-},{}],129:[function(require,module,exports){
-exports.read = function (buffer, offset, isLE, mLen, nBytes) {
-  var e, m
-  var eLen = nBytes * 8 - mLen - 1
-  var eMax = (1 << eLen) - 1
-  var eBias = eMax >> 1
-  var nBits = -7
-  var i = isLE ? (nBytes - 1) : 0
-  var d = isLE ? -1 : 1
-  var s = buffer[offset + i]
-
-  i += d
-
-  e = s & ((1 << (-nBits)) - 1)
-  s >>= (-nBits)
-  nBits += eLen
-  for (; nBits > 0; e = e * 256 + buffer[offset + i], i += d, nBits -= 8) {}
-
-  m = e & ((1 << (-nBits)) - 1)
-  e >>= (-nBits)
-  nBits += mLen
-  for (; nBits > 0; m = m * 256 + buffer[offset + i], i += d, nBits -= 8) {}
-
-  if (e === 0) {
-    e = 1 - eBias
-  } else if (e === eMax) {
-    return m ? NaN : ((s ? -1 : 1) * Infinity)
-  } else {
-    m = m + Math.pow(2, mLen)
-    e = e - eBias
-  }
-  return (s ? -1 : 1) * m * Math.pow(2, e - mLen)
-}
-
-exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
-  var e, m, c
-  var eLen = nBytes * 8 - mLen - 1
-  var eMax = (1 << eLen) - 1
-  var eBias = eMax >> 1
-  var rt = (mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0)
-  var i = isLE ? 0 : (nBytes - 1)
-  var d = isLE ? 1 : -1
-  var s = value < 0 || (value === 0 && 1 / value < 0) ? 1 : 0
-
-  value = Math.abs(value)
-
-  if (isNaN(value) || value === Infinity) {
-    m = isNaN(value) ? 1 : 0
-    e = eMax
-  } else {
-    e = Math.floor(Math.log(value) / Math.LN2)
-    if (value * (c = Math.pow(2, -e)) < 1) {
-      e--
-      c *= 2
-    }
-    if (e + eBias >= 1) {
-      value += rt / c
-    } else {
-      value += rt * Math.pow(2, 1 - eBias)
-    }
-    if (value * c >= 2) {
-      e++
-      c /= 2
-    }
-
-    if (e + eBias >= eMax) {
-      m = 0
-      e = eMax
-    } else if (e + eBias >= 1) {
-      m = (value * c - 1) * Math.pow(2, mLen)
-      e = e + eBias
-    } else {
-      m = value * Math.pow(2, eBias - 1) * Math.pow(2, mLen)
-      e = 0
-    }
-  }
-
-  for (; mLen >= 8; buffer[offset + i] = m & 0xff, i += d, m /= 256, mLen -= 8) {}
-
-  e = (e << mLen) | m
-  eLen += mLen
-  for (; eLen > 0; buffer[offset + i] = e & 0xff, i += d, e /= 256, eLen -= 8) {}
-
-  buffer[offset + i - d] |= s * 128
-}
-
-},{}],130:[function(require,module,exports){
-
-/**
- * isArray
- */
-
-var isArray = Array.isArray;
-
-/**
- * toString
- */
-
-var str = Object.prototype.toString;
-
-/**
- * Whether or not the given `val`
- * is an array.
- *
- * example:
- *
- *        isArray([]);
- *        // > true
- *        isArray(arguments);
- *        // > false
- *        isArray('');
- *        // > false
- *
- * @param {mixed} val
- * @return {bool}
- */
-
-module.exports = isArray || function (val) {
-  return !! val && '[object Array]' == str.call(val);
-};
-
-},{}],131:[function(require,module,exports){
+}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{"base64-js":2,"ieee754":8,"is-array":10}],5:[function(require,module,exports){
 module.exports={
   "O_RDONLY": 0,
   "O_WRONLY": 1,
@@ -19667,7 +2213,117 @@ module.exports={
   "NPN_ENABLED": 1
 }
 
-},{}],132:[function(require,module,exports){
+},{}],6:[function(require,module,exports){
+(function (Buffer){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+// NOTE: These type checking functions intentionally don't use `instanceof`
+// because it is fragile and can be easily faked with `Object.create()`.
+function isArray(ar) {
+  return Array.isArray(ar);
+}
+exports.isArray = isArray;
+
+function isBoolean(arg) {
+  return typeof arg === 'boolean';
+}
+exports.isBoolean = isBoolean;
+
+function isNull(arg) {
+  return arg === null;
+}
+exports.isNull = isNull;
+
+function isNullOrUndefined(arg) {
+  return arg == null;
+}
+exports.isNullOrUndefined = isNullOrUndefined;
+
+function isNumber(arg) {
+  return typeof arg === 'number';
+}
+exports.isNumber = isNumber;
+
+function isString(arg) {
+  return typeof arg === 'string';
+}
+exports.isString = isString;
+
+function isSymbol(arg) {
+  return typeof arg === 'symbol';
+}
+exports.isSymbol = isSymbol;
+
+function isUndefined(arg) {
+  return arg === void 0;
+}
+exports.isUndefined = isUndefined;
+
+function isRegExp(re) {
+  return isObject(re) && objectToString(re) === '[object RegExp]';
+}
+exports.isRegExp = isRegExp;
+
+function isObject(arg) {
+  return typeof arg === 'object' && arg !== null;
+}
+exports.isObject = isObject;
+
+function isDate(d) {
+  return isObject(d) && objectToString(d) === '[object Date]';
+}
+exports.isDate = isDate;
+
+function isError(e) {
+  return isObject(e) &&
+      (objectToString(e) === '[object Error]' || e instanceof Error);
+}
+exports.isError = isError;
+
+function isFunction(arg) {
+  return typeof arg === 'function';
+}
+exports.isFunction = isFunction;
+
+function isPrimitive(arg) {
+  return arg === null ||
+         typeof arg === 'boolean' ||
+         typeof arg === 'number' ||
+         typeof arg === 'string' ||
+         typeof arg === 'symbol' ||  // ES6 symbol
+         typeof arg === 'undefined';
+}
+exports.isPrimitive = isPrimitive;
+
+function isBuffer(arg) {
+  return Buffer.isBuffer(arg);
+}
+exports.isBuffer = isBuffer;
+
+function objectToString(o) {
+  return Object.prototype.toString.call(o);
+}
+}).call(this,{"isBuffer":require("/home/anton/.nvm/versions/node/v4.1.0/lib/node_modules/chromiumify/node_modules/is-buffer/index.js")})
+},{"/home/anton/.nvm/versions/node/v4.1.0/lib/node_modules/chromiumify/node_modules/is-buffer/index.js":11}],7:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -19970,14 +2626,177 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],133:[function(require,module,exports){
-arguments[4][7][0].apply(exports,arguments)
-},{"dup":7}],134:[function(require,module,exports){
+},{}],8:[function(require,module,exports){
+exports.read = function (buffer, offset, isLE, mLen, nBytes) {
+  var e, m
+  var eLen = nBytes * 8 - mLen - 1
+  var eMax = (1 << eLen) - 1
+  var eBias = eMax >> 1
+  var nBits = -7
+  var i = isLE ? (nBytes - 1) : 0
+  var d = isLE ? -1 : 1
+  var s = buffer[offset + i]
+
+  i += d
+
+  e = s & ((1 << (-nBits)) - 1)
+  s >>= (-nBits)
+  nBits += eLen
+  for (; nBits > 0; e = e * 256 + buffer[offset + i], i += d, nBits -= 8) {}
+
+  m = e & ((1 << (-nBits)) - 1)
+  e >>= (-nBits)
+  nBits += mLen
+  for (; nBits > 0; m = m * 256 + buffer[offset + i], i += d, nBits -= 8) {}
+
+  if (e === 0) {
+    e = 1 - eBias
+  } else if (e === eMax) {
+    return m ? NaN : ((s ? -1 : 1) * Infinity)
+  } else {
+    m = m + Math.pow(2, mLen)
+    e = e - eBias
+  }
+  return (s ? -1 : 1) * m * Math.pow(2, e - mLen)
+}
+
+exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
+  var e, m, c
+  var eLen = nBytes * 8 - mLen - 1
+  var eMax = (1 << eLen) - 1
+  var eBias = eMax >> 1
+  var rt = (mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0)
+  var i = isLE ? 0 : (nBytes - 1)
+  var d = isLE ? 1 : -1
+  var s = value < 0 || (value === 0 && 1 / value < 0) ? 1 : 0
+
+  value = Math.abs(value)
+
+  if (isNaN(value) || value === Infinity) {
+    m = isNaN(value) ? 1 : 0
+    e = eMax
+  } else {
+    e = Math.floor(Math.log(value) / Math.LN2)
+    if (value * (c = Math.pow(2, -e)) < 1) {
+      e--
+      c *= 2
+    }
+    if (e + eBias >= 1) {
+      value += rt / c
+    } else {
+      value += rt * Math.pow(2, 1 - eBias)
+    }
+    if (value * c >= 2) {
+      e++
+      c /= 2
+    }
+
+    if (e + eBias >= eMax) {
+      m = 0
+      e = eMax
+    } else if (e + eBias >= 1) {
+      m = (value * c - 1) * Math.pow(2, mLen)
+      e = e + eBias
+    } else {
+      m = value * Math.pow(2, eBias - 1) * Math.pow(2, mLen)
+      e = 0
+    }
+  }
+
+  for (; mLen >= 8; buffer[offset + i] = m & 0xff, i += d, m /= 256, mLen -= 8) {}
+
+  e = (e << mLen) | m
+  eLen += mLen
+  for (; eLen > 0; buffer[offset + i] = e & 0xff, i += d, e /= 256, eLen -= 8) {}
+
+  buffer[offset + i - d] |= s * 128
+}
+
+},{}],9:[function(require,module,exports){
+if (typeof Object.create === 'function') {
+  // implementation from standard node.js 'util' module
+  module.exports = function inherits(ctor, superCtor) {
+    ctor.super_ = superCtor
+    ctor.prototype = Object.create(superCtor.prototype, {
+      constructor: {
+        value: ctor,
+        enumerable: false,
+        writable: true,
+        configurable: true
+      }
+    });
+  };
+} else {
+  // old school shim for old browsers
+  module.exports = function inherits(ctor, superCtor) {
+    ctor.super_ = superCtor
+    var TempCtor = function () {}
+    TempCtor.prototype = superCtor.prototype
+    ctor.prototype = new TempCtor()
+    ctor.prototype.constructor = ctor
+  }
+}
+
+},{}],10:[function(require,module,exports){
+
+/**
+ * isArray
+ */
+
+var isArray = Array.isArray;
+
+/**
+ * toString
+ */
+
+var str = Object.prototype.toString;
+
+/**
+ * Whether or not the given `val`
+ * is an array.
+ *
+ * example:
+ *
+ *        isArray([]);
+ *        // > true
+ *        isArray(arguments);
+ *        // > false
+ *        isArray('');
+ *        // > false
+ *
+ * @param {mixed} val
+ * @return {bool}
+ */
+
+module.exports = isArray || function (val) {
+  return !! val && '[object Array]' == str.call(val);
+};
+
+},{}],11:[function(require,module,exports){
+/**
+ * Determine if an object is Buffer
+ *
+ * Author:   Feross Aboukhadijeh <feross@feross.org> <http://feross.org>
+ * License:  MIT
+ *
+ * `npm install is-buffer`
+ */
+
+module.exports = function (obj) {
+  return !!(obj != null &&
+    (obj._isBuffer || // For Safari 5-7 (missing Object.prototype.constructor)
+      (obj.constructor &&
+      typeof obj.constructor.isBuffer === 'function' &&
+      obj.constructor.isBuffer(obj))
+    ))
+}
+
+},{}],12:[function(require,module,exports){
 module.exports = Array.isArray || function (arr) {
   return Object.prototype.toString.call(arr) == '[object Array]';
 };
 
-},{}],135:[function(require,module,exports){
+},{}],13:[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -20010,7 +2829,9 @@ function drainQueue() {
         currentQueue = queue;
         queue = [];
         while (++queueIndex < len) {
-            currentQueue[queueIndex].run();
+            if (currentQueue) {
+                currentQueue[queueIndex].run();
+            }
         }
         queueIndex = -1;
         len = queue.length;
@@ -20062,14 +2883,13 @@ process.binding = function (name) {
     throw new Error('process.binding is not supported');
 };
 
-// TODO(shtylman)
 process.cwd = function () { return '/' };
 process.chdir = function (dir) {
     throw new Error('process.chdir is not supported');
 };
 process.umask = function() { return 0; };
 
-},{}],136:[function(require,module,exports){
+},{}],14:[function(require,module,exports){
 (function (global){
 /*! https://mths.be/punycode v1.3.2 by @mathias */
 ;(function(root) {
@@ -20603,7 +3423,7 @@ process.umask = function() { return 0; };
 }(this));
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],137:[function(require,module,exports){
+},{}],15:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -20689,7 +3509,7 @@ var isArray = Array.isArray || function (xs) {
   return Object.prototype.toString.call(xs) === '[object Array]';
 };
 
-},{}],138:[function(require,module,exports){
+},{}],16:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -20776,16 +3596,16 @@ var objectKeys = Object.keys || function (obj) {
   return res;
 };
 
-},{}],139:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
 'use strict';
 
 exports.decode = exports.parse = require('./decode');
 exports.encode = exports.stringify = require('./encode');
 
-},{"./decode":137,"./encode":138}],140:[function(require,module,exports){
+},{"./decode":15,"./encode":16}],18:[function(require,module,exports){
 module.exports = require("./lib/_stream_duplex.js")
 
-},{"./lib/_stream_duplex.js":141}],141:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":19}],19:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -20878,7 +3698,7 @@ function forEach (xs, f) {
 }
 
 }).call(this,require('_process'))
-},{"./_stream_readable":143,"./_stream_writable":145,"_process":135,"core-util-is":146,"inherits":133}],142:[function(require,module,exports){
+},{"./_stream_readable":21,"./_stream_writable":23,"_process":13,"core-util-is":6,"inherits":9}],20:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -20926,7 +3746,7 @@ PassThrough.prototype._transform = function(chunk, encoding, cb) {
   cb(null, chunk);
 };
 
-},{"./_stream_transform":144,"core-util-is":146,"inherits":133}],143:[function(require,module,exports){
+},{"./_stream_transform":22,"core-util-is":6,"inherits":9}],21:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -21881,7 +4701,7 @@ function indexOf (xs, x) {
 }
 
 }).call(this,require('_process'))
-},{"./_stream_duplex":141,"_process":135,"buffer":127,"core-util-is":146,"events":132,"inherits":133,"isarray":134,"stream":151,"string_decoder/":152,"util":126}],144:[function(require,module,exports){
+},{"./_stream_duplex":19,"_process":13,"buffer":4,"core-util-is":6,"events":7,"inherits":9,"isarray":12,"stream":28,"string_decoder/":29,"util":3}],22:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -22092,7 +4912,7 @@ function done(stream, er) {
   return stream.push(null);
 }
 
-},{"./_stream_duplex":141,"core-util-is":146,"inherits":133}],145:[function(require,module,exports){
+},{"./_stream_duplex":19,"core-util-is":6,"inherits":9}],23:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -22573,12 +5393,10 @@ function endWritable(stream, state, cb) {
 }
 
 }).call(this,require('_process'))
-},{"./_stream_duplex":141,"_process":135,"buffer":127,"core-util-is":146,"inherits":133,"stream":151}],146:[function(require,module,exports){
-arguments[4][24][0].apply(exports,arguments)
-},{"buffer":127,"dup":24}],147:[function(require,module,exports){
+},{"./_stream_duplex":19,"_process":13,"buffer":4,"core-util-is":6,"inherits":9,"stream":28}],24:[function(require,module,exports){
 module.exports = require("./lib/_stream_passthrough.js")
 
-},{"./lib/_stream_passthrough.js":142}],148:[function(require,module,exports){
+},{"./lib/_stream_passthrough.js":20}],25:[function(require,module,exports){
 exports = module.exports = require('./lib/_stream_readable.js');
 exports.Stream = require('stream');
 exports.Readable = exports;
@@ -22587,13 +5405,13 @@ exports.Duplex = require('./lib/_stream_duplex.js');
 exports.Transform = require('./lib/_stream_transform.js');
 exports.PassThrough = require('./lib/_stream_passthrough.js');
 
-},{"./lib/_stream_duplex.js":141,"./lib/_stream_passthrough.js":142,"./lib/_stream_readable.js":143,"./lib/_stream_transform.js":144,"./lib/_stream_writable.js":145,"stream":151}],149:[function(require,module,exports){
+},{"./lib/_stream_duplex.js":19,"./lib/_stream_passthrough.js":20,"./lib/_stream_readable.js":21,"./lib/_stream_transform.js":22,"./lib/_stream_writable.js":23,"stream":28}],26:[function(require,module,exports){
 module.exports = require("./lib/_stream_transform.js")
 
-},{"./lib/_stream_transform.js":144}],150:[function(require,module,exports){
+},{"./lib/_stream_transform.js":22}],27:[function(require,module,exports){
 module.exports = require("./lib/_stream_writable.js")
 
-},{"./lib/_stream_writable.js":145}],151:[function(require,module,exports){
+},{"./lib/_stream_writable.js":23}],28:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -22722,7 +5540,7 @@ Stream.prototype.pipe = function(dest, options) {
   return dest;
 };
 
-},{"events":132,"inherits":133,"readable-stream/duplex.js":140,"readable-stream/passthrough.js":147,"readable-stream/readable.js":148,"readable-stream/transform.js":149,"readable-stream/writable.js":150}],152:[function(require,module,exports){
+},{"events":7,"inherits":9,"readable-stream/duplex.js":18,"readable-stream/passthrough.js":24,"readable-stream/readable.js":25,"readable-stream/transform.js":26,"readable-stream/writable.js":27}],29:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -22945,7 +5763,7 @@ function base64DetectIncompleteChar(buffer) {
   this.charLength = this.charReceived ? 3 : 0;
 }
 
-},{"buffer":127}],153:[function(require,module,exports){
+},{"buffer":4}],30:[function(require,module,exports){
 var nextTick = require('process/browser.js').nextTick;
 var apply = Function.prototype.apply;
 var slice = Array.prototype.slice;
@@ -23022,7 +5840,7 @@ exports.setImmediate = typeof setImmediate === "function" ? setImmediate : funct
 exports.clearImmediate = typeof clearImmediate === "function" ? clearImmediate : function(id) {
   delete immediateIds[id];
 };
-},{"process/browser.js":135}],154:[function(require,module,exports){
+},{"process/browser.js":13}],31:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -23731,14 +6549,14 @@ function isNullOrUndefined(arg) {
   return  arg == null;
 }
 
-},{"punycode":136,"querystring":139}],155:[function(require,module,exports){
+},{"punycode":14,"querystring":17}],32:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],156:[function(require,module,exports){
+},{}],33:[function(require,module,exports){
 (function (process,global){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -24328,7 +7146,4707 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":155,"_process":135,"inherits":133}],"debug":[function(require,module,exports){
+},{"./support/isBuffer":32,"_process":13,"inherits":9}],34:[function(require,module,exports){
+
+/**
+ * This is the common logic for both the Node.js and web browser
+ * implementations of `debug()`.
+ *
+ * Expose `debug()` as the module.
+ */
+
+exports = module.exports = debug;
+exports.coerce = coerce;
+exports.disable = disable;
+exports.enable = enable;
+exports.enabled = enabled;
+exports.humanize = require('ms');
+
+/**
+ * The currently active debug mode names, and names to skip.
+ */
+
+exports.names = [];
+exports.skips = [];
+
+/**
+ * Map of special "%n" handling functions, for the debug "format" argument.
+ *
+ * Valid key names are a single, lowercased letter, i.e. "n".
+ */
+
+exports.formatters = {};
+
+/**
+ * Previously assigned color.
+ */
+
+var prevColor = 0;
+
+/**
+ * Previous log timestamp.
+ */
+
+var prevTime;
+
+/**
+ * Select a color.
+ *
+ * @return {Number}
+ * @api private
+ */
+
+function selectColor() {
+  return exports.colors[prevColor++ % exports.colors.length];
+}
+
+/**
+ * Create a debugger with the given `namespace`.
+ *
+ * @param {String} namespace
+ * @return {Function}
+ * @api public
+ */
+
+function debug(namespace) {
+
+  // define the `disabled` version
+  function disabled() {
+  }
+  disabled.enabled = false;
+
+  // define the `enabled` version
+  function enabled() {
+
+    var self = enabled;
+
+    // set `diff` timestamp
+    var curr = +new Date();
+    var ms = curr - (prevTime || curr);
+    self.diff = ms;
+    self.prev = prevTime;
+    self.curr = curr;
+    prevTime = curr;
+
+    // add the `color` if not set
+    if (null == self.useColors) self.useColors = exports.useColors();
+    if (null == self.color && self.useColors) self.color = selectColor();
+
+    var args = Array.prototype.slice.call(arguments);
+
+    args[0] = exports.coerce(args[0]);
+
+    if ('string' !== typeof args[0]) {
+      // anything else let's inspect with %o
+      args = ['%o'].concat(args);
+    }
+
+    // apply any `formatters` transformations
+    var index = 0;
+    args[0] = args[0].replace(/%([a-z%])/g, function(match, format) {
+      // if we encounter an escaped % then don't increase the array index
+      if (match === '%%') return match;
+      index++;
+      var formatter = exports.formatters[format];
+      if ('function' === typeof formatter) {
+        var val = args[index];
+        match = formatter.call(self, val);
+
+        // now we need to remove `args[index]` since it's inlined in the `format`
+        args.splice(index, 1);
+        index--;
+      }
+      return match;
+    });
+
+    if ('function' === typeof exports.formatArgs) {
+      args = exports.formatArgs.apply(self, args);
+    }
+    var logFn = console.log.bind(console);
+    logFn.apply(self, args);
+  }
+  enabled.enabled = true;
+
+  var fn = exports.enabled(namespace) ? enabled : disabled;
+
+  fn.namespace = namespace;
+
+  return fn;
+}
+
+/**
+ * Enables a debug mode by namespaces. This can include modes
+ * separated by a colon and wildcards.
+ *
+ * @param {String} namespaces
+ * @api public
+ */
+
+function enable(namespaces) {
+  exports.save(namespaces);
+
+  var split = (namespaces || '').split(/[\s,]+/);
+  var len = split.length;
+
+  for (var i = 0; i < len; i++) {
+    if (!split[i]) continue; // ignore empty strings
+    namespaces = split[i].replace(/\*/g, '.*?');
+    if (namespaces[0] === '-') {
+      exports.skips.push(new RegExp('^' + namespaces.substr(1) + '$'));
+    } else {
+      exports.names.push(new RegExp('^' + namespaces + '$'));
+    }
+  }
+}
+
+/**
+ * Disable debug output.
+ *
+ * @api public
+ */
+
+function disable() {
+  exports.enable('');
+}
+
+/**
+ * Returns true if the given mode name is enabled, false otherwise.
+ *
+ * @param {String} name
+ * @return {Boolean}
+ * @api public
+ */
+
+function enabled(name) {
+  var i, len;
+  for (i = 0, len = exports.skips.length; i < len; i++) {
+    if (exports.skips[i].test(name)) {
+      return false;
+    }
+  }
+  for (i = 0, len = exports.names.length; i < len; i++) {
+    if (exports.names[i].test(name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Coerce `val`.
+ *
+ * @param {Mixed} val
+ * @return {Mixed}
+ * @api private
+ */
+
+function coerce(val) {
+  if (val instanceof Error) return val.stack || val.message;
+  return val;
+}
+
+},{"ms":36}],35:[function(require,module,exports){
+(function(root) {
+  var localStorageMemory = {};
+  var cache = {};
+
+  /**
+   * number of stored items.
+   */
+  localStorageMemory.length = 0;
+
+  /**
+   * returns item for passed key, or null
+   *
+   * @para {String} key
+   *       name of item to be returned
+   * @returns {String|null}
+   */
+  localStorageMemory.getItem = function(key) {
+    return cache[key] || null;
+  };
+
+  /**
+   * sets item for key to passed value, as String
+   *
+   * @para {String} key
+   *       name of item to be set
+   * @para {String} value
+   *       value, will always be turned into a String
+   * @returns {undefined}
+   */
+  localStorageMemory.setItem = function(key, value) {
+    if (typeof value === 'undefined') {
+      localStorageMemory.removeItem(key);
+    } else {
+      cache[key] = '' + value;
+      localStorageMemory.length++;
+    }
+  };
+
+  /**
+   * removes item for passed key
+   *
+   * @para {String} key
+   *       name of item to be removed
+   * @returns {undefined}
+   */
+  localStorageMemory.removeItem = function(key) {
+    delete cache[key];
+    localStorageMemory.length--;
+  };
+
+  /**
+   * returns name of key at passed index
+   *
+   * @para {Number} index
+   *       Position for key to be returned (starts at 0)
+   * @returns {String|null}
+   */
+  localStorageMemory.key = function(index) {
+    return Object.keys(cache)[index] || null;
+  };
+
+  /**
+   * removes all stored items and sets length to 0
+   *
+   * @returns {undefined}
+   */
+  localStorageMemory.clear = function() {
+    cache = {};
+    localStorageMemory.length = 0;
+  };
+
+  if (typeof exports === 'object') {
+    module.exports = localStorageMemory;
+  } else {
+    root.localStorageMemory = localStorageMemory;
+  }
+})(this);
+
+
+
+},{}],36:[function(require,module,exports){
+/**
+ * Helpers.
+ */
+
+var s = 1000;
+var m = s * 60;
+var h = m * 60;
+var d = h * 24;
+var y = d * 365.25;
+
+/**
+ * Parse or format the given `val`.
+ *
+ * Options:
+ *
+ *  - `long` verbose formatting [false]
+ *
+ * @param {String|Number} val
+ * @param {Object} options
+ * @return {String|Number}
+ * @api public
+ */
+
+module.exports = function(val, options){
+  options = options || {};
+  if ('string' == typeof val) return parse(val);
+  return options.long
+    ? long(val)
+    : short(val);
+};
+
+/**
+ * Parse the given `str` and return milliseconds.
+ *
+ * @param {String} str
+ * @return {Number}
+ * @api private
+ */
+
+function parse(str) {
+  str = '' + str;
+  if (str.length > 10000) return;
+  var match = /^((?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|years?|yrs?|y)?$/i.exec(str);
+  if (!match) return;
+  var n = parseFloat(match[1]);
+  var type = (match[2] || 'ms').toLowerCase();
+  switch (type) {
+    case 'years':
+    case 'year':
+    case 'yrs':
+    case 'yr':
+    case 'y':
+      return n * y;
+    case 'days':
+    case 'day':
+    case 'd':
+      return n * d;
+    case 'hours':
+    case 'hour':
+    case 'hrs':
+    case 'hr':
+    case 'h':
+      return n * h;
+    case 'minutes':
+    case 'minute':
+    case 'mins':
+    case 'min':
+    case 'm':
+      return n * m;
+    case 'seconds':
+    case 'second':
+    case 'secs':
+    case 'sec':
+    case 's':
+      return n * s;
+    case 'milliseconds':
+    case 'millisecond':
+    case 'msecs':
+    case 'msec':
+    case 'ms':
+      return n;
+  }
+}
+
+/**
+ * Short format for `ms`.
+ *
+ * @param {Number} ms
+ * @return {String}
+ * @api private
+ */
+
+function short(ms) {
+  if (ms >= d) return Math.round(ms / d) + 'd';
+  if (ms >= h) return Math.round(ms / h) + 'h';
+  if (ms >= m) return Math.round(ms / m) + 'm';
+  if (ms >= s) return Math.round(ms / s) + 's';
+  return ms + 'ms';
+}
+
+/**
+ * Long format for `ms`.
+ *
+ * @param {Number} ms
+ * @return {String}
+ * @api private
+ */
+
+function long(ms) {
+  return plural(ms, d, 'day')
+    || plural(ms, h, 'hour')
+    || plural(ms, m, 'minute')
+    || plural(ms, s, 'second')
+    || ms + ' ms';
+}
+
+/**
+ * Pluralization helper.
+ */
+
+function plural(ms, n, name) {
+  if (ms < n) return;
+  if (ms < n * 1.5) return Math.floor(ms / n) + ' ' + name;
+  return Math.ceil(ms / n) + ' ' + name + 's';
+}
+
+},{}],37:[function(require,module,exports){
+(function (Buffer){
+/*!
+ * depd
+ * Copyright(c) 2014 Douglas Christopher Wilson
+ * MIT Licensed
+ */
+
+/**
+ * Module exports.
+ */
+
+module.exports = bufferConcat
+
+/**
+ * Concatenate an array of Buffers.
+ */
+
+function bufferConcat(bufs) {
+  var length = 0
+
+  for (var i = 0, len = bufs.length; i < len; i++) {
+    length += bufs[i].length
+  }
+
+  var buf = new Buffer(length)
+  var pos = 0
+
+  for (var i = 0, len = bufs.length; i < len; i++) {
+    bufs[i].copy(buf, pos)
+    pos += bufs[i].length
+  }
+
+  return buf
+}
+
+}).call(this,require("buffer").Buffer)
+},{"buffer":4}],38:[function(require,module,exports){
+/*!
+ * depd
+ * Copyright(c) 2014 Douglas Christopher Wilson
+ * MIT Licensed
+ */
+
+/**
+ * Module exports.
+ */
+
+module.exports = callSiteToString
+
+/**
+ * Format a CallSite file location to a string.
+ */
+
+function callSiteFileLocation(callSite) {
+  var fileName
+  var fileLocation = ''
+
+  if (callSite.isNative()) {
+    fileLocation = 'native'
+  } else if (callSite.isEval()) {
+    fileName = callSite.getScriptNameOrSourceURL()
+    if (!fileName) {
+      fileLocation = callSite.getEvalOrigin()
+    }
+  } else {
+    fileName = callSite.getFileName()
+  }
+
+  if (fileName) {
+    fileLocation += fileName
+
+    var lineNumber = callSite.getLineNumber()
+    if (lineNumber != null) {
+      fileLocation += ':' + lineNumber
+
+      var columnNumber = callSite.getColumnNumber()
+      if (columnNumber) {
+        fileLocation += ':' + columnNumber
+      }
+    }
+  }
+
+  return fileLocation || 'unknown source'
+}
+
+/**
+ * Format a CallSite to a string.
+ */
+
+function callSiteToString(callSite) {
+  var addSuffix = true
+  var fileLocation = callSiteFileLocation(callSite)
+  var functionName = callSite.getFunctionName()
+  var isConstructor = callSite.isConstructor()
+  var isMethodCall = !(callSite.isToplevel() || isConstructor)
+  var line = ''
+
+  if (isMethodCall) {
+    var methodName = callSite.getMethodName()
+    var typeName = getConstructorName(callSite)
+
+    if (functionName) {
+      if (typeName && functionName.indexOf(typeName) !== 0) {
+        line += typeName + '.'
+      }
+
+      line += functionName
+
+      if (methodName && functionName.lastIndexOf('.' + methodName) !== functionName.length - methodName.length - 1) {
+        line += ' [as ' + methodName + ']'
+      }
+    } else {
+      line += typeName + '.' + (methodName || '<anonymous>')
+    }
+  } else if (isConstructor) {
+    line += 'new ' + (functionName || '<anonymous>')
+  } else if (functionName) {
+    line += functionName
+  } else {
+    addSuffix = false
+    line += fileLocation
+  }
+
+  if (addSuffix) {
+    line += ' (' + fileLocation + ')'
+  }
+
+  return line
+}
+
+/**
+ * Get constructor name of reviver.
+ */
+
+function getConstructorName(obj) {
+  var receiver = obj.receiver
+  return (receiver.constructor && receiver.constructor.name) || null
+}
+
+},{}],39:[function(require,module,exports){
+(function (Buffer){
+/*!
+ * depd
+ * Copyright(c) 2014 Douglas Christopher Wilson
+ * MIT Licensed
+ */
+
+/**
+ * Module exports.
+ */
+
+lazyProperty(module.exports, 'bufferConcat', function bufferConcat() {
+  return Buffer.concat || require('./buffer-concat')
+})
+
+lazyProperty(module.exports, 'callSiteToString', function callSiteToString() {
+  var limit = Error.stackTraceLimit
+  var obj = {}
+  var prep = Error.prepareStackTrace
+
+  function prepareObjectStackTrace(obj, stack) {
+    return stack
+  }
+
+  Error.prepareStackTrace = prepareObjectStackTrace
+  Error.stackTraceLimit = 2
+
+  // capture the stack
+  Error.captureStackTrace(obj)
+
+  // slice the stack
+  var stack = obj.stack.slice()
+
+  Error.prepareStackTrace = prep
+  Error.stackTraceLimit = limit
+
+  return stack[0].toString ? toString : require('./callsite-tostring')
+})
+
+/**
+ * Define a lazy property.
+ */
+
+function lazyProperty(obj, prop, getter) {
+  function get() {
+    var val = getter()
+
+    Object.defineProperty(obj, prop, {
+      configurable: true,
+      enumerable: true,
+      value: val
+    })
+
+    return val
+  }
+
+  Object.defineProperty(obj, prop, {
+    configurable: true,
+    enumerable: true,
+    get: get
+  })
+}
+
+/**
+ * Call toString() on the obj
+ */
+
+function toString(obj) {
+  return obj.toString()
+}
+
+}).call(this,require("buffer").Buffer)
+},{"./buffer-concat":37,"./callsite-tostring":38,"buffer":4}],40:[function(require,module,exports){
+arguments[4][9][0].apply(exports,arguments)
+},{"dup":9}],41:[function(require,module,exports){
+var dezalgo = require('dezalgo')
+
+module.exports = function (tasks, cb) {
+  var current = 0
+  var results = []
+  if (cb) cb = dezalgo(cb)
+
+  function done (err, result) {
+    results.push(result)
+    if (++current >= tasks.length || err) {
+      if (cb) cb(err, results)
+    } else {
+      tasks[current](done)
+    }
+  }
+
+  if (tasks.length) {
+    tasks[0](done)
+  } else {
+    if (cb) cb(null, results)
+  }
+}
+
+},{"dezalgo":42}],42:[function(require,module,exports){
+var wrappy = require('wrappy')
+module.exports = wrappy(dezalgo)
+
+var asap = require('asap')
+
+function dezalgo (cb) {
+  var sync = true
+  asap(function () {
+    sync = false
+  })
+
+  return function zalgoSafe() {
+    var args = arguments
+    var me = this
+    if (sync)
+      asap(function() {
+        cb.apply(me, args)
+      })
+    else
+      cb.apply(me, args)
+  }
+}
+
+},{"asap":43,"wrappy":45}],43:[function(require,module,exports){
+"use strict";
+
+// rawAsap provides everything we need except exception management.
+var rawAsap = require("./raw");
+// RawTasks are recycled to reduce GC churn.
+var freeTasks = [];
+// We queue errors to ensure they are thrown in right order (FIFO).
+// Array-as-queue is good enough here, since we are just dealing with exceptions.
+var pendingErrors = [];
+var requestErrorThrow = rawAsap.makeRequestCallFromTimer(throwFirstError);
+
+function throwFirstError() {
+    if (pendingErrors.length) {
+        throw pendingErrors.shift();
+    }
+}
+
+/**
+ * Calls a task as soon as possible after returning, in its own event, with priority
+ * over other events like animation, reflow, and repaint. An error thrown from an
+ * event will not interrupt, nor even substantially slow down the processing of
+ * other events, but will be rather postponed to a lower priority event.
+ * @param {{call}} task A callable object, typically a function that takes no
+ * arguments.
+ */
+module.exports = asap;
+function asap(task) {
+    var rawTask;
+    if (freeTasks.length) {
+        rawTask = freeTasks.pop();
+    } else {
+        rawTask = new RawTask();
+    }
+    rawTask.task = task;
+    rawAsap(rawTask);
+}
+
+// We wrap tasks with recyclable task objects.  A task object implements
+// `call`, just like a function.
+function RawTask() {
+    this.task = null;
+}
+
+// The sole purpose of wrapping the task is to catch the exception and recycle
+// the task object after its single use.
+RawTask.prototype.call = function () {
+    try {
+        this.task.call();
+    } catch (error) {
+        if (asap.onerror) {
+            // This hook exists purely for testing purposes.
+            // Its name will be periodically randomized to break any code that
+            // depends on its existence.
+            asap.onerror(error);
+        } else {
+            // In a web browser, exceptions are not fatal. However, to avoid
+            // slowing down the queue of pending tasks, we rethrow the error in a
+            // lower priority turn.
+            pendingErrors.push(error);
+            requestErrorThrow();
+        }
+    } finally {
+        this.task = null;
+        freeTasks[freeTasks.length] = this;
+    }
+};
+
+},{"./raw":44}],44:[function(require,module,exports){
+(function (global){
+"use strict";
+
+// Use the fastest means possible to execute a task in its own turn, with
+// priority over other events including IO, animation, reflow, and redraw
+// events in browsers.
+//
+// An exception thrown by a task will permanently interrupt the processing of
+// subsequent tasks. The higher level `asap` function ensures that if an
+// exception is thrown by a task, that the task queue will continue flushing as
+// soon as possible, but if you use `rawAsap` directly, you are responsible to
+// either ensure that no exceptions are thrown from your task, or to manually
+// call `rawAsap.requestFlush` if an exception is thrown.
+module.exports = rawAsap;
+function rawAsap(task) {
+    if (!queue.length) {
+        requestFlush();
+        flushing = true;
+    }
+    // Equivalent to push, but avoids a function call.
+    queue[queue.length] = task;
+}
+
+var queue = [];
+// Once a flush has been requested, no further calls to `requestFlush` are
+// necessary until the next `flush` completes.
+var flushing = false;
+// `requestFlush` is an implementation-specific method that attempts to kick
+// off a `flush` event as quickly as possible. `flush` will attempt to exhaust
+// the event queue before yielding to the browser's own event loop.
+var requestFlush;
+// The position of the next task to execute in the task queue. This is
+// preserved between calls to `flush` so that it can be resumed if
+// a task throws an exception.
+var index = 0;
+// If a task schedules additional tasks recursively, the task queue can grow
+// unbounded. To prevent memory exhaustion, the task queue will periodically
+// truncate already-completed tasks.
+var capacity = 1024;
+
+// The flush function processes all tasks that have been scheduled with
+// `rawAsap` unless and until one of those tasks throws an exception.
+// If a task throws an exception, `flush` ensures that its state will remain
+// consistent and will resume where it left off when called again.
+// However, `flush` does not make any arrangements to be called again if an
+// exception is thrown.
+function flush() {
+    while (index < queue.length) {
+        var currentIndex = index;
+        // Advance the index before calling the task. This ensures that we will
+        // begin flushing on the next task the task throws an error.
+        index = index + 1;
+        queue[currentIndex].call();
+        // Prevent leaking memory for long chains of recursive calls to `asap`.
+        // If we call `asap` within tasks scheduled by `asap`, the queue will
+        // grow, but to avoid an O(n) walk for every task we execute, we don't
+        // shift tasks off the queue after they have been executed.
+        // Instead, we periodically shift 1024 tasks off the queue.
+        if (index > capacity) {
+            // Manually shift all values starting at the index back to the
+            // beginning of the queue.
+            for (var scan = 0, newLength = queue.length - index; scan < newLength; scan++) {
+                queue[scan] = queue[scan + index];
+            }
+            queue.length -= index;
+            index = 0;
+        }
+    }
+    queue.length = 0;
+    index = 0;
+    flushing = false;
+}
+
+// `requestFlush` is implemented using a strategy based on data collected from
+// every available SauceLabs Selenium web driver worker at time of writing.
+// https://docs.google.com/spreadsheets/d/1mG-5UYGup5qxGdEMWkhP6BWCz053NUb2E1QoUTU16uA/edit#gid=783724593
+
+// Safari 6 and 6.1 for desktop, iPad, and iPhone are the only browsers that
+// have WebKitMutationObserver but not un-prefixed MutationObserver.
+// Must use `global` instead of `window` to work in both frames and web
+// workers. `global` is a provision of Browserify, Mr, Mrs, or Mop.
+var BrowserMutationObserver = global.MutationObserver || global.WebKitMutationObserver;
+
+// MutationObservers are desirable because they have high priority and work
+// reliably everywhere they are implemented.
+// They are implemented in all modern browsers.
+//
+// - Android 4-4.3
+// - Chrome 26-34
+// - Firefox 14-29
+// - Internet Explorer 11
+// - iPad Safari 6-7.1
+// - iPhone Safari 7-7.1
+// - Safari 6-7
+if (typeof BrowserMutationObserver === "function") {
+    requestFlush = makeRequestCallFromMutationObserver(flush);
+
+// MessageChannels are desirable because they give direct access to the HTML
+// task queue, are implemented in Internet Explorer 10, Safari 5.0-1, and Opera
+// 11-12, and in web workers in many engines.
+// Although message channels yield to any queued rendering and IO tasks, they
+// would be better than imposing the 4ms delay of timers.
+// However, they do not work reliably in Internet Explorer or Safari.
+
+// Internet Explorer 10 is the only browser that has setImmediate but does
+// not have MutationObservers.
+// Although setImmediate yields to the browser's renderer, it would be
+// preferrable to falling back to setTimeout since it does not have
+// the minimum 4ms penalty.
+// Unfortunately there appears to be a bug in Internet Explorer 10 Mobile (and
+// Desktop to a lesser extent) that renders both setImmediate and
+// MessageChannel useless for the purposes of ASAP.
+// https://github.com/kriskowal/q/issues/396
+
+// Timers are implemented universally.
+// We fall back to timers in workers in most engines, and in foreground
+// contexts in the following browsers.
+// However, note that even this simple case requires nuances to operate in a
+// broad spectrum of browsers.
+//
+// - Firefox 3-13
+// - Internet Explorer 6-9
+// - iPad Safari 4.3
+// - Lynx 2.8.7
+} else {
+    requestFlush = makeRequestCallFromTimer(flush);
+}
+
+// `requestFlush` requests that the high priority event queue be flushed as
+// soon as possible.
+// This is useful to prevent an error thrown in a task from stalling the event
+// queue if the exception handled by Node.js’s
+// `process.on("uncaughtException")` or by a domain.
+rawAsap.requestFlush = requestFlush;
+
+// To request a high priority event, we induce a mutation observer by toggling
+// the text of a text node between "1" and "-1".
+function makeRequestCallFromMutationObserver(callback) {
+    var toggle = 1;
+    var observer = new BrowserMutationObserver(callback);
+    var node = document.createTextNode("");
+    observer.observe(node, {characterData: true});
+    return function requestCall() {
+        toggle = -toggle;
+        node.data = toggle;
+    };
+}
+
+// The message channel technique was discovered by Malte Ubl and was the
+// original foundation for this library.
+// http://www.nonblocking.io/2011/06/windownexttick.html
+
+// Safari 6.0.5 (at least) intermittently fails to create message ports on a
+// page's first load. Thankfully, this version of Safari supports
+// MutationObservers, so we don't need to fall back in that case.
+
+// function makeRequestCallFromMessageChannel(callback) {
+//     var channel = new MessageChannel();
+//     channel.port1.onmessage = callback;
+//     return function requestCall() {
+//         channel.port2.postMessage(0);
+//     };
+// }
+
+// For reasons explained above, we are also unable to use `setImmediate`
+// under any circumstances.
+// Even if we were, there is another bug in Internet Explorer 10.
+// It is not sufficient to assign `setImmediate` to `requestFlush` because
+// `setImmediate` must be called *by name* and therefore must be wrapped in a
+// closure.
+// Never forget.
+
+// function makeRequestCallFromSetImmediate(callback) {
+//     return function requestCall() {
+//         setImmediate(callback);
+//     };
+// }
+
+// Safari 6.0 has a problem where timers will get lost while the user is
+// scrolling. This problem does not impact ASAP because Safari 6.0 supports
+// mutation observers, so that implementation is used instead.
+// However, if we ever elect to use timers in Safari, the prevalent work-around
+// is to add a scroll event listener that calls for a flush.
+
+// `setTimeout` does not call the passed callback if the delay is less than
+// approximately 7 in web workers in Firefox 8 through 18, and sometimes not
+// even then.
+
+function makeRequestCallFromTimer(callback) {
+    return function requestCall() {
+        // We dispatch a timeout with a specified delay of 0 for engines that
+        // can reliably accommodate that request. This will usually be snapped
+        // to a 4 milisecond delay, but once we're flushing, there's no delay
+        // between events.
+        var timeoutHandle = setTimeout(handleTimer, 0);
+        // However, since this timer gets frequently dropped in Firefox
+        // workers, we enlist an interval handle that will try to fire
+        // an event 20 times per second until it succeeds.
+        var intervalHandle = setInterval(handleTimer, 50);
+
+        function handleTimer() {
+            // Whichever timer succeeds will cancel both timers and
+            // execute the callback.
+            clearTimeout(timeoutHandle);
+            clearInterval(intervalHandle);
+            callback();
+        }
+    };
+}
+
+// This is for `asap.js` only.
+// Its name will be periodically randomized to break any code that depends on
+// its existence.
+rawAsap.makeRequestCallFromTimer = makeRequestCallFromTimer;
+
+// ASAP was originally a nextTick shim included in Q. This was factored out
+// into this ASAP package. It was later adapted to RSVP which made further
+// amendments. These decisions, particularly to marginalize MessageChannel and
+// to capture the MutationObserver implementation in a closure, were integrated
+// back into ASAP proper.
+// https://github.com/tildeio/rsvp.js/blob/cddf7232546a9cf858524b75cde6f9edf72620a7/lib/rsvp/asap.js
+
+}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{}],45:[function(require,module,exports){
+// Returns a wrapper function that returns a wrapped callback
+// The wrapper function should do some stuff, and return a
+// presumably different callback function.
+// This makes sure that own properties are retained, so that
+// decorations and such are not lost along the way.
+module.exports = wrappy
+function wrappy (fn, cb) {
+  if (fn && cb) return wrappy(fn)(cb)
+
+  if (typeof fn !== 'function')
+    throw new TypeError('need wrapper function')
+
+  Object.keys(fn).forEach(function (k) {
+    wrapper[k] = fn[k]
+  })
+
+  return wrapper
+
+  function wrapper() {
+    var args = new Array(arguments.length)
+    for (var i = 0; i < args.length; i++) {
+      args[i] = arguments[i]
+    }
+    var ret = fn.apply(this, args)
+    var cb = args[args.length-1]
+    if (typeof ret === 'function' && ret !== cb) {
+      Object.keys(cb).forEach(function (k) {
+        ret[k] = cb[k]
+      })
+    }
+    return ret
+  }
+}
+
+},{}],46:[function(require,module,exports){
+var ClientRequest = require('./lib/request')
+var extend = require('xtend')
+var statusCodes = require('builtin-status-codes')
+var url = require('url')
+
+var http = exports
+
+http.request = function (opts, cb) {
+	if (typeof opts === 'string')
+		opts = url.parse(opts)
+	else
+		opts = extend(opts)
+
+	// Split opts.host into its components
+	var hostHostname = opts.host ? opts.host.split(':')[0] : null
+	var hostPort = opts.host ? parseInt(opts.host.split(':')[1], 10) : null
+
+	opts.method = opts.method || 'GET'
+	opts.headers = opts.headers || {}
+	opts.path = opts.path || '/'
+	opts.protocol = opts.protocol || window.location.protocol
+	// If the hostname is provided, use the default port for the protocol. If
+	// the url is instead relative, use window.location.port
+	var defaultPort = (opts.hostname || hostHostname) ? (opts.protocol === 'https:' ? 443 : 80) : window.location.port
+	opts.hostname = opts.hostname || hostHostname || window.location.hostname
+	opts.port = opts.port || hostPort || defaultPort
+
+	// Also valid opts.auth, opts.mode
+
+	var req = new ClientRequest(opts)
+	if (cb)
+		req.on('response', cb)
+	return req
+}
+
+http.get = function get (opts, cb) {
+	var req = http.request(opts, cb)
+	req.end()
+	return req
+}
+
+http.Agent = function () {}
+http.Agent.defaultMaxSockets = 4
+
+http.STATUS_CODES = statusCodes
+
+http.METHODS = [
+	'GET',
+	'POST',
+	'PUT',
+	'DELETE' // TODO: include the methods from RFC 2616 and 2518?
+]
+},{"./lib/request":48,"builtin-status-codes":50,"url":31,"xtend":56}],47:[function(require,module,exports){
+exports.fetch = isFunction(window.fetch) && isFunction(window.ReadableByteStream)
+
+exports.blobConstructor = false
+try {
+	new Blob([new ArrayBuffer(1)])
+	exports.blobConstructor = true
+} catch (e) {}
+
+var xhr = new window.XMLHttpRequest()
+xhr.open('GET', '/')
+
+function checkTypeSupport (type) {
+	try {
+		xhr.responseType = type
+		return xhr.responseType === type
+	} catch (e) {}
+	return false
+}
+
+var haveArrayBuffer = isFunction(window.ArrayBuffer)
+var haveSlice = haveArrayBuffer && isFunction(window.ArrayBuffer.prototype.slice)
+
+exports.arraybuffer = haveArrayBuffer && checkTypeSupport('arraybuffer')
+exports.msstream = haveSlice && checkTypeSupport('ms-stream')
+exports.mozchunkedarraybuffer = haveArrayBuffer && checkTypeSupport('moz-chunked-arraybuffer')
+exports.overrideMimeType = isFunction(xhr.overrideMimeType)
+exports.vbArray = isFunction(window.VBArray)
+
+function isFunction (value) {
+  return typeof value === 'function'
+}
+
+xhr = null // Help gc
+},{}],48:[function(require,module,exports){
+(function (process,Buffer){
+var capability = require('./capability')
+var foreach = require('foreach')
+var indexOf = require('indexof')
+var inherits = require('inherits')
+var keys = require('object-keys')
+var response = require('./response')
+var stream = require('stream')
+
+var IncomingMessage = response.IncomingMessage
+var rStates = response.readyStates
+
+function decideMode (preferBinary) {
+	if (capability.fetch) {
+		return 'fetch'
+	} else if (capability.mozchunkedarraybuffer) {
+		return 'moz-chunked-arraybuffer'
+	} else if (capability.msstream) {
+		return 'ms-stream'
+	} else if (capability.arraybuffer && preferBinary) {
+		return 'arraybuffer'
+	} else if (capability.vbArray && preferBinary) {
+		return 'text:vbarray'
+	} else {
+		return 'text'
+	}
+}
+
+var ClientRequest = module.exports = function (opts) {
+	var self = this
+	stream.Writable.call(self)
+
+	self._opts = opts
+	self._url = opts.protocol + '//' + opts.hostname + ':' + opts.port + opts.path
+	self._body = []
+	self._headers = {}
+	if (opts.auth)
+		self.setHeader('Authorization', 'Basic ' + new Buffer(opts.auth).toString('base64'))
+	foreach(keys(opts.headers), function (name) {
+		self.setHeader(name, opts.headers[name])
+	})
+
+	var preferBinary
+	if (opts.mode === 'prefer-streaming') {
+		// If streaming is a high priority but binary compatibility isn't
+		preferBinary = false
+	} else if (opts.mode === 'prefer-fast') {
+		// If binary is preferred for speed
+		preferBinary = true
+	} else if (!opts.mode || opts.mode === 'default') {
+		// By default, use binary if text streaming may corrupt data
+		preferBinary = !capability.overrideMimeType
+	} else {
+		throw new Error('Invalid value for opts.mode')
+	}
+	self._mode = decideMode(preferBinary)
+
+	self.on('finish', function () {
+		self._onFinish()
+	})
+}
+
+inherits(ClientRequest, stream.Writable)
+
+ClientRequest.prototype.setHeader = function (name, value) {
+	var self = this
+	var lowerName = name.toLowerCase()
+	// This check is not necessary, but it prevents warnings from browsers about setting unsafe
+	// headers. To be honest I'm not entirely sure hiding these warnings is a good thing, but
+	// http-browserify did it, so I will too.
+	if (indexOf(unsafeHeaders, lowerName) !== -1)
+		return
+
+	self._headers[lowerName] = {
+		name: name,
+		value: value
+	}
+}
+
+ClientRequest.prototype.getHeader = function (name) {
+	var self = this
+	return self._headers[name.toLowerCase()].value
+}
+
+ClientRequest.prototype.removeHeader = function (name) {
+	var self = this
+	delete self._headers[name.toLowerCase()]
+}
+
+ClientRequest.prototype._onFinish = function () {
+	var self = this
+
+	if (self._destroyed)
+		return
+	var opts = self._opts
+
+	var headersObj = self._headers
+	var body
+	if (opts.method === 'POST' || opts.method === 'PUT') {
+		if (capability.blobConstructor) {
+			body = new window.Blob(self._body.map(function (buffer) {
+				return buffer.toArrayBuffer()
+			}), {
+				type: (headersObj['content-type'] || {}).value || ''
+			})
+		} else {
+			// get utf8 string
+			body = Buffer.concat(self._body).toString()
+		}
+	}
+
+	if (self._mode === 'fetch') {
+		var headers = keys(headersObj).map(function (name) {
+			return [headersObj[name].name, headersObj[name].value]
+		})
+
+		window.fetch(self._url, {
+			method: self._opts.method,
+			headers: headers,
+			body: body,
+			mode: 'cors',
+			credentials: opts.withCredentials ? 'include' : 'same-origin'
+		}).then(function (response) {
+			self._fetchResponse = response
+			self._connect()
+		}).then(undefined, function (reason) {
+			self.emit('error', reason)
+		})
+	} else {
+		var xhr = self._xhr = new window.XMLHttpRequest()
+		try {
+			xhr.open(self._opts.method, self._url, true)
+		} catch (err) {
+			process.nextTick(function () {
+				self.emit('error', err)
+			})
+			return
+		}
+
+		// Can't set responseType on really old browsers
+		if ('responseType' in xhr)
+			xhr.responseType = self._mode.split(':')[0]
+
+		if ('withCredentials' in xhr)
+			xhr.withCredentials = !!opts.withCredentials
+
+		if (self._mode === 'text' && 'overrideMimeType' in xhr)
+			xhr.overrideMimeType('text/plain; charset=x-user-defined')
+
+		foreach(keys(headersObj), function (name) {
+			xhr.setRequestHeader(headersObj[name].name, headersObj[name].value)
+		})
+
+		self._response = null
+		xhr.onreadystatechange = function () {
+			switch (xhr.readyState) {
+				case rStates.LOADING:
+				case rStates.DONE:
+					self._onXHRProgress()
+					break
+			}
+		}
+		// Necessary for streaming in Firefox, since xhr.response is ONLY defined
+		// in onprogress, not in onreadystatechange with xhr.readyState = 3
+		if (self._mode === 'moz-chunked-arraybuffer') {
+			xhr.onprogress = function () {
+				self._onXHRProgress()
+			}
+		}
+
+		xhr.onerror = function () {
+			if (self._destroyed)
+				return
+			self.emit('error', new Error('XHR error'))
+		}
+
+		try {
+			xhr.send(body)
+		} catch (err) {
+			process.nextTick(function () {
+				self.emit('error', err)
+			})
+			return
+		}
+	}
+}
+
+/**
+ * Checks if xhr.status is readable. Even though the spec says it should
+ * be available in readyState 3, accessing it throws an exception in IE8
+ */
+function statusValid (xhr) {
+	try {
+		return (xhr.status !== null)
+	} catch (e) {
+		return false
+	}
+}
+
+ClientRequest.prototype._onXHRProgress = function () {
+	var self = this
+
+	if (!statusValid(self._xhr) || self._destroyed)
+		return
+
+	if (!self._response)
+		self._connect()
+
+	self._response._onXHRProgress()
+}
+
+ClientRequest.prototype._connect = function () {
+	var self = this
+
+	if (self._destroyed)
+		return
+
+	self._response = new IncomingMessage(self._xhr, self._fetchResponse, self._mode)
+	self.emit('response', self._response)
+}
+
+ClientRequest.prototype._write = function (chunk, encoding, cb) {
+	var self = this
+
+	self._body.push(chunk)
+	cb()
+}
+
+ClientRequest.prototype.abort = ClientRequest.prototype.destroy = function () {
+	var self = this
+	self._destroyed = true
+	if (self._response)
+		self._response._destroyed = true
+	if (self._xhr)
+		self._xhr.abort()
+	// Currently, there isn't a way to truly abort a fetch.
+	// If you like bikeshedding, see https://github.com/whatwg/fetch/issues/27
+}
+
+ClientRequest.prototype.end = function (data, encoding, cb) {
+	var self = this
+	if (typeof data === 'function') {
+		cb = data
+		data = undefined
+	}
+
+	if (data)
+		stream.Writable.push.call(self, data, encoding)
+
+	stream.Writable.prototype.end.call(self, cb)
+}
+
+ClientRequest.prototype.flushHeaders = function () {}
+ClientRequest.prototype.setTimeout = function () {}
+ClientRequest.prototype.setNoDelay = function () {}
+ClientRequest.prototype.setSocketKeepAlive = function () {}
+
+// Taken from http://www.w3.org/TR/XMLHttpRequest/#the-setrequestheader%28%29-method
+var unsafeHeaders = [
+	'accept-charset',
+	'accept-encoding',
+	'access-control-request-headers',
+	'access-control-request-method',
+	'connection',
+	'content-length',
+	'cookie',
+	'cookie2',
+	'date',
+	'dnt',
+	'expect',
+	'host',
+	'keep-alive',
+	'origin',
+	'referer',
+	'te',
+	'trailer',
+	'transfer-encoding',
+	'upgrade',
+	'user-agent',
+	'via'
+]
+
+}).call(this,require('_process'),require("buffer").Buffer)
+},{"./capability":47,"./response":49,"_process":13,"buffer":4,"foreach":51,"indexof":52,"inherits":53,"object-keys":54,"stream":28}],49:[function(require,module,exports){
+(function (process,Buffer){
+var capability = require('./capability')
+var foreach = require('foreach')
+var inherits = require('inherits')
+var stream = require('stream')
+
+var rStates = exports.readyStates = {
+	UNSENT: 0,
+	OPENED: 1,
+	HEADERS_RECEIVED: 2,
+	LOADING: 3,
+	DONE: 4
+}
+
+var IncomingMessage = exports.IncomingMessage = function (xhr, response, mode) {
+	var self = this
+	stream.Readable.call(self)
+
+	self._mode = mode
+	self.headers = {}
+	self.rawHeaders = []
+	self.trailers = {}
+	self.rawTrailers = []
+
+	// Fake the 'close' event, but only once 'end' fires
+	self.on('end', function () {
+		// The nextTick is necessary to prevent the 'request' module from causing an infinite loop
+		process.nextTick(function () {
+			self.emit('close')
+		})
+	})
+
+	if (mode === 'fetch') {
+		self._fetchResponse = response
+
+		self.statusCode = response.status
+		self.statusMessage = response.statusText
+		// backwards compatible version of for (<item> of <iterable>):
+		// for (var <item>,_i,_it = <iterable>[Symbol.iterator](); <item> = (_i = _it.next()).value,!_i.done;)
+		for (var header, _i, _it = response.headers[Symbol.iterator](); header = (_i = _it.next()).value, !_i.done;) {
+			self.headers[header[0].toLowerCase()] = header[1]
+			self.rawHeaders.push(header[0], header[1])
+		}
+
+		// TODO: this doesn't respect backpressure. Once WritableStream is available, this can be fixed
+		var reader = response.body.getReader()
+		function read () {
+			reader.read().then(function (result) {
+				if (self._destroyed)
+					return
+				if (result.done) {
+					self.push(null)
+					return
+				}
+				self.push(new Buffer(result.value))
+				read()
+			})
+		}
+		read()
+
+	} else {
+		self._xhr = xhr
+		self._pos = 0
+
+		self.statusCode = xhr.status
+		self.statusMessage = xhr.statusText
+		var headers = xhr.getAllResponseHeaders().split(/\r?\n/)
+		foreach(headers, function (header) {
+			var matches = header.match(/^([^:]+):\s*(.*)/)
+			if (matches) {
+				var key = matches[1].toLowerCase()
+				if (self.headers[key] !== undefined)
+					self.headers[key] += ', ' + matches[2]
+				else
+					self.headers[key] = matches[2]
+				self.rawHeaders.push(matches[1], matches[2])
+			}
+		})
+
+		self._charset = 'x-user-defined'
+		if (!capability.overrideMimeType) {
+			var mimeType = self.rawHeaders['mime-type']
+			if (mimeType) {
+				var charsetMatch = mimeType.match(/;\s*charset=([^;])(;|$)/)
+				if (charsetMatch) {
+					self._charset = charsetMatch[1].toLowerCase()
+				}
+			}
+			if (!self._charset)
+				self._charset = 'utf-8' // best guess
+		}
+	}
+}
+
+inherits(IncomingMessage, stream.Readable)
+
+IncomingMessage.prototype._read = function () {}
+
+IncomingMessage.prototype._onXHRProgress = function () {
+	var self = this
+
+	var xhr = self._xhr
+
+	var response = null
+	switch (self._mode) {
+		case 'text:vbarray': // For IE9
+			if (xhr.readyState !== rStates.DONE)
+				break
+			try {
+				// This fails in IE8
+				response = new window.VBArray(xhr.responseBody).toArray()
+			} catch (e) {}
+			if (response !== null) {
+				self.push(new Buffer(response))
+				break
+			}
+			// Falls through in IE8	
+		case 'text':
+			try { // This will fail when readyState = 3 in IE9. Switch mode and wait for readyState = 4
+				response = xhr.responseText
+			} catch (e) {
+				self._mode = 'text:vbarray'
+				break
+			}
+			if (response.length > self._pos) {
+				var newData = response.substr(self._pos)
+				if (self._charset === 'x-user-defined') {
+					var buffer = new Buffer(newData.length)
+					for (var i = 0; i < newData.length; i++)
+						buffer[i] = newData.charCodeAt(i) & 0xff
+
+					self.push(buffer)
+				} else {
+					self.push(newData, self._charset)
+				}
+				self._pos = response.length
+			}
+			break
+		case 'arraybuffer':
+			if (xhr.readyState !== rStates.DONE)
+				break
+			response = xhr.response
+			self.push(new Buffer(new Uint8Array(response)))
+			break
+		case 'moz-chunked-arraybuffer': // take whole
+			response = xhr.response
+			if (xhr.readyState !== rStates.LOADING || !response)
+				break
+			self.push(new Buffer(new Uint8Array(response)))
+			break
+		case 'ms-stream':
+			response = xhr.response
+			if (xhr.readyState !== rStates.LOADING)
+				break
+			var reader = new window.MSStreamReader()
+			reader.onprogress = function () {
+				if (reader.result.byteLength > self._pos) {
+					self.push(new Buffer(new Uint8Array(reader.result.slice(self._pos))))
+					self._pos = reader.result.byteLength
+				}
+			}
+			reader.onload = function () {
+				self.push(null)
+			}
+			// reader.onerror = ??? // TODO: this
+			reader.readAsArrayBuffer(response)
+			break
+	}
+
+	// The ms-stream case handles end separately in reader.onload()
+	if (self._xhr.readyState === rStates.DONE && self._mode !== 'ms-stream') {
+		self.push(null)
+	}
+}
+
+}).call(this,require('_process'),require("buffer").Buffer)
+},{"./capability":47,"_process":13,"buffer":4,"foreach":51,"inherits":53,"stream":28}],50:[function(require,module,exports){
+module.exports = {
+  "100": "Continue",
+  "101": "Switching Protocols",
+  "102": "Processing",
+  "200": "OK",
+  "201": "Created",
+  "202": "Accepted",
+  "203": "Non-Authoritative Information",
+  "204": "No Content",
+  "205": "Reset Content",
+  "206": "Partial Content",
+  "207": "Multi-Status",
+  "300": "Multiple Choices",
+  "301": "Moved Permanently",
+  "302": "Moved Temporarily",
+  "303": "See Other",
+  "304": "Not Modified",
+  "305": "Use Proxy",
+  "307": "Temporary Redirect",
+  "308": "Permanent Redirect",
+  "400": "Bad Request",
+  "401": "Unauthorized",
+  "402": "Payment Required",
+  "403": "Forbidden",
+  "404": "Not Found",
+  "405": "Method Not Allowed",
+  "406": "Not Acceptable",
+  "407": "Proxy Authentication Required",
+  "408": "Request Time-out",
+  "409": "Conflict",
+  "410": "Gone",
+  "411": "Length Required",
+  "412": "Precondition Failed",
+  "413": "Request Entity Too Large",
+  "414": "Request-URI Too Large",
+  "415": "Unsupported Media Type",
+  "416": "Requested Range Not Satisfiable",
+  "417": "Expectation Failed",
+  "418": "I'm a teapot",
+  "422": "Unprocessable Entity",
+  "423": "Locked",
+  "424": "Failed Dependency",
+  "425": "Unordered Collection",
+  "426": "Upgrade Required",
+  "428": "Precondition Required",
+  "429": "Too Many Requests",
+  "431": "Request Header Fields Too Large",
+  "500": "Internal Server Error",
+  "501": "Not Implemented",
+  "502": "Bad Gateway",
+  "503": "Service Unavailable",
+  "504": "Gateway Time-out",
+  "505": "HTTP Version Not Supported",
+  "506": "Variant Also Negotiates",
+  "507": "Insufficient Storage",
+  "509": "Bandwidth Limit Exceeded",
+  "510": "Not Extended",
+  "511": "Network Authentication Required"
+}
+
+},{}],51:[function(require,module,exports){
+
+var hasOwn = Object.prototype.hasOwnProperty;
+var toString = Object.prototype.toString;
+
+module.exports = function forEach (obj, fn, ctx) {
+    if (toString.call(fn) !== '[object Function]') {
+        throw new TypeError('iterator must be a function');
+    }
+    var l = obj.length;
+    if (l === +l) {
+        for (var i = 0; i < l; i++) {
+            fn.call(ctx, obj[i], i, obj);
+        }
+    } else {
+        for (var k in obj) {
+            if (hasOwn.call(obj, k)) {
+                fn.call(ctx, obj[k], k, obj);
+            }
+        }
+    }
+};
+
+
+},{}],52:[function(require,module,exports){
+
+var indexOf = [].indexOf;
+
+module.exports = function(arr, obj){
+  if (indexOf) return arr.indexOf(obj);
+  for (var i = 0; i < arr.length; ++i) {
+    if (arr[i] === obj) return i;
+  }
+  return -1;
+};
+},{}],53:[function(require,module,exports){
+arguments[4][9][0].apply(exports,arguments)
+},{"dup":9}],54:[function(require,module,exports){
+'use strict';
+
+// modified from https://github.com/es-shims/es5-shim
+var has = Object.prototype.hasOwnProperty;
+var toStr = Object.prototype.toString;
+var slice = Array.prototype.slice;
+var isArgs = require('./isArguments');
+var hasDontEnumBug = !({ 'toString': null }).propertyIsEnumerable('toString');
+var hasProtoEnumBug = function () {}.propertyIsEnumerable('prototype');
+var dontEnums = [
+	'toString',
+	'toLocaleString',
+	'valueOf',
+	'hasOwnProperty',
+	'isPrototypeOf',
+	'propertyIsEnumerable',
+	'constructor'
+];
+
+var keysShim = function keys(object) {
+	var isObject = object !== null && typeof object === 'object';
+	var isFunction = toStr.call(object) === '[object Function]';
+	var isArguments = isArgs(object);
+	var isString = isObject && toStr.call(object) === '[object String]';
+	var theKeys = [];
+
+	if (!isObject && !isFunction && !isArguments) {
+		throw new TypeError('Object.keys called on a non-object');
+	}
+
+	var skipProto = hasProtoEnumBug && isFunction;
+	if (isString && object.length > 0 && !has.call(object, 0)) {
+		for (var i = 0; i < object.length; ++i) {
+			theKeys.push(String(i));
+		}
+	}
+
+	if (isArguments && object.length > 0) {
+		for (var j = 0; j < object.length; ++j) {
+			theKeys.push(String(j));
+		}
+	} else {
+		for (var name in object) {
+			if (!(skipProto && name === 'prototype') && has.call(object, name)) {
+				theKeys.push(String(name));
+			}
+		}
+	}
+
+	if (hasDontEnumBug) {
+		var ctor = object.constructor;
+		var skipConstructor = ctor && ctor.prototype === object;
+
+		for (var k = 0; k < dontEnums.length; ++k) {
+			if (!(skipConstructor && dontEnums[k] === 'constructor') && has.call(object, dontEnums[k])) {
+				theKeys.push(dontEnums[k]);
+			}
+		}
+	}
+	return theKeys;
+};
+
+keysShim.shim = function shimObjectKeys() {
+	if (!Object.keys) {
+		Object.keys = keysShim;
+	} else {
+		var keysWorksWithArguments = (function () {
+			// Safari 5.0 bug
+			return (Object.keys(arguments) || '').length === 2;
+		}(1, 2));
+		if (!keysWorksWithArguments) {
+			var originalKeys = Object.keys;
+			Object.keys = function keys(object) {
+				if (isArgs(object)) {
+					return originalKeys(slice.call(object));
+				} else {
+					return originalKeys(object);
+				}
+			};
+		}
+	}
+	return Object.keys || keysShim;
+};
+
+module.exports = keysShim;
+
+},{"./isArguments":55}],55:[function(require,module,exports){
+'use strict';
+
+var toStr = Object.prototype.toString;
+
+module.exports = function isArguments(value) {
+	var str = toStr.call(value);
+	var isArgs = str === '[object Arguments]';
+	if (!isArgs) {
+		isArgs = str !== '[object Array]' &&
+			value !== null &&
+			typeof value === 'object' &&
+			typeof value.length === 'number' &&
+			value.length >= 0 &&
+			toStr.call(value.callee) === '[object Function]';
+	}
+	return isArgs;
+};
+
+},{}],56:[function(require,module,exports){
+module.exports = extend
+
+function extend() {
+    var target = {}
+
+    for (var i = 0; i < arguments.length; i++) {
+        var source = arguments[i]
+
+        for (var key in source) {
+            if (source.hasOwnProperty(key)) {
+                target[key] = source[key]
+            }
+        }
+    }
+
+    return target
+}
+
+},{}],57:[function(require,module,exports){
+arguments[4][6][0].apply(exports,arguments)
+},{"/home/anton/.nvm/versions/node/v4.1.0/lib/node_modules/chromiumify/node_modules/is-buffer/index.js":11,"dup":6}],58:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var net = require('net');
+var util = require('util');
+var EventEmitter = require('events').EventEmitter;
+var debug = util.debuglog('http');
+
+// New Agent code.
+
+// The largest departure from the previous implementation is that
+// an Agent instance holds connections for a variable number of host:ports.
+// Surprisingly, this is still API compatible as far as third parties are
+// concerned. The only code that really notices the difference is the
+// request object.
+
+// Another departure is that all code related to HTTP parsing is in
+// ClientRequest.onSocket(). The Agent is now *strictly*
+// concerned with managing a connection pool.
+
+function Agent(options) {
+  if (!(this instanceof Agent))
+    return new Agent(options);
+
+  EventEmitter.call(this);
+
+  var self = this;
+
+  self.defaultPort = 80;
+  self.protocol = 'http:';
+
+  self.options = util._extend({}, options);
+
+  // don't confuse net and make it think that we're connecting to a pipe
+  self.options.path = null;
+  self.requests = {};
+  self.sockets = {};
+  self.freeSockets = {};
+  self.keepAliveMsecs = self.options.keepAliveMsecs || 1000;
+  self.keepAlive = self.options.keepAlive || false;
+  self.maxSockets = self.options.maxSockets || Agent.defaultMaxSockets;
+  self.maxFreeSockets = self.options.maxFreeSockets || 256;
+
+  self.on('free', function(socket, options) {
+    var name = self.getName(options);
+    debug('agent.on(free)', name);
+
+    if (!socket.destroyed &&
+        self.requests[name] && self.requests[name].length) {
+      self.requests[name].shift().onSocket(socket);
+      if (self.requests[name].length === 0) {
+        // don't leak
+        delete self.requests[name];
+      }
+    } else {
+      // If there are no pending requests, then put it in
+      // the freeSockets pool, but only if we're allowed to do so.
+      var req = socket._httpMessage;
+      if (req &&
+          req.shouldKeepAlive &&
+          !socket.destroyed &&
+          self.options.keepAlive) {
+        var freeSockets = self.freeSockets[name];
+        var freeLen = freeSockets ? freeSockets.length : 0;
+        var count = freeLen;
+        if (self.sockets[name])
+          count += self.sockets[name].length;
+
+        if (count >= self.maxSockets || freeLen >= self.maxFreeSockets) {
+          self.removeSocket(socket, options);
+          socket.destroy();
+        } else {
+          freeSockets = freeSockets || [];
+          self.freeSockets[name] = freeSockets;
+          socket.setKeepAlive(true, self.keepAliveMsecs);
+          socket.unref();
+          socket._httpMessage = null;
+          self.removeSocket(socket, options);
+          freeSockets.push(socket);
+        }
+      } else {
+        self.removeSocket(socket, options);
+        socket.destroy();
+      }
+    }
+  });
+}
+
+util.inherits(Agent, EventEmitter);
+exports.Agent = Agent;
+
+Agent.defaultMaxSockets = Infinity;
+
+Agent.prototype.createConnection = net.createConnection;
+
+// Get the key for a given set of request options
+Agent.prototype.getName = function(options) {
+  var name = '';
+
+  if (options.host)
+    name += options.host;
+  else
+    name += 'localhost';
+
+  name += ':';
+  if (options.port)
+    name += options.port;
+  name += ':';
+  if (options.localAddress)
+    name += options.localAddress;
+  name += ':';
+  return name;
+};
+
+Agent.prototype.addRequest = function(req, options) {
+  // Legacy API: addRequest(req, host, port, path)
+  if (typeof options === 'string') {
+    options = {
+      host: options,
+      port: arguments[2],
+      path: arguments[3]
+    };
+  }
+
+  var name = this.getName(options);
+  if (!this.sockets[name]) {
+    this.sockets[name] = [];
+  }
+
+  var freeLen = this.freeSockets[name] ? this.freeSockets[name].length : 0;
+  var sockLen = freeLen + this.sockets[name].length;
+
+  if (freeLen) {
+    // we have a free socket, so use that.
+    var socket = this.freeSockets[name].shift();
+    debug('have free socket');
+
+    // don't leak
+    if (!this.freeSockets[name].length)
+      delete this.freeSockets[name];
+
+    socket.ref();
+    req.onSocket(socket);
+    this.sockets[name].push(socket);
+  } else if (sockLen < this.maxSockets) {
+    debug('call onSocket', sockLen, freeLen);
+    // If we are under maxSockets create a new one.
+    req.onSocket(this.createSocket(req, options));
+  } else {
+    debug('wait for socket');
+    // We are over limit so we'll add it to the queue.
+    if (!this.requests[name]) {
+      this.requests[name] = [];
+    }
+    this.requests[name].push(req);
+  }
+};
+
+Agent.prototype.createSocket = function(req, options) {
+  var self = this;
+  options = util._extend({}, options);
+  options = util._extend(options, self.options);
+
+  options.servername = options.host;
+  if (req) {
+    var hostHeader = req.getHeader('host');
+    if (hostHeader) {
+      options.servername = hostHeader.replace(/:.*$/, '');
+    }
+  }
+
+  var name = self.getName(options);
+
+  debug('createConnection', name, options);
+  options.encoding = null;
+  var s = self.createConnection(options);
+  if (!self.sockets[name]) {
+    self.sockets[name] = [];
+  }
+  this.sockets[name].push(s);
+  debug('sockets', name, this.sockets[name].length);
+
+  function onFree() {
+    self.emit('free', s, options);
+  }
+  s.on('free', onFree);
+
+  function onClose(err) {
+    debug('CLIENT socket onClose');
+    // This is the only place where sockets get removed from the Agent.
+    // If you want to remove a socket from the pool, just close it.
+    // All socket errors end in a close event anyway.
+    self.removeSocket(s, options);
+  }
+  s.on('close', onClose);
+
+  function onRemove() {
+    // We need this function for cases like HTTP 'upgrade'
+    // (defined by WebSockets) where we need to remove a socket from the
+    // pool because it'll be locked up indefinitely
+    debug('CLIENT socket onRemove');
+    self.removeSocket(s, options);
+    s.removeListener('close', onClose);
+    s.removeListener('free', onFree);
+    s.removeListener('agentRemove', onRemove);
+  }
+  s.on('agentRemove', onRemove);
+  return s;
+};
+
+Agent.prototype.removeSocket = function(s, options) {
+  var name = this.getName(options);
+  debug('removeSocket', name, 'destroyed:', s.destroyed);
+  var sets = [this.sockets];
+
+  // If the socket was destroyed, remove it from the free buffers too.
+  if (s.destroyed)
+    sets.push(this.freeSockets);
+
+  for (var sk = 0; sk < sets.length; sk++) {
+    var sockets = sets[sk];
+
+    if (sockets[name]) {
+      var index = sockets[name].indexOf(s);
+      if (index !== -1) {
+        sockets[name].splice(index, 1);
+        // Don't leak
+        if (sockets[name].length === 0)
+          delete sockets[name];
+      }
+    }
+  }
+
+  if (this.requests[name] && this.requests[name].length) {
+    debug('removeSocket, have a request, make a socket');
+    var req = this.requests[name][0];
+    // If we have pending requests and a socket gets closed make a new one
+    this.createSocket(req, options).emit('free');
+  }
+};
+
+Agent.prototype.destroy = function() {
+  var sets = [this.freeSockets, this.sockets];
+  for (var s = 0; s < sets.length; s++) {
+    var set = sets[s];
+    var keys = Object.keys(set);
+    for (var v = 0; v < keys.length; v++) {
+      var setName = set[keys[v]];
+      for (var n = 0; n < setName.length; n++) {
+        setName[n].destroy();
+      }
+    }
+  }
+};
+
+exports.globalAgent = new Agent();
+
+},{"events":7,"net":"net","util":33}],59:[function(require,module,exports){
+(function (process){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var util = require('util');
+var net = require('net');
+var url = require('url');
+var EventEmitter = require('events').EventEmitter;
+var HTTPParser = require('http-parser-js').HTTPParser;
+var assert = require('assert').ok;
+var Buffer = require('buffer').Buffer;
+
+var common = require('./_http_common');
+
+var httpSocketSetup = common.httpSocketSetup;
+var parsers = common.parsers;
+var freeParser = common.freeParser;
+var debug = common.debug;
+
+var OutgoingMessage = require('./_http_outgoing').OutgoingMessage;
+
+var Agent = require('./_http_agent');
+
+
+function ClientRequest(options, cb) {
+  var self = this;
+  OutgoingMessage.call(self);
+
+  if (util.isString(options)) {
+    options = url.parse(options);
+  } else {
+    options = util._extend({}, options);
+  }
+
+  var agent = options.agent;
+  var defaultAgent = options._defaultAgent || Agent.globalAgent;
+  if (agent === false) {
+    agent = new defaultAgent.constructor();
+  } else if (util.isNullOrUndefined(agent) && !options.createConnection) {
+    agent = defaultAgent;
+  }
+  self.agent = agent;
+
+  var protocol = options.protocol || defaultAgent.protocol;
+  var expectedProtocol = defaultAgent.protocol;
+  if (self.agent && self.agent.protocol)
+    expectedProtocol = self.agent.protocol;
+
+  if (options.path && / /.test(options.path)) {
+    // The actual regex is more like /[^A-Za-z0-9\-._~!$&'()*+,;=/:@]/
+    // with an additional rule for ignoring percentage-escaped characters
+    // but that's a) hard to capture in a regular expression that performs
+    // well, and b) possibly too restrictive for real-world usage. That's
+    // why it only scans for spaces because those are guaranteed to create
+    // an invalid request.
+    throw new TypeError('Request path contains unescaped characters.');
+  } else if (protocol !== expectedProtocol) {
+    throw new Error('Protocol "' + protocol + '" not supported. ' +
+                    'Expected "' + expectedProtocol + '".');
+  }
+
+  var defaultPort = options.defaultPort || self.agent && self.agent.defaultPort;
+
+  var port = options.port = options.port || defaultPort || 80;
+  var host = options.host = options.hostname || options.host || 'localhost';
+
+  if (util.isUndefined(options.setHost)) {
+    var setHost = true;
+  }
+
+  self.socketPath = options.socketPath;
+
+  var method = self.method = (options.method || 'GET').toUpperCase();
+  self.path = options.path || '/';
+  if (cb) {
+    self.once('response', cb);
+  }
+
+  if (!util.isArray(options.headers)) {
+    if (options.headers) {
+      var keys = Object.keys(options.headers);
+      for (var i = 0, l = keys.length; i < l; i++) {
+        var key = keys[i];
+        self.setHeader(key, options.headers[key]);
+      }
+    }
+    if (host && !this.getHeader('host') && setHost) {
+      var hostHeader = host;
+      if (port && +port !== defaultPort) {
+        hostHeader += ':' + port;
+      }
+      this.setHeader('Host', hostHeader);
+    }
+  }
+
+  if (options.auth && !this.getHeader('Authorization')) {
+    //basic auth
+    this.setHeader('Authorization', 'Basic ' +
+                   new Buffer(options.auth).toString('base64'));
+  }
+
+  if (method === 'GET' ||
+      method === 'HEAD' ||
+      method === 'DELETE' ||
+      method === 'OPTIONS' ||
+      method === 'CONNECT') {
+    self.useChunkedEncodingByDefault = false;
+  } else {
+    self.useChunkedEncodingByDefault = true;
+  }
+
+  if (util.isArray(options.headers)) {
+    self._storeHeader(self.method + ' ' + self.path + ' HTTP/1.1\r\n',
+                      options.headers);
+  } else if (self.getHeader('expect')) {
+    self._storeHeader(self.method + ' ' + self.path + ' HTTP/1.1\r\n',
+                      self._renderHeaders());
+  }
+
+  if (self.socketPath) {
+    self._last = true;
+    self.shouldKeepAlive = false;
+    var conn = self.agent.createConnection({ path: self.socketPath });
+    self.onSocket(conn);
+  } else if (self.agent) {
+    // If there is an agent we should default to Connection:keep-alive,
+    // but only if the Agent will actually reuse the connection!
+    // If it's not a keepAlive agent, and the maxSockets==Infinity, then
+    // there's never a case where this socket will actually be reused
+    if (!self.agent.keepAlive && !Number.isFinite(self.agent.maxSockets)) {
+      self._last = true;
+      self.shouldKeepAlive = false;
+    } else {
+      self._last = false;
+      self.shouldKeepAlive = true;
+    }
+    self.agent.addRequest(self, options);
+  } else {
+    // No agent, default to Connection:close.
+    self._last = true;
+    self.shouldKeepAlive = false;
+    if (options.createConnection) {
+      var conn = options.createConnection(options);
+    } else {
+      debug('CLIENT use net.createConnection', options);
+      var conn = net.createConnection(options);
+    }
+    self.onSocket(conn);
+  }
+
+  self._deferToConnect(null, null, function() {
+    self._flush();
+    self = null;
+  });
+}
+
+util.inherits(ClientRequest, OutgoingMessage);
+
+exports.ClientRequest = ClientRequest;
+
+ClientRequest.prototype.aborted = undefined;
+
+ClientRequest.prototype._finish = function() {
+  // DTRACE_HTTP_CLIENT_REQUEST(this, this.connection);
+  // COUNTER_HTTP_CLIENT_REQUEST();
+  OutgoingMessage.prototype._finish.call(this);
+};
+
+ClientRequest.prototype._implicitHeader = function() {
+  this._storeHeader(this.method + ' ' + this.path + ' HTTP/1.1\r\n',
+                    this._renderHeaders());
+};
+
+ClientRequest.prototype.abort = function() {
+  // Mark as aborting so we can avoid sending queued request data
+  // This is used as a truthy flag elsewhere. The use of Date.now is for
+  // debugging purposes only.
+  this.aborted = Date.now();
+
+  // If we're aborting, we don't care about any more response data.
+  if (this.res)
+    this.res._dump();
+  else
+    this.once('response', function(res) {
+      res._dump();
+    });
+
+  // In the event that we don't have a socket, we will pop out of
+  // the request queue through handling in onSocket.
+  if (this.socket) {
+    // in-progress
+    this.socket.destroy();
+  }
+};
+
+
+function createHangUpError() {
+  var error = new Error('socket hang up');
+  error.code = 'ECONNRESET';
+  return error;
+}
+
+
+function socketCloseListener() {
+  var socket = this;
+  var req = socket._httpMessage;
+  debug('HTTP socket close');
+
+  // Pull through final chunk, if anything is buffered.
+  // the ondata function will handle it properly, and this
+  // is a no-op if no final chunk remains.
+  socket.read();
+
+  // NOTE: Its important to get parser here, because it could be freed by
+  // the `socketOnData`.
+  var parser = socket.parser;
+  req.emit('close');
+  if (req.res && req.res.readable) {
+    // Socket closed before we emitted 'end' below.
+    req.res.emit('aborted');
+    var res = req.res;
+    res.on('end', function() {
+      res.emit('close');
+    });
+    res.push(null);
+  } else if (!req.res && !req.socket._hadError) {
+    // This socket error fired before we started to
+    // receive a response. The error needs to
+    // fire on the request.
+    req.emit('error', createHangUpError());
+    req.socket._hadError = true;
+  }
+
+  // Too bad.  That output wasn't getting written.
+  // This is pretty terrible that it doesn't raise an error.
+  // Fixed better in v0.10
+  if (req.output)
+    req.output.length = 0;
+  if (req.outputEncodings)
+    req.outputEncodings.length = 0;
+
+  if (parser) {
+    parser.finish();
+    freeParser(parser, req, socket);
+  }
+}
+
+function socketErrorListener(err) {
+  var socket = this;
+  var req = socket._httpMessage;
+  debug('SOCKET ERROR:', err.message, err.stack);
+
+  if (req) {
+    req.emit('error', err);
+    // For Safety. Some additional errors might fire later on
+    // and we need to make sure we don't double-fire the error event.
+    req.socket._hadError = true;
+  }
+
+  // Handle any pending data
+  socket.read();
+
+  var parser = socket.parser;
+  if (parser) {
+    parser.finish();
+    freeParser(parser, req, socket);
+  }
+
+  // Ensure that no further data will come out of the socket
+  socket.removeListener('data', socketOnData);
+  socket.removeListener('end', socketOnEnd);
+  socket.destroy();
+}
+
+function socketOnEnd() {
+  var socket = this;
+  var req = this._httpMessage;
+  var parser = this.parser;
+
+  if (!req.res && !req.socket._hadError) {
+    // If we don't have a response then we know that the socket
+    // ended prematurely and we need to emit an error on the request.
+    req.emit('error', createHangUpError());
+    req.socket._hadError = true;
+  }
+  if (parser) {
+    parser.finish();
+    freeParser(parser, req, socket);
+  }
+  socket.destroy();
+}
+
+function socketOnData(d) {
+  var socket = this;
+  var req = this._httpMessage;
+  var parser = this.parser;
+
+  assert(parser && parser.socket === socket);
+
+  var ret = parser.execute(d);
+  if (ret instanceof Error) {
+    debug('parse error');
+    freeParser(parser, req, socket);
+    socket.destroy();
+    req.emit('error', ret);
+    req.socket._hadError = true;
+  } else if (parser.incoming && parser.incoming.upgrade) {
+    // Upgrade or CONNECT
+    var bytesParsed = ret;
+    var res = parser.incoming;
+    req.res = res;
+
+    socket.removeListener('data', socketOnData);
+    socket.removeListener('end', socketOnEnd);
+    parser.finish();
+
+    var bodyHead = d.slice(bytesParsed, d.length);
+
+    var eventName = req.method === 'CONNECT' ? 'connect' : 'upgrade';
+    if (EventEmitter.listenerCount(req, eventName) > 0) {
+      req.upgradeOrConnect = true;
+
+      // detach the socket
+      socket.emit('agentRemove');
+      socket.removeListener('close', socketCloseListener);
+      socket.removeListener('error', socketErrorListener);
+
+      // TODO(isaacs): Need a way to reset a stream to fresh state
+      // IE, not flowing, and not explicitly paused.
+      socket._readableState.flowing = null;
+
+      req.emit(eventName, res, socket, bodyHead);
+      req.emit('close');
+    } else {
+      // Got Upgrade header or CONNECT method, but have no handler.
+      socket.destroy();
+    }
+    freeParser(parser, req, socket);
+  } else if (parser.incoming && parser.incoming.complete &&
+             // When the status code is 100 (Continue), the server will
+             // send a final response after this client sends a request
+             // body. So, we must not free the parser.
+             parser.incoming.statusCode !== 100) {
+    socket.removeListener('data', socketOnData);
+    socket.removeListener('end', socketOnEnd);
+    freeParser(parser, req, socket);
+  }
+}
+
+
+// client
+function parserOnIncomingClient(res, shouldKeepAlive) {
+  var socket = this.socket;
+  var req = socket._httpMessage;
+
+
+  // propogate "domain" setting...
+  if (req.domain && !res.domain) {
+    debug('setting "res.domain"');
+    res.domain = req.domain;
+  }
+
+  debug('AGENT incoming response!');
+
+  if (req.res) {
+    // We already have a response object, this means the server
+    // sent a double response.
+    socket.destroy();
+    return;
+  }
+  req.res = res;
+
+  // Responses to CONNECT request is handled as Upgrade.
+  if (req.method === 'CONNECT') {
+    res.upgrade = true;
+    return true; // skip body
+  }
+
+  // Responses to HEAD requests are crazy.
+  // HEAD responses aren't allowed to have an entity-body
+  // but *can* have a content-length which actually corresponds
+  // to the content-length of the entity-body had the request
+  // been a GET.
+  var isHeadResponse = req.method === 'HEAD';
+  debug('AGENT isHeadResponse', isHeadResponse);
+
+  if (res.statusCode === 100) {
+    // restart the parser, as this is a continue message.
+    delete req.res; // Clear res so that we don't hit double-responses.
+    req.emit('continue');
+    return true;
+  }
+
+  if (req.shouldKeepAlive && !shouldKeepAlive && !req.upgradeOrConnect) {
+    // Server MUST respond with Connection:keep-alive for us to enable it.
+    // If we've been upgraded (via WebSockets) we also shouldn't try to
+    // keep the connection open.
+    req.shouldKeepAlive = false;
+  }
+
+
+  // DTRACE_HTTP_CLIENT_RESPONSE(socket, req);
+  // COUNTER_HTTP_CLIENT_RESPONSE();
+  req.res = res;
+  res.req = req;
+
+  // add our listener first, so that we guarantee socket cleanup
+  res.on('end', responseOnEnd);
+  var handled = req.emit('response', res);
+
+  // If the user did not listen for the 'response' event, then they
+  // can't possibly read the data, so we ._dump() it into the void
+  // so that the socket doesn't hang there in a paused state.
+  if (!handled)
+    res._dump();
+
+  return isHeadResponse;
+}
+
+// client
+function responseOnEnd() {
+  var res = this;
+  var req = res.req;
+  var socket = req.socket;
+
+  if (!req.shouldKeepAlive) {
+    if (socket.writable) {
+      debug('AGENT socket.destroySoon()');
+      socket.destroySoon();
+    }
+    assert(!socket.writable);
+  } else {
+    debug('AGENT socket keep-alive');
+    if (req.timeoutCb) {
+      socket.setTimeout(0, req.timeoutCb);
+      req.timeoutCb = null;
+    }
+    socket.removeListener('close', socketCloseListener);
+    socket.removeListener('error', socketErrorListener);
+    // Mark this socket as available, AFTER user-added end
+    // handlers have a chance to run.
+    process.nextTick(function() {
+      socket.emit('free');
+    });
+  }
+}
+
+function tickOnSocket(req, socket) {
+  var parser = parsers.alloc();
+  req.socket = socket;
+  req.connection = socket;
+  parser.reinitialize(HTTPParser.RESPONSE);
+  parser.socket = socket;
+  parser.incoming = null;
+  req.parser = parser;
+
+  socket.parser = parser;
+  socket._httpMessage = req;
+
+  // Setup "drain" propogation.
+  httpSocketSetup(socket);
+
+  // Propagate headers limit from request object to parser
+  if (util.isNumber(req.maxHeadersCount)) {
+    parser.maxHeaderPairs = req.maxHeadersCount << 1;
+  } else {
+    // Set default value because parser may be reused from FreeList
+    parser.maxHeaderPairs = 2000;
+  }
+
+  parser.onIncoming = parserOnIncomingClient;
+  socket.on('error', socketErrorListener);
+  socket.on('data', socketOnData);
+  socket.on('end', socketOnEnd);
+  socket.on('close', socketCloseListener);
+  req.emit('socket', socket);
+}
+
+ClientRequest.prototype.onSocket = function(socket) {
+  var req = this;
+
+  process.nextTick(function() {
+    if (req.aborted) {
+      // If we were aborted while waiting for a socket, skip the whole thing.
+      socket.emit('free');
+    } else {
+      tickOnSocket(req, socket);
+    }
+  });
+};
+
+ClientRequest.prototype._deferToConnect = function(method, arguments_, cb) {
+  // This function is for calls that need to happen once the socket is
+  // connected and writable. It's an important promisy thing for all the socket
+  // calls that happen either now (when a socket is assigned) or
+  // in the future (when a socket gets assigned out of the pool and is
+  // eventually writable).
+  var self = this;
+  var onSocket = function() {
+    if (self.socket.writable) {
+      if (method) {
+        self.socket[method].apply(self.socket, arguments_);
+      }
+      if (cb) { cb(); }
+    } else {
+      self.socket.once('connect', function() {
+        if (method) {
+          self.socket[method].apply(self.socket, arguments_);
+        }
+        if (cb) { cb(); }
+      });
+    }
+  }
+  if (!self.socket) {
+    self.once('socket', onSocket);
+  } else {
+    onSocket();
+  }
+};
+
+ClientRequest.prototype.setTimeout = function(msecs, callback) {
+  if (callback) this.once('timeout', callback);
+
+  var self = this;
+  function emitTimeout() {
+    self.emit('timeout');
+  }
+
+  if (this.socket && this.socket.writable) {
+    if (this.timeoutCb)
+      this.socket.setTimeout(0, this.timeoutCb);
+    this.timeoutCb = emitTimeout;
+    this.socket.setTimeout(msecs, emitTimeout);
+    return;
+  }
+
+  // Set timeoutCb so that it'll get cleaned up on request end
+  this.timeoutCb = emitTimeout;
+  if (this.socket) {
+    var sock = this.socket;
+    this.socket.once('connect', function() {
+      sock.setTimeout(msecs, emitTimeout);
+    });
+    return;
+  }
+
+  this.once('socket', function(sock) {
+    sock.setTimeout(msecs, emitTimeout);
+  });
+};
+
+ClientRequest.prototype.setNoDelay = function() {
+  this._deferToConnect('setNoDelay', arguments);
+};
+ClientRequest.prototype.setSocketKeepAlive = function() {
+  this._deferToConnect('setKeepAlive', arguments);
+};
+
+ClientRequest.prototype.clearTimeout = function(cb) {
+  this.setTimeout(0, cb);
+};
+
+}).call(this,require('_process'))
+},{"./_http_agent":58,"./_http_common":60,"./_http_outgoing":62,"_process":13,"assert":1,"buffer":4,"events":7,"http-parser-js":65,"net":"net","url":31,"util":33}],60:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var FreeList = require('freelist').FreeList;
+var HTTPParser = require('http-parser-js').HTTPParser;
+
+var incoming = require('./_http_incoming');
+var IncomingMessage = incoming.IncomingMessage;
+var readStart = incoming.readStart;
+var readStop = incoming.readStop;
+
+var isNumber = require('util').isNumber;
+var debug = require('util').debuglog('http');
+exports.debug = debug;
+
+exports.CRLF = '\r\n';
+exports.chunkExpression = /chunk/i;
+exports.continueExpression = /100-continue/i;
+exports.methods = HTTPParser.methods;
+
+var kOnHeaders = HTTPParser.kOnHeaders | 0;
+var kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
+var kOnBody = HTTPParser.kOnBody | 0;
+var kOnMessageComplete = HTTPParser.kOnMessageComplete | 0;
+
+// Only called in the slow case where slow means
+// that the request headers were either fragmented
+// across multiple TCP packets or too large to be
+// processed in a single run. This method is also
+// called to process trailing HTTP headers.
+function parserOnHeaders(headers, url) {
+  // Once we exceeded headers limit - stop collecting them
+  if (this.maxHeaderPairs <= 0 ||
+      this._headers.length < this.maxHeaderPairs) {
+    this._headers = this._headers.concat(headers);
+  }
+  this._url += url;
+}
+
+// info.headers and info.url are set only if .onHeaders()
+// has not been called for this request.
+//
+// info.url is not set for response parsers but that's not
+// applicable here since all our parsers are request parsers.
+function parserOnHeadersComplete(info) {
+  debug('parserOnHeadersComplete', info);
+  var parser = this;
+  var headers = info.headers;
+  var url = info.url;
+
+  if (!headers) {
+    headers = parser._headers;
+    parser._headers = [];
+  }
+
+  if (!url) {
+    url = parser._url;
+    parser._url = '';
+  }
+
+  parser.incoming = new IncomingMessage(parser.socket);
+  parser.incoming.httpVersionMajor = info.versionMajor;
+  parser.incoming.httpVersionMinor = info.versionMinor;
+  parser.incoming.httpVersion = info.versionMajor + '.' + info.versionMinor;
+  parser.incoming.url = url;
+
+  var n = headers.length;
+
+  // If parser.maxHeaderPairs <= 0 - assume that there're no limit
+  if (parser.maxHeaderPairs > 0) {
+    n = Math.min(n, parser.maxHeaderPairs);
+  }
+
+  parser.incoming._addHeaderLines(headers, n);
+
+  if (isNumber(info.method)) {
+    // server only
+    parser.incoming.method = HTTPParser.methods[info.method];
+  } else {
+    // client only
+    parser.incoming.statusCode = info.statusCode;
+    parser.incoming.statusMessage = info.statusMessage;
+  }
+
+  parser.incoming.upgrade = info.upgrade;
+
+  var skipBody = false; // response to HEAD or CONNECT
+
+  if (!info.upgrade) {
+    // For upgraded connections and CONNECT method request,
+    // we'll emit this after parser.execute
+    // so that we can capture the first part of the new protocol
+    skipBody = parser.onIncoming(parser.incoming, info.shouldKeepAlive);
+  }
+
+  return skipBody;
+}
+
+// XXX This is a mess.
+// TODO: http.Parser should be a Writable emits request/response events.
+function parserOnBody(b, start, len) {
+  var parser = this;
+  var stream = parser.incoming;
+
+  // if the stream has already been removed, then drop it.
+  if (!stream)
+    return;
+
+  var socket = stream.socket;
+
+  // pretend this was the result of a stream._read call.
+  if (len > 0 && !stream._dumped) {
+    var slice = b.slice(start, start + len);
+    var ret = stream.push(slice);
+    if (!ret)
+      readStop(socket);
+  }
+}
+
+function parserOnMessageComplete() {
+  var parser = this;
+  var stream = parser.incoming;
+
+  if (stream) {
+    stream.complete = true;
+    // Emit any trailing headers.
+    var headers = parser._headers;
+    if (headers) {
+      parser.incoming._addHeaderLines(headers, headers.length);
+      parser._headers = [];
+      parser._url = '';
+    }
+
+    if (!stream.upgrade)
+      // For upgraded connections, also emit this after parser.execute
+      stream.push(null);
+  }
+
+  if (stream && !parser.incoming._pendings.length) {
+    // For emit end event
+    stream.push(null);
+  }
+
+  // force to read the next incoming message
+  readStart(parser.socket);
+}
+
+
+var parsers = new FreeList('parsers', 1000, function() {
+  var parser = new HTTPParser(HTTPParser.REQUEST);
+
+  parser._headers = [];
+  parser._url = '';
+
+  // Only called in the slow case where slow means
+  // that the request headers were either fragmented
+  // across multiple TCP packets or too large to be
+  // processed in a single run. This method is also
+  // called to process trailing HTTP headers.
+  parser[kOnHeaders] = parserOnHeaders;
+  parser[kOnHeadersComplete] = parserOnHeadersComplete;
+  parser[kOnBody] = parserOnBody;
+  parser[kOnMessageComplete] = parserOnMessageComplete;
+
+  return parser;
+});
+exports.parsers = parsers;
+
+
+// Free the parser and also break any links that it
+// might have to any other things.
+// TODO: All parser data should be attached to a
+// single object, so that it can be easily cleaned
+// up by doing `parser.data = {}`, which should
+// be done in FreeList.free.  `parsers.free(parser)`
+// should be all that is needed.
+function freeParser(parser, req, socket) {
+  if (parser) {
+    parser._headers = [];
+    parser.onIncoming = null;
+    if (parser.socket)
+      parser.socket.parser = null;
+    parser.socket = null;
+    parser.incoming = null;
+    if (parsers.free(parser) === false)
+      parser.close();
+    parser = null;
+  }
+  if (req) {
+    req.parser = null;
+  }
+  if (socket) {
+    socket.parser = null;
+  }
+}
+exports.freeParser = freeParser;
+
+
+function ondrain() {
+  if (this._httpMessage) this._httpMessage.emit('drain');
+}
+
+
+function httpSocketSetup(socket) {
+  socket.removeListener('drain', ondrain);
+  socket.on('drain', ondrain);
+}
+exports.httpSocketSetup = httpSocketSetup;
+
+},{"./_http_incoming":61,"freelist":64,"http-parser-js":65,"util":33}],61:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var util = require('util');
+var Stream = require('stream');
+
+function readStart(socket) {
+  if (socket && !socket._paused && socket.readable)
+    socket.resume();
+}
+exports.readStart = readStart;
+
+function readStop(socket) {
+  if (socket)
+    socket.pause();
+}
+exports.readStop = readStop;
+
+
+/* Abstract base class for ServerRequest and ClientResponse. */
+function IncomingMessage(socket) {
+  Stream.Readable.call(this);
+
+  // XXX This implementation is kind of all over the place
+  // When the parser emits body chunks, they go in this list.
+  // _read() pulls them out, and when it finds EOF, it ends.
+
+  this.socket = socket;
+  this.connection = socket;
+
+  this.httpVersionMajor = null;
+  this.httpVersionMinor = null;
+  this.httpVersion = null;
+  this.complete = false;
+  this.headers = {};
+  this.rawHeaders = [];
+  this.trailers = {};
+  this.rawTrailers = [];
+
+  this.readable = true;
+
+  this._pendings = [];
+  this._pendingIndex = 0;
+  this.upgrade = null;
+
+  // request (server) only
+  this.url = '';
+  this.method = null;
+
+  // response (client) only
+  this.statusCode = null;
+  this.statusMessage = null;
+  this.client = this.socket;
+
+  // flag for backwards compatibility grossness.
+  this._consuming = false;
+
+  // flag for when we decide that this message cannot possibly be
+  // read by the user, so there's no point continuing to handle it.
+  this._dumped = false;
+}
+util.inherits(IncomingMessage, Stream.Readable);
+
+
+exports.IncomingMessage = IncomingMessage;
+
+
+IncomingMessage.prototype.setTimeout = function(msecs, callback) {
+  if (callback)
+    this.on('timeout', callback);
+  this.socket.setTimeout(msecs);
+};
+
+
+IncomingMessage.prototype.read = function(n) {
+  this._consuming = true;
+  this.read = Stream.Readable.prototype.read;
+  return this.read(n);
+};
+
+
+IncomingMessage.prototype._read = function(n) {
+  // We actually do almost nothing here, because the parserOnBody
+  // function fills up our internal buffer directly.  However, we
+  // do need to unpause the underlying socket so that it flows.
+  if (this.socket.readable)
+    readStart(this.socket);
+};
+
+
+// It's possible that the socket will be destroyed, and removed from
+// any messages, before ever calling this.  In that case, just skip
+// it, since something else is destroying this connection anyway.
+IncomingMessage.prototype.destroy = function(error) {
+  if (this.socket)
+    this.socket.destroy(error);
+};
+
+
+IncomingMessage.prototype._addHeaderLines = function(headers, n) {
+  if (headers && headers.length) {
+    var raw, dest;
+    if (this.complete) {
+      raw = this.rawTrailers;
+      dest = this.trailers;
+    } else {
+      raw = this.rawHeaders;
+      dest = this.headers;
+    }
+
+    for (var i = 0; i < n; i += 2) {
+      var k = headers[i];
+      var v = headers[i + 1];
+      raw.push(k);
+      raw.push(v);
+      this._addHeaderLine(k, v, dest);
+    }
+  }
+};
+
+
+// Add the given (field, value) pair to the message
+//
+// Per RFC2616, section 4.2 it is acceptable to join multiple instances of the
+// same header with a ', ' if the header in question supports specification of
+// multiple values this way. If not, we declare the first instance the winner
+// and drop the second. Extended header fields (those beginning with 'x-') are
+// always joined.
+IncomingMessage.prototype._addHeaderLine = function(field, value, dest) {
+  field = field.toLowerCase();
+  switch (field) {
+    // Array headers:
+    case 'set-cookie':
+      if (!util.isUndefined(dest[field])) {
+        dest[field].push(value);
+      } else {
+        dest[field] = [value];
+      }
+      break;
+
+    // list is taken from:
+    // https://mxr.mozilla.org/mozilla/source/netwerk/protocol/http/src/nsHttpHeaderArray.cpp
+    case 'content-type':
+    case 'content-length':
+    case 'user-agent':
+    case 'referer':
+    case 'host':
+    case 'authorization':
+    case 'proxy-authorization':
+    case 'if-modified-since':
+    case 'if-unmodified-since':
+    case 'from':
+    case 'location':
+    case 'max-forwards':
+      // drop duplicates
+      if (util.isUndefined(dest[field]))
+        dest[field] = value;
+      break;
+
+    default:
+      // make comma-separated list
+      if (!util.isUndefined(dest[field]))
+        dest[field] += ', ' + value;
+      else {
+        dest[field] = value;
+      }
+  }
+};
+
+
+// Call this instead of resume() if we want to just
+// dump all the data to /dev/null
+IncomingMessage.prototype._dump = function() {
+  if (!this._dumped) {
+    this._dumped = true;
+    this.resume();
+  }
+};
+
+},{"stream":28,"util":33}],62:[function(require,module,exports){
+(function (process){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var assert = require('assert').ok;
+var Stream = require('stream');
+var timers = require('timers');
+var util = require('util');
+var Buffer = require('buffer').Buffer;
+var common = require('./_http_common');
+
+// fix if cork methods aren't available
+if (!Stream.Writable.prototype.cork) {
+  Stream.Writable.prototype.cork = Stream.Writable.prototype.uncork = function() {};
+}
+if (!Stream.Duplex.prototype.cork) {
+  Stream.Duplex.prototype.cork = Stream.Duplex.prototype.uncork = function() {};
+}
+
+var CRLF = common.CRLF;
+var chunkExpression = common.chunkExpression;
+var debug = common.debug;
+
+
+var connectionExpression = /Connection/i;
+var transferEncodingExpression = /Transfer-Encoding/i;
+var closeExpression = /close/i;
+var contentLengthExpression = /Content-Length/i;
+var dateExpression = /Date/i;
+var expectExpression = /Expect/i;
+
+var automaticHeaders = {
+  connection: true,
+  'content-length': true,
+  'transfer-encoding': true,
+  date: true
+};
+
+
+var dateCache;
+function utcDate() {
+  if (!dateCache) {
+    var d = new Date();
+    dateCache = d.toUTCString();
+    timers.enroll(utcDate, 1000 - d.getMilliseconds());
+    timers._unrefActive(utcDate);
+  }
+  return dateCache;
+}
+utcDate._onTimeout = function() {
+  dateCache = undefined;
+};
+
+
+function OutgoingMessage() {
+  Stream.call(this);
+
+  this.output = [];
+  this.outputEncodings = [];
+  this.outputCallbacks = [];
+
+  this.writable = true;
+
+  this._last = false;
+  this.chunkedEncoding = false;
+  this.shouldKeepAlive = true;
+  this.useChunkedEncodingByDefault = true;
+  this.sendDate = false;
+  this._removedHeader = {};
+
+  this._hasBody = true;
+  this._trailer = '';
+
+  this.finished = false;
+  this._hangupClose = false;
+  this._headerSent = false;
+
+  this.socket = null;
+  this.connection = null;
+  this._header = null;
+  this._headers = null;
+  this._headerNames = {};
+}
+util.inherits(OutgoingMessage, Stream);
+
+
+exports.OutgoingMessage = OutgoingMessage;
+
+
+OutgoingMessage.prototype.setTimeout = function(msecs, callback) {
+  if (callback)
+    this.on('timeout', callback);
+  if (!this.socket) {
+    this.once('socket', function(socket) {
+      socket.setTimeout(msecs);
+    });
+  } else
+    this.socket.setTimeout(msecs);
+};
+
+
+// It's possible that the socket will be destroyed, and removed from
+// any messages, before ever calling this.  In that case, just skip
+// it, since something else is destroying this connection anyway.
+OutgoingMessage.prototype.destroy = function(error) {
+  if (this.socket)
+    this.socket.destroy(error);
+  else
+    this.once('socket', function(socket) {
+      socket.destroy(error);
+    });
+};
+
+
+// This abstract either writing directly to the socket or buffering it.
+OutgoingMessage.prototype._send = function(data, encoding, callback) {
+  // This is a shameful hack to get the headers and first body chunk onto
+  // the same packet. Future versions of Node are going to take care of
+  // this at a lower level and in a more general way.
+  if (!this._headerSent) {
+    if (util.isString(data) &&
+        encoding !== 'hex' &&
+        encoding !== 'base64') {
+      data = this._header + data;
+    } else {
+      this.output.unshift(this._header);
+      this.outputEncodings.unshift('binary');
+      this.outputCallbacks.unshift(null);
+    }
+    this._headerSent = true;
+  }
+  return this._writeRaw(data, encoding, callback);
+};
+
+
+OutgoingMessage.prototype._writeRaw = function(data, encoding, callback) {
+  if (util.isFunction(encoding)) {
+    callback = encoding;
+    encoding = null;
+  }
+
+  if (data.length === 0) {
+    if (util.isFunction(callback))
+      process.nextTick(callback);
+    return true;
+  }
+
+  if (this.connection &&
+      this.connection._httpMessage === this &&
+      this.connection.writable &&
+      !this.connection.destroyed) {
+    // There might be pending data in the this.output buffer.
+    while (this.output.length) {
+      if (!this.connection.writable) {
+        this._buffer(data, encoding, callback);
+        return false;
+      }
+      var c = this.output.shift();
+      var e = this.outputEncodings.shift();
+      var cb = this.outputCallbacks.shift();
+      this.connection.write(c, e, cb);
+    }
+
+    // Directly write to socket.
+    return this.connection.write(data, encoding, callback);
+  } else if (this.connection && this.connection.destroyed) {
+    // The socket was destroyed.  If we're still trying to write to it,
+    // then we haven't gotten the 'close' event yet.
+    return false;
+  } else {
+    // buffer, as long as we're not destroyed.
+    this._buffer(data, encoding, callback);
+    return false;
+  }
+};
+
+
+OutgoingMessage.prototype._buffer = function(data, encoding, callback) {
+  this.output.push(data);
+  this.outputEncodings.push(encoding);
+  this.outputCallbacks.push(callback);
+  return false;
+};
+
+
+OutgoingMessage.prototype._storeHeader = function(firstLine, headers) {
+  // firstLine in the case of request is: 'GET /index.html HTTP/1.1\r\n'
+  // in the case of response it is: 'HTTP/1.1 200 OK\r\n'
+  var state = {
+    sentConnectionHeader: false,
+    sentContentLengthHeader: false,
+    sentTransferEncodingHeader: false,
+    sentDateHeader: false,
+    sentExpect: false,
+    messageHeader: firstLine
+  };
+
+  var field, value;
+
+  if (headers) {
+    var keys = Object.keys(headers);
+    var isArray = util.isArray(headers);
+    var field, value;
+
+    for (var i = 0, l = keys.length; i < l; i++) {
+      var key = keys[i];
+      if (isArray) {
+        field = headers[key][0];
+        value = headers[key][1];
+      } else {
+        field = key;
+        value = headers[key];
+      }
+
+      if (util.isArray(value)) {
+        for (var j = 0; j < value.length; j++) {
+          storeHeader(this, state, field, value[j]);
+        }
+      } else {
+        storeHeader(this, state, field, value);
+      }
+    }
+  }
+
+  // Date header
+  if (this.sendDate === true && state.sentDateHeader === false) {
+    state.messageHeader += 'Date: ' + utcDate() + CRLF;
+  }
+
+  // Force the connection to close when the response is a 204 No Content or
+  // a 304 Not Modified and the user has set a "Transfer-Encoding: chunked"
+  // header.
+  //
+  // RFC 2616 mandates that 204 and 304 responses MUST NOT have a body but
+  // node.js used to send out a zero chunk anyway to accommodate clients
+  // that don't have special handling for those responses.
+  //
+  // It was pointed out that this might confuse reverse proxies to the point
+  // of creating security liabilities, so suppress the zero chunk and force
+  // the connection to close.
+  var statusCode = this.statusCode;
+  if ((statusCode === 204 || statusCode === 304) &&
+      this.chunkedEncoding === true) {
+    debug(statusCode + ' response should not use chunked encoding,' +
+          ' closing connection.');
+    this.chunkedEncoding = false;
+    this.shouldKeepAlive = false;
+  }
+
+  // keep-alive logic
+  if (this._removedHeader.connection) {
+    this._last = true;
+    this.shouldKeepAlive = false;
+  } else if (state.sentConnectionHeader === false) {
+    var shouldSendKeepAlive = this.shouldKeepAlive &&
+        (state.sentContentLengthHeader ||
+         this.useChunkedEncodingByDefault ||
+         this.agent);
+    if (shouldSendKeepAlive) {
+      state.messageHeader += 'Connection: keep-alive\r\n';
+    } else {
+      this._last = true;
+      state.messageHeader += 'Connection: close\r\n';
+    }
+  }
+
+  if (state.sentContentLengthHeader === false &&
+      state.sentTransferEncodingHeader === false) {
+    if (this._hasBody && !this._removedHeader['transfer-encoding']) {
+      if (this.useChunkedEncodingByDefault) {
+        state.messageHeader += 'Transfer-Encoding: chunked\r\n';
+        this.chunkedEncoding = true;
+      } else {
+        this._last = true;
+      }
+    } else {
+      // Make sure we don't end the 0\r\n\r\n at the end of the message.
+      this.chunkedEncoding = false;
+    }
+  }
+
+  this._header = state.messageHeader + CRLF;
+  this._headerSent = false;
+
+  // wait until the first body chunk, or close(), is sent to flush,
+  // UNLESS we're sending Expect: 100-continue.
+  if (state.sentExpect) this._send('');
+};
+
+function storeHeader(self, state, field, value) {
+  // Protect against response splitting. The if statement is there to
+  // minimize the performance impact in the common case.
+  if (/[\r\n]/.test(value))
+    value = value.replace(/[\r\n]+[ \t]*/g, '');
+
+  state.messageHeader += field + ': ' + value + CRLF;
+
+  if (connectionExpression.test(field)) {
+    state.sentConnectionHeader = true;
+    if (closeExpression.test(value)) {
+      self._last = true;
+    } else {
+      self.shouldKeepAlive = true;
+    }
+
+  } else if (transferEncodingExpression.test(field)) {
+    state.sentTransferEncodingHeader = true;
+    if (chunkExpression.test(value)) self.chunkedEncoding = true;
+
+  } else if (contentLengthExpression.test(field)) {
+    state.sentContentLengthHeader = true;
+  } else if (dateExpression.test(field)) {
+    state.sentDateHeader = true;
+  } else if (expectExpression.test(field)) {
+    state.sentExpect = true;
+  }
+}
+
+
+OutgoingMessage.prototype.setHeader = function(name, value) {
+  if (typeof name !== 'string')
+    throw new TypeError('"name" should be a string');
+  if (value === undefined)
+    throw new Error('"name" and "value" are required for setHeader().');
+  if (this._header)
+    throw new Error('Can\'t set headers after they are sent.');
+
+  if (this._headers === null)
+    this._headers = {};
+
+  var key = name.toLowerCase();
+  this._headers[key] = value;
+  this._headerNames[key] = name;
+
+  if (automaticHeaders[key])
+    this._removedHeader[key] = false;
+};
+
+
+OutgoingMessage.prototype.getHeader = function(name) {
+  if (arguments.length < 1) {
+    throw new Error('`name` is required for getHeader().');
+  }
+
+  if (!this._headers) return;
+
+  var key = name.toLowerCase();
+  return this._headers[key];
+};
+
+
+OutgoingMessage.prototype.removeHeader = function(name) {
+  if (arguments.length < 1) {
+    throw new Error('`name` is required for removeHeader().');
+  }
+
+  if (this._header) {
+    throw new Error('Can\'t remove headers after they are sent.');
+  }
+
+  var key = name.toLowerCase();
+
+  if (key === 'date')
+    this.sendDate = false;
+  else if (automaticHeaders[key])
+    this._removedHeader[key] = true;
+
+  if (this._headers) {
+    delete this._headers[key];
+    delete this._headerNames[key];
+  }
+};
+
+
+OutgoingMessage.prototype._renderHeaders = function() {
+  if (this._header) {
+    throw new Error('Can\'t render headers after they are sent to the client.');
+  }
+
+  if (!this._headers) return {};
+
+  var headers = {};
+  var keys = Object.keys(this._headers);
+
+  for (var i = 0, l = keys.length; i < l; i++) {
+    var key = keys[i];
+    headers[this._headerNames[key]] = this._headers[key];
+  }
+  return headers;
+};
+
+
+Object.defineProperty(OutgoingMessage.prototype, 'headersSent', {
+  configurable: true,
+  enumerable: true,
+  get: function() { return !!this._header; }
+});
+
+
+OutgoingMessage.prototype.write = function(chunk, encoding, callback) {
+  var self = this;
+
+  if (this.finished) {
+    var err = new Error('write after end');
+    process.nextTick(function() {
+      self.emit('error', err);
+      if (callback) callback(err);
+    });
+
+    return true;
+  }
+
+  if (!this._header) {
+    this._implicitHeader();
+  }
+
+  if (!this._hasBody) {
+    debug('This type of response MUST NOT have a body. ' +
+          'Ignoring write() calls.');
+    return true;
+  }
+
+  if (!util.isString(chunk) && !util.isBuffer(chunk)) {
+    throw new TypeError('first argument must be a string or Buffer');
+  }
+
+
+  // If we get an empty string or buffer, then just do nothing, and
+  // signal the user to keep writing.
+  if (chunk.length === 0) return true;
+
+  var len, ret;
+  if (this.chunkedEncoding) {
+    if (util.isString(chunk) &&
+        encoding !== 'hex' &&
+        encoding !== 'base64' &&
+        encoding !== 'binary') {
+      len = Buffer.byteLength(chunk, encoding);
+      chunk = len.toString(16) + CRLF + chunk + CRLF;
+      ret = this._send(chunk, encoding, callback);
+    } else {
+      // buffer, or a non-toString-friendly encoding
+      if (util.isString(chunk))
+        len = Buffer.byteLength(chunk, encoding);
+      else
+        len = chunk.length;
+
+      if (this.connection && !this.connection.corked) {
+        this.connection.cork();
+        var conn = this.connection;
+        process.nextTick(function connectionCork() {
+          if (conn)
+            conn.uncork();
+        });
+      }
+      this._send(len.toString(16), 'binary', null);
+      this._send(crlf_buf, null, null);
+      this._send(chunk, encoding, null);
+      ret = this._send(crlf_buf, null, callback);
+    }
+  } else {
+    ret = this._send(chunk, encoding, callback);
+  }
+
+  debug('write ret = ' + ret);
+  return ret;
+};
+
+
+OutgoingMessage.prototype.addTrailers = function(headers) {
+  this._trailer = '';
+  var keys = Object.keys(headers);
+  var isArray = util.isArray(headers);
+  var field, value;
+  for (var i = 0, l = keys.length; i < l; i++) {
+    var key = keys[i];
+    if (isArray) {
+      field = headers[key][0];
+      value = headers[key][1];
+    } else {
+      field = key;
+      value = headers[key];
+    }
+
+    this._trailer += field + ': ' + value + CRLF;
+  }
+};
+
+
+var crlf_buf = new Buffer('\r\n');
+
+
+OutgoingMessage.prototype.end = function(data, encoding, callback) {
+  if (util.isFunction(data)) {
+    callback = data;
+    data = null;
+  } else if (util.isFunction(encoding)) {
+    callback = encoding;
+    encoding = null;
+  }
+
+  if (data && !util.isString(data) && !util.isBuffer(data)) {
+    throw new TypeError('first argument must be a string or Buffer');
+  }
+
+  if (this.finished) {
+    return false;
+  }
+
+  var self = this;
+  function finish() {
+    self.emit('finish');
+  }
+
+  if (util.isFunction(callback))
+    this.once('finish', callback);
+
+
+  if (!this._header) {
+    this._implicitHeader();
+  }
+
+  if (data && !this._hasBody) {
+    debug('This type of response MUST NOT have a body. ' +
+          'Ignoring data passed to end().');
+    data = null;
+  }
+
+  if (this.connection && data)
+    this.connection.cork();
+
+  var ret;
+  if (data) {
+    // Normal body write.
+    ret = this.write(data, encoding);
+  }
+
+  if (this._hasBody && this.chunkedEncoding) {
+    ret = this._send('0\r\n' + this._trailer + '\r\n', 'binary', finish);
+  } else {
+    // Force a flush, HACK.
+    ret = this._send('', 'binary', finish);
+  }
+
+  if (this.connection && data)
+    this.connection.uncork();
+
+  this.finished = true;
+
+  // There is the first message on the outgoing queue, and we've sent
+  // everything to the socket.
+  debug('outgoing message end.');
+  if (this.output.length === 0 && this.connection._httpMessage === this) {
+    this._finish();
+  }
+
+  return ret;
+};
+
+
+OutgoingMessage.prototype._finish = function() {
+  assert(this.connection);
+  this.emit('prefinish');
+};
+
+
+// This logic is probably a bit confusing. Let me explain a bit:
+//
+// In both HTTP servers and clients it is possible to queue up several
+// outgoing messages. This is easiest to imagine in the case of a client.
+// Take the following situation:
+//
+//    req1 = client.request('GET', '/');
+//    req2 = client.request('POST', '/');
+//
+// When the user does
+//
+//   req2.write('hello world\n');
+//
+// it's possible that the first request has not been completely flushed to
+// the socket yet. Thus the outgoing messages need to be prepared to queue
+// up data internally before sending it on further to the socket's queue.
+//
+// This function, outgoingFlush(), is called by both the Server and Client
+// to attempt to flush any pending messages out to the socket.
+OutgoingMessage.prototype._flush = function() {
+  if (this.socket && this.socket.writable) {
+    var ret;
+    while (this.output.length) {
+      var data = this.output.shift();
+      var encoding = this.outputEncodings.shift();
+      var cb = this.outputCallbacks.shift();
+      ret = this.socket.write(data, encoding, cb);
+    }
+
+    if (this.finished) {
+      // This is a queue to the server or client to bring in the next this.
+      this._finish();
+    } else if (ret) {
+      // This is necessary to prevent https from breaking
+      this.emit('drain');
+    }
+  }
+};
+
+
+OutgoingMessage.prototype.flushHeaders = function outgoingFlushHeaders() {
+  if (!this._header) {
+    // Force-flush the headers.
+    this._implicitHeader();
+    this._send('');
+  }
+};
+
+}).call(this,require('_process'))
+},{"./_http_common":60,"_process":13,"assert":1,"buffer":4,"stream":28,"timers":30,"util":33}],63:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var util = require('util');
+var net = require('net');
+var EventEmitter = require('events').EventEmitter;
+var HTTPParser = require('http-parser-js').HTTPParser;
+var assert = require('assert').ok;
+
+var common = require('./_http_common');
+var parsers = common.parsers;
+var freeParser = common.freeParser;
+var debug = common.debug;
+var CRLF = common.CRLF;
+var continueExpression = common.continueExpression;
+var chunkExpression = common.chunkExpression;
+var httpSocketSetup = common.httpSocketSetup;
+
+var OutgoingMessage = require('./_http_outgoing').OutgoingMessage;
+
+
+var STATUS_CODES = exports.STATUS_CODES = {
+  100 : 'Continue',
+  101 : 'Switching Protocols',
+  102 : 'Processing',                 // RFC 2518, obsoleted by RFC 4918
+  200 : 'OK',
+  201 : 'Created',
+  202 : 'Accepted',
+  203 : 'Non-Authoritative Information',
+  204 : 'No Content',
+  205 : 'Reset Content',
+  206 : 'Partial Content',
+  207 : 'Multi-Status',               // RFC 4918
+  300 : 'Multiple Choices',
+  301 : 'Moved Permanently',
+  302 : 'Moved Temporarily',
+  303 : 'See Other',
+  304 : 'Not Modified',
+  305 : 'Use Proxy',
+  307 : 'Temporary Redirect',
+  308 : 'Permanent Redirect',         // RFC 7238
+  400 : 'Bad Request',
+  401 : 'Unauthorized',
+  402 : 'Payment Required',
+  403 : 'Forbidden',
+  404 : 'Not Found',
+  405 : 'Method Not Allowed',
+  406 : 'Not Acceptable',
+  407 : 'Proxy Authentication Required',
+  408 : 'Request Time-out',
+  409 : 'Conflict',
+  410 : 'Gone',
+  411 : 'Length Required',
+  412 : 'Precondition Failed',
+  413 : 'Request Entity Too Large',
+  414 : 'Request-URI Too Large',
+  415 : 'Unsupported Media Type',
+  416 : 'Requested Range Not Satisfiable',
+  417 : 'Expectation Failed',
+  418 : 'I\'m a teapot',              // RFC 2324
+  422 : 'Unprocessable Entity',       // RFC 4918
+  423 : 'Locked',                     // RFC 4918
+  424 : 'Failed Dependency',          // RFC 4918
+  425 : 'Unordered Collection',       // RFC 4918
+  426 : 'Upgrade Required',           // RFC 2817
+  428 : 'Precondition Required',      // RFC 6585
+  429 : 'Too Many Requests',          // RFC 6585
+  431 : 'Request Header Fields Too Large',// RFC 6585
+  500 : 'Internal Server Error',
+  501 : 'Not Implemented',
+  502 : 'Bad Gateway',
+  503 : 'Service Unavailable',
+  504 : 'Gateway Time-out',
+  505 : 'HTTP Version Not Supported',
+  506 : 'Variant Also Negotiates',    // RFC 2295
+  507 : 'Insufficient Storage',       // RFC 4918
+  509 : 'Bandwidth Limit Exceeded',
+  510 : 'Not Extended',               // RFC 2774
+  511 : 'Network Authentication Required' // RFC 6585
+};
+
+
+function ServerResponse(req) {
+  OutgoingMessage.call(this);
+
+  if (req.method === 'HEAD') this._hasBody = false;
+
+  this.sendDate = true;
+
+  if (req.httpVersionMajor < 1 || req.httpVersionMinor < 1) {
+    this.useChunkedEncodingByDefault = chunkExpression.test(req.headers.te);
+    this.shouldKeepAlive = false;
+  }
+}
+util.inherits(ServerResponse, OutgoingMessage);
+
+ServerResponse.prototype._finish = function() {
+  // DTRACE_HTTP_SERVER_RESPONSE(this.connection);
+  // COUNTER_HTTP_SERVER_RESPONSE();
+  OutgoingMessage.prototype._finish.call(this);
+};
+
+
+
+exports.ServerResponse = ServerResponse;
+
+ServerResponse.prototype.statusCode = 200;
+ServerResponse.prototype.statusMessage = undefined;
+
+function onServerResponseClose() {
+  // EventEmitter.emit makes a copy of the 'close' listeners array before
+  // calling the listeners. detachSocket() unregisters onServerResponseClose
+  // but if detachSocket() is called, directly or indirectly, by a 'close'
+  // listener, onServerResponseClose is still in that copy of the listeners
+  // array. That is, in the example below, b still gets called even though
+  // it's been removed by a:
+  //
+  //   var obj = new events.EventEmitter;
+  //   obj.on('event', a);
+  //   obj.on('event', b);
+  //   function a() { obj.removeListener('event', b) }
+  //   function b() { throw "BAM!" }
+  //   obj.emit('event');  // throws
+  //
+  // Ergo, we need to deal with stale 'close' events and handle the case
+  // where the ServerResponse object has already been deconstructed.
+  // Fortunately, that requires only a single if check. :-)
+  if (this._httpMessage) this._httpMessage.emit('close');
+}
+
+ServerResponse.prototype.assignSocket = function(socket) {
+  assert(!socket._httpMessage);
+  socket._httpMessage = this;
+  socket.on('close', onServerResponseClose);
+  this.socket = socket;
+  this.connection = socket;
+  this.emit('socket', socket);
+  this._flush();
+};
+
+ServerResponse.prototype.detachSocket = function(socket) {
+  assert(socket._httpMessage === this);
+  socket.removeListener('close', onServerResponseClose);
+  socket._httpMessage = null;
+  this.socket = this.connection = null;
+};
+
+ServerResponse.prototype.writeContinue = function(cb) {
+  this._writeRaw('HTTP/1.1 100 Continue' + CRLF + CRLF, 'ascii', cb);
+  this._sent100 = true;
+};
+
+ServerResponse.prototype._implicitHeader = function() {
+  this.writeHead(this.statusCode);
+};
+
+ServerResponse.prototype.writeHead = function(statusCode, reason, obj) {
+  var headers;
+
+  if (util.isString(reason)) {
+    // writeHead(statusCode, reasonPhrase[, headers])
+    this.statusMessage = reason;
+  } else {
+    // writeHead(statusCode[, headers])
+    this.statusMessage =
+        this.statusMessage || STATUS_CODES[statusCode] || 'unknown';
+    obj = reason;
+  }
+  this.statusCode = statusCode;
+
+  if (this._headers) {
+    // Slow-case: when progressive API and header fields are passed.
+    if (obj) {
+      var keys = Object.keys(obj);
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        if (k) this.setHeader(k, obj[k]);
+      }
+    }
+    // only progressive api is used
+    headers = this._renderHeaders();
+  } else {
+    // only writeHead() called
+    headers = obj;
+  }
+
+  var statusLine = 'HTTP/1.1 ' + statusCode.toString() + ' ' +
+                   this.statusMessage + CRLF;
+
+  if (statusCode === 204 || statusCode === 304 ||
+      (100 <= statusCode && statusCode <= 199)) {
+    // RFC 2616, 10.2.5:
+    // The 204 response MUST NOT include a message-body, and thus is always
+    // terminated by the first empty line after the header fields.
+    // RFC 2616, 10.3.5:
+    // The 304 response MUST NOT contain a message-body, and thus is always
+    // terminated by the first empty line after the header fields.
+    // RFC 2616, 10.1 Informational 1xx:
+    // This class of status code indicates a provisional response,
+    // consisting only of the Status-Line and optional headers, and is
+    // terminated by an empty line.
+    this._hasBody = false;
+  }
+
+  // don't keep alive connections where the client expects 100 Continue
+  // but we sent a final status; they may put extra bytes on the wire.
+  if (this._expect_continue && !this._sent100) {
+    this.shouldKeepAlive = false;
+  }
+
+  this._storeHeader(statusLine, headers);
+};
+
+ServerResponse.prototype.writeHeader = function() {
+  this.writeHead.apply(this, arguments);
+};
+
+
+function Server(requestListener) {
+  if (!(this instanceof Server)) return new Server(requestListener);
+  net.Server.call(this, { allowHalfOpen: true });
+
+  if (requestListener) {
+    this.addListener('request', requestListener);
+  }
+
+  // Similar option to this. Too lazy to write my own docs.
+  // http://www.squid-cache.org/Doc/config/half_closed_clients/
+  // http://wiki.squid-cache.org/SquidFaq/InnerWorkings#What_is_a_half-closed_filedescriptor.3F
+  this.httpAllowHalfOpen = false;
+
+  this.addListener('connection', connectionListener);
+
+  this.addListener('clientError', function(err, conn) {
+    conn.destroy(err);
+  });
+
+  this.timeout = 2 * 60 * 1000;
+}
+util.inherits(Server, net.Server);
+
+
+Server.prototype.setTimeout = function(msecs, callback) {
+  this.timeout = msecs;
+  if (callback)
+    this.on('timeout', callback);
+};
+
+
+exports.Server = Server;
+
+
+function connectionListener(socket) {
+  var self = this;
+  var outgoing = [];
+  var incoming = [];
+
+  function abortIncoming() {
+    while (incoming.length) {
+      var req = incoming.shift();
+      req.emit('aborted');
+      req.emit('close');
+    }
+    // abort socket._httpMessage ?
+  }
+
+  function serverSocketCloseListener() {
+    debug('server socket close');
+    // mark this parser as reusable
+    if (this.parser) {
+      freeParser(this.parser, null, this);
+    }
+
+    abortIncoming();
+  }
+
+  debug('SERVER new http connection');
+
+  httpSocketSetup(socket);
+
+  // If the user has added a listener to the server,
+  // request, or response, then it's their responsibility.
+  // otherwise, destroy on timeout by default
+  if (self.timeout)
+    socket.setTimeout(self.timeout);
+  socket.on('timeout', function() {
+    var req = socket.parser && socket.parser.incoming;
+    var reqTimeout = req && !req.complete && req.emit('timeout', socket);
+    var res = socket._httpMessage;
+    var resTimeout = res && res.emit('timeout', socket);
+    var serverTimeout = self.emit('timeout', socket);
+
+    if (!reqTimeout && !resTimeout && !serverTimeout)
+      socket.destroy();
+  });
+
+  var parser = parsers.alloc();
+  parser.reinitialize(HTTPParser.REQUEST);
+  parser.socket = socket;
+  socket.parser = parser;
+  parser.incoming = null;
+
+  // Propagate headers limit from server instance to parser
+  if (util.isNumber(this.maxHeadersCount)) {
+    parser.maxHeaderPairs = this.maxHeadersCount << 1;
+  } else {
+    // Set default value because parser may be reused from FreeList
+    parser.maxHeaderPairs = 2000;
+  }
+
+  socket.addListener('error', socketOnError);
+  socket.addListener('close', serverSocketCloseListener);
+  parser.onIncoming = parserOnIncoming;
+  socket.on('end', socketOnEnd);
+  socket.on('data', socketOnData);
+
+  // TODO(isaacs): Move all these functions out of here
+  function socketOnError(e) {
+    self.emit('clientError', e, this);
+  }
+
+  function socketOnData(d) {
+    assert(!socket._paused);
+    debug('SERVER socketOnData %d', d.length);
+    var ret = parser.execute(d);
+    if (ret instanceof Error) {
+      debug('parse error');
+      socket.destroy(ret);
+    } else if (parser.incoming && parser.incoming.upgrade) {
+      // Upgrade or CONNECT
+      var bytesParsed = ret;
+      var req = parser.incoming;
+      debug('SERVER upgrade or connect', req.method);
+
+      socket.removeListener('data', socketOnData);
+      socket.removeListener('end', socketOnEnd);
+      socket.removeListener('close', serverSocketCloseListener);
+      parser.finish();
+      freeParser(parser, req, null);
+      parser = null;
+
+      var eventName = req.method === 'CONNECT' ? 'connect' : 'upgrade';
+      if (EventEmitter.listenerCount(self, eventName) > 0) {
+        debug('SERVER have listener for %s', eventName);
+        var bodyHead = d.slice(bytesParsed, d.length);
+
+        // TODO(isaacs): Need a way to reset a stream to fresh state
+        // IE, not flowing, and not explicitly paused.
+        socket._readableState.flowing = null;
+        self.emit(eventName, req, socket, bodyHead);
+      } else {
+        // Got upgrade header or CONNECT method, but have no handler.
+        socket.destroy();
+      }
+    }
+
+    if (socket._paused) {
+      // onIncoming paused the socket, we should pause the parser as well
+      debug('pause parser');
+      socket.parser.pause();
+    }
+  }
+
+  function socketOnEnd() {
+    var socket = this;
+    var ret = parser.finish();
+
+    if (ret instanceof Error) {
+      debug('parse error');
+      socket.destroy(ret);
+      return;
+    }
+
+    if (!self.httpAllowHalfOpen) {
+      abortIncoming();
+      if (socket.writable) socket.end();
+    } else if (outgoing.length) {
+      outgoing[outgoing.length - 1]._last = true;
+    } else if (socket._httpMessage) {
+      socket._httpMessage._last = true;
+    } else {
+      if (socket.writable) socket.end();
+    }
+  }
+
+
+  // The following callback is issued after the headers have been read on a
+  // new message. In this callback we setup the response object and pass it
+  // to the user.
+
+  socket._paused = false;
+  function socketOnDrain() {
+    // If we previously paused, then start reading again.
+    if (socket._paused) {
+      socket._paused = false;
+      socket.parser.resume();
+      socket.resume();
+    }
+  }
+  socket.on('drain', socketOnDrain);
+
+  function parserOnIncoming(req, shouldKeepAlive) {
+    incoming.push(req);
+
+    // If the writable end isn't consuming, then stop reading
+    // so that we don't become overwhelmed by a flood of
+    // pipelined requests that may never be resolved.
+    if (!socket._paused) {
+      var needPause = socket._writableState.needDrain;
+      if (needPause) {
+        socket._paused = true;
+        // We also need to pause the parser, but don't do that until after
+        // the call to execute, because we may still be processing the last
+        // chunk.
+        socket.pause();
+      }
+    }
+
+    var res = new ServerResponse(req);
+
+    res.shouldKeepAlive = shouldKeepAlive;
+    // DTRACE_HTTP_SERVER_REQUEST(req, socket);
+    // COUNTER_HTTP_SERVER_REQUEST();
+
+    if (socket._httpMessage) {
+      // There are already pending outgoing res, append.
+      outgoing.push(res);
+    } else {
+      res.assignSocket(socket);
+    }
+
+    // When we're finished writing the response, check if this is the last
+    // respose, if so destroy the socket.
+    res.on('prefinish', resOnFinish);
+    function resOnFinish() {
+      // Usually the first incoming element should be our request.  it may
+      // be that in the case abortIncoming() was called that the incoming
+      // array will be empty.
+      assert(incoming.length === 0 || incoming[0] === req);
+
+      incoming.shift();
+
+      // if the user never called req.read(), and didn't pipe() or
+      // .resume() or .on('data'), then we call req._dump() so that the
+      // bytes will be pulled off the wire.
+      if (!req._consuming && !req._readableState.resumeScheduled)
+        req._dump();
+
+      res.detachSocket(socket);
+
+      if (res._last) {
+        socket.destroySoon();
+      } else {
+        // start sending the next message
+        var m = outgoing.shift();
+        if (m) {
+          m.assignSocket(socket);
+        }
+      }
+    }
+
+    if (!util.isUndefined(req.headers.expect) &&
+        (req.httpVersionMajor == 1 && req.httpVersionMinor == 1) &&
+        continueExpression.test(req.headers['expect'])) {
+      res._expect_continue = true;
+      if (EventEmitter.listenerCount(self, 'checkContinue') > 0) {
+        self.emit('checkContinue', req, res);
+      } else {
+        res.writeContinue();
+        self.emit('request', req, res);
+      }
+    } else {
+      self.emit('request', req, res);
+    }
+    return false; // Not a HEAD response. (Not even a response!)
+  }
+}
+exports._connectionListener = connectionListener;
+
+},{"./_http_common":60,"./_http_outgoing":62,"assert":1,"events":7,"http-parser-js":65,"net":"net","util":33}],64:[function(require,module,exports){
+var FreeList = (function() {
+	function FreeList(name, max, constructor) {
+		this.name = name;
+		this.max = max;
+		this.constructor = constructor != null ? constructor : function() {};
+		this.list = [];
+	}
+
+	FreeList.prototype.alloc = function() {
+		if (this.list.length) {
+			return this.list.shift();
+		} else {
+			return this.constructor.apply(this, arguments);
+		}
+	};
+
+	FreeList.prototype.free = function(obj) {
+		if (this.list.length < this.max) {
+			this.list.push(obj);
+			return true;
+		} else {
+			return false;
+		}
+	};
+
+	return FreeList;
+})();
+
+// remain backward compatible
+FreeList.FreeList = FreeList;
+
+module.exports = FreeList;
+
+},{}],65:[function(require,module,exports){
+/*jshint node:true */
+
+var assert = require('assert');
+
+exports.HTTPParser = HTTPParser;
+function HTTPParser(type) {
+  assert.ok(type === HTTPParser.REQUEST || type === HTTPParser.RESPONSE);
+  this.type = type;
+  this.state = type + '_LINE';
+  this.info = {
+    headers: [],
+    upgrade: false
+  };
+  this.trailers = [];
+  this.line = '';
+  this.isChunked = false;
+  this.connection = '';
+  this.headerSize = 0; // for preventing too big headers
+  this.body_bytes = null;
+  this.isUserCall = false;
+}
+HTTPParser.REQUEST = 'REQUEST';
+HTTPParser.RESPONSE = 'RESPONSE';
+var kOnHeaders = HTTPParser.kOnHeaders = 0;
+var kOnHeadersComplete = HTTPParser.kOnHeadersComplete = 1;
+var kOnBody = HTTPParser.kOnBody = 2;
+var kOnMessageComplete = HTTPParser.kOnMessageComplete = 3;
+var methods = HTTPParser.methods = [
+  'DELETE',
+  'GET',
+  'HEAD',
+  'POST',
+  'PUT',
+  'CONNECT',
+  'OPTIONS',
+  'TRACE',
+  'COPY',
+  'LOCK',
+  'MKCOL',
+  'MOVE',
+  'PROPFIND',
+  'PROPPATCH',
+  'SEARCH',
+  'UNLOCK',
+  'REPORT',
+  'MKACTIVITY',
+  'CHECKOUT',
+  'MERGE',
+  'M-SEARCH',
+  'NOTIFY',
+  'SUBSCRIBE',
+  'UNSUBSCRIBE',
+  'PATCH',
+  'PURGE'
+];
+HTTPParser.prototype.reinitialize = HTTPParser;
+HTTPParser.prototype.close =
+HTTPParser.prototype.pause =
+HTTPParser.prototype.resume = function () {};
+HTTPParser.prototype._compatMode = false;
+
+var maxHeaderSize = 80 * 1024;
+var headerState = {
+  REQUEST_LINE: true,
+  RESPONSE_LINE: true,
+  HEADER: true
+};
+HTTPParser.prototype.execute = function (chunk, start, length) {
+  if (!(this instanceof HTTPParser)) {
+    throw new TypeError('not a HTTPParser');
+  }
+  
+  // backward compat to node < 0.11.4
+  // Note: the start and length params were removed in newer version
+  start = start || 0;
+  length = typeof length === 'number' ? length : chunk.length;
+
+  this.chunk = chunk;
+  this.offset = start;
+  var end = this.end = start + length;
+  try {
+    while (this.offset < end) {
+      if (this[this.state]()) {
+        break;
+      }
+    }
+  } catch (err) {
+    if (this.isUserCall) {
+      throw err;
+    }
+    return err;
+  }
+  this.chunk = null;
+  var length = this.offset - start
+  if (headerState[this.state]) {
+    this.headerSize += length;
+    if (this.headerSize > maxHeaderSize) {
+      return new Error('max header size exceeded');
+    }
+  }
+  return length;
+};
+
+var stateFinishAllowed = {
+  REQUEST_LINE: true,
+  RESPONSE_LINE: true,
+  BODY_RAW: true
+};
+HTTPParser.prototype.finish = function () {
+  if (!stateFinishAllowed[this.state]) {
+    return new Error('invalid state for EOF');
+  }
+  if (this.state === 'BODY_RAW') {
+    this.userCall()(this[kOnMessageComplete]());
+  }
+};
+
+//For correct error handling - see HTTPParser#execute
+//Usage: this.userCall()(userFunction('arg'));
+HTTPParser.prototype.userCall = function () {
+  this.isUserCall = true;
+  var self = this;
+  return function (ret) {
+    self.isUserCall = false;
+    return ret;
+  };
+};
+
+HTTPParser.prototype.nextRequest = function () {
+  this.userCall()(this[kOnMessageComplete]());
+  this.reinitialize(this.type);
+};
+
+HTTPParser.prototype.consumeLine = function () {
+  var end = this.end,
+      chunk = this.chunk;
+  for (var i = this.offset; i < end; i++) {
+    if (chunk[i] === 0x0a) { // \n
+      var line = this.line + chunk.toString('ascii', this.offset, i);
+      if (line.charAt(line.length - 1) === '\r') {
+        line = line.substr(0, line.length - 1);
+      }
+      this.line = '';
+      this.offset = i + 1;
+      return line;
+    }
+  }
+  //line split over multiple chunks
+  this.line += chunk.toString('ascii', this.offset, this.end);
+  this.offset = this.end;
+};
+
+var headerExp = /^([^: \t]+):[ \t]*((?:.*[^ \t])|)/;
+var headerContinueExp = /^[ \t]+(.*[^ \t])/;
+HTTPParser.prototype.parseHeader = function (line, headers) {
+  var match = headerExp.exec(line);
+  var k = match && match[1];
+  if (k) { // skip empty string (malformed header)
+    headers.push(k);
+    headers.push(match[2]);
+  } else {
+    var matchContinue = headerContinueExp.exec(line);
+    if (matchContinue && headers.length) {
+      if (headers[headers.length - 1]) {
+        headers[headers.length - 1] += ' ';
+      }
+      headers[headers.length - 1] += matchContinue[1];
+    }
+  }
+};
+
+var requestExp = /^([A-Z-]+) ([^ ]+) HTTP\/(\d)\.(\d)$/;
+HTTPParser.prototype.REQUEST_LINE = function () {
+  var line = this.consumeLine();
+  if (!line) {
+    return;
+  }
+  var match = requestExp.exec(line);
+  if (match === null) {
+    var err = new Error('Parse Error');
+    err.code = 'HPE_INVALID_CONSTANT';
+    throw err;
+  }
+  this.info.method = this._compatMode ? match[1] : methods.indexOf(match[1]);
+  if (this.info.method === -1) {
+    throw new Error('invalid request method');
+  }
+  if (match[1] === 'CONNECT') {
+    this.info.upgrade = true;
+  }
+  this.info.url = match[2];
+  this.info.versionMajor = +match[3];
+  this.info.versionMinor = +match[4];
+  this.body_bytes = 0;
+  this.state = 'HEADER';
+};
+
+var responseExp = /^HTTP\/(\d)\.(\d) (\d{3}) ?(.*)$/;
+HTTPParser.prototype.RESPONSE_LINE = function () {
+  var line = this.consumeLine();
+  if (!line) {
+    return;
+  }
+  var match = responseExp.exec(line);
+  if (match === null) {
+    var err = new Error('Parse Error');
+    err.code = 'HPE_INVALID_CONSTANT';
+    throw err;
+  }
+  this.info.versionMajor = +match[1];
+  this.info.versionMinor = +match[2];
+  var statusCode = this.info.statusCode = +match[3];
+  this.info.statusMessage = match[4];
+  // Implied zero length.
+  if ((statusCode / 100 | 0) === 1 || statusCode === 204 || statusCode === 304) {
+    this.body_bytes = 0;
+  }
+  this.state = 'HEADER';
+};
+
+HTTPParser.prototype.shouldKeepAlive = function () {
+  if (this.info.versionMajor > 0 && this.info.versionMinor > 0) {
+    if (this.connection.indexOf('close') !== -1) {
+      return false;
+    }
+  } else if (this.connection.indexOf('keep-alive') === -1) {
+    return false;
+  }
+  if (this.body_bytes !== null || this.isChunked) { // || skipBody
+    return true;
+  }
+  return false;
+};
+
+HTTPParser.prototype.HEADER = function () {
+  var line = this.consumeLine();
+  if (line === undefined) {
+    return;
+  }
+  if (line) {
+    this.parseHeader(line, this.info.headers);
+  } else {
+    var headers = this.info.headers;
+    for (var i = 0; i < headers.length; i += 2) {
+      switch (headers[i].toLowerCase()) {
+        case 'transfer-encoding':
+          this.isChunked = headers[i + 1].toLowerCase() === 'chunked';
+          break;
+        case 'content-length':
+          this.body_bytes = +headers[i + 1];
+          break;
+        case 'connection':
+          this.connection += headers[i + 1].toLowerCase();
+          break;
+        case 'upgrade':
+          this.info.upgrade = true;
+          break;
+      }
+    }
+    
+    this.info.shouldKeepAlive = this.shouldKeepAlive();
+    //problem which also exists in original node: we should know skipBody before calling onHeadersComplete
+    var skipBody = this.userCall()(this[kOnHeadersComplete](this.info));
+    
+    if (this.info.upgrade) {
+      this.nextRequest();
+      return true;
+    } else if (this.isChunked && !skipBody) {
+      this.state = 'BODY_CHUNKHEAD';
+    } else if (skipBody || this.body_bytes === 0) {
+      this.nextRequest();
+    } else if (this.body_bytes === null) {
+      this.state = 'BODY_RAW';
+    } else {
+      this.state = 'BODY_SIZED';
+    }
+  }
+};
+
+HTTPParser.prototype.BODY_CHUNKHEAD = function () {
+  var line = this.consumeLine();
+  if (line === undefined) {
+    return;
+  }
+  this.body_bytes = parseInt(line, 16);
+  if (!this.body_bytes) {
+    this.state = 'BODY_CHUNKTRAILERS';
+  } else {
+    this.state = 'BODY_CHUNK';
+  }
+};
+
+HTTPParser.prototype.BODY_CHUNK = function () {
+  var length = Math.min(this.end - this.offset, this.body_bytes);
+  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
+  this.offset += length;
+  this.body_bytes -= length;
+  if (!this.body_bytes) {
+    this.state = 'BODY_CHUNKEMPTYLINE';
+  }
+};
+
+HTTPParser.prototype.BODY_CHUNKEMPTYLINE = function () {
+  var line = this.consumeLine();
+  if (line === undefined) {
+    return;
+  }
+  assert.equal(line, '');
+  this.state = 'BODY_CHUNKHEAD';
+};
+
+HTTPParser.prototype.BODY_CHUNKTRAILERS = function () {
+  var line = this.consumeLine();
+  if (line === undefined) {
+    return;
+  }
+  if (line) {
+    this.parseHeader(line, this.trailers);
+  } else {
+    if (this.trailers.length) {
+      this.userCall()(this[kOnHeaders](this.trailers, this.info.url));
+    }
+    this.nextRequest();
+  }
+};
+
+HTTPParser.prototype.BODY_RAW = function () {
+  var length = this.end - this.offset;
+  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
+  this.offset = this.end;
+};
+
+HTTPParser.prototype.BODY_SIZED = function () {
+  var length = Math.min(this.end - this.offset, this.body_bytes);
+  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
+  this.offset += length;
+  this.body_bytes -= length;
+  if (!this.body_bytes) {
+    this.nextRequest();
+  }
+};
+
+// backward compat to node < 0.11.6
+['Headers', 'HeadersComplete', 'Body', 'MessageComplete'].forEach(function (name) {
+  var k = HTTPParser['kOn' + name];
+  Object.defineProperty(HTTPParser.prototype, 'on' + name, {
+    get: function () {
+      return this[k];
+    },
+    set: function (to) {
+      // hack for backward compatibility
+      this._compatMode = true;
+      return (this[k] = to);
+    }
+  });
+});
+
+},{"assert":1}],66:[function(require,module,exports){
+arguments[4][9][0].apply(exports,arguments)
+},{"dup":9}],67:[function(require,module,exports){
+function Connection () {
+}
+
+Connection.CONNECTED = 'connected'
+Connection.CONNECTING = 'connecting'
+Connection.DISCONNECTED = 'disconnected'
+Connection.prototype.status = Connection.DISCONNECTED
+
+module.exports = Connection
+
+},{}],68:[function(require,module,exports){
+// var h = require('hyperscript')
+// var Shares = require('./shares')
+// var shares = new Shares()
+// shares.all(function (err, data) {
+//   for (var i = 0; i < data.length; i++) {
+//     document.getElementById('page').appendChild(
+//       h('div', 'SOME TEXT')
+//     )
+//   }
+// })
+var Connection = require('./connection')
+var connection = new Connection()
+
+function updateWebviews () {
+  var webview = document.getElementById('wv')
+  // webview.style.height = document.documentElement.clientHeight + "px"
+  webview.style.width = document.documentElement.clientWidth + 'px'
+  webview.style.height = (document.documentElement.clientHeight - 100) + 'px'
+}
+function load () {
+  updateWebviews()
+}
+window.onresize = updateWebviews
+window.onload = load
+document.getElementById('homepage').hidden = false
+document.getElementById('listpages').hidden = true
+document.getElementById('sharepages').hidden = true
+document.getElementById('createpage').hidden = true
+
+document.getElementById('btnConnection').addEventListener('click', function (evt) {
+  if (connection.status === Connection.DISCONNECTED) {
+    var msg = {}
+    msg.type = 'service'
+    msg.action = 'start'
+    chrome.runtime.sendMessage([JSON.stringify(msg)])
+    connection.status = Connection.CONNECTING
+    document.getElementById('btnConnection').src = 'images/connecting.png'
+    
+    // Set icon to yellow
+  } else if (connection.status === Connection.CONNECTED) {
+    var msg = {}
+    msg.type = 'service'
+    msg.action = 'stop'
+    chrome.runtime.sendMessage([JSON.stringify(msg)])
+    connection.status = Connection.CONNECTING
+    document.getElementById('btnConnection').src = 'images/connecting.png'
+    // Set icon to yellow
+  }
+})
+
+chrome.runtime.onMessage.addListener(function (event) {
+  console.log('chrome-event: ' + event)
+  var msg = JSON.parse(event)
+  if (msg.type === 'service') {
+    switch (msg.action) {
+      case 'started' :
+        document.getElementById('btnConnection').src = 'images/connected.png'
+        connection.status = Connection.CONNECTED
+        // set the icon to green
+        break
+      case 'stopped' :
+        document.getElementById('btnConnection').src = 'images/disconnected.png'
+        connection.status = Connection.DISCONNECTED
+        // set the icon to red
+        break
+      default :
+        break
+    }
+  }
+})
+
+document.getElementById('btnCreate').addEventListener('click', function (evt) {
+  document.getElementById('homepage').hidden = true
+  document.getElementById('listpages').hidden = true
+  document.getElementById('sharepages').hidden = true
+  document.getElementById('createpage').hidden = false
+// document.getElementById('wv').style.left = '-100px'
+})
+
+document.getElementById('btnHome').addEventListener('click', function (evt) {
+  document.getElementById('homepage').hidden = false
+  document.getElementById('listpages').hidden = true
+  document.getElementById('sharepages').hidden = true
+  document.getElementById('createpage').hidden = true
+})
+document.getElementById('btnAll').addEventListener('click', function (evt) {
+  document.getElementById('homepage').hidden = true
+  document.getElementById('listpages').hidden = false
+  document.getElementById('sharepages').hidden = true
+  document.getElementById('createpage').hidden = true
+})
+
+document.getElementById('btnShare').addEventListener('click', function (evt) {
+  document.getElementById('homepage').hidden = true
+  document.getElementById('listpages').hidden = true
+  document.getElementById('sharepages').hidden = false
+  document.getElementById('createpage').hidden = true
+})
+
+document.getElementById('btnSave').addEventListener('click', function (evt) {
+  document.getElementById('wv').contentWindow.postMessage('Message from Chrome APP!', '*')
+})
+
+var messageHandler = function (event) {
+  console.log('Got message from webpage back: ' + event.data)
+}
+window.addEventListener('message', messageHandler, false)
+
+},{"./connection":67}],"debug":[function(require,module,exports){
 
 /**
  * This is the web browser implementation of `debug()`.
@@ -24499,7 +12017,7 @@ function localstorage(){
   } catch (e) {}
 }
 
-},{"./debug":1,"localstorage-memory":2}],"depd":[function(require,module,exports){
+},{"./debug":34,"localstorage-memory":35}],"depd":[function(require,module,exports){
 (function (process){
 /*!
  * depd
@@ -25032,7 +12550,7 @@ function DeprecationError(namespace, message, stack) {
 }
 
 }).call(this,require('_process'))
-},{"./lib/compat":6,"_process":135,"events":132,"path":"path"}],"dgram":[function(require,module,exports){
+},{"./lib/compat":39,"_process":13,"events":7,"path":"path"}],"dgram":[function(require,module,exports){
 (function (Buffer){
 /*global chrome */
 
@@ -25464,7 +12982,7 @@ Socket.prototype.ref = function () {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":127,"events":132,"inherits":7,"run-series":8}],"fs":[function(require,module,exports){
+},{"buffer":4,"events":7,"inherits":40,"run-series":41}],"fs":[function(require,module,exports){
 (function (process){
 var util = require('util')
 var Buffer = require('buffer').Buffer
@@ -26720,7 +14238,7 @@ function flagToString (flag) {
 }
 
 }).call(this,require('_process'))
-},{"_process":135,"buffer":127,"constants":131,"path":"path","stream":151,"util":156}],"https":[function(require,module,exports){
+},{"_process":13,"buffer":4,"constants":5,"path":"path","stream":28,"util":33}],"https":[function(require,module,exports){
 var http = require('./http');
 
 var https = module.exports;
@@ -26734,7 +14252,7 @@ https.request = function (params, cb) {
     params.scheme = 'https';
     return http.request.call(this, params, cb);
 }
-},{"./http":13}],"http":[function(require,module,exports){
+},{"./http":46}],"http":[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -26854,7 +14372,7 @@ exports.createClient = util.deprecate(function(port, host) {
   return new Client(port, host);
 }, 'http.createClient is deprecated. Use `http.request` instead.');
 
-},{"./_http_agent":26,"./_http_client":27,"./_http_common":28,"./_http_incoming":29,"./_http_outgoing":30,"./_http_server":31,"events":132,"util":156}],"net":[function(require,module,exports){
+},{"./_http_agent":58,"./_http_client":59,"./_http_common":60,"./_http_incoming":61,"./_http_outgoing":62,"./_http_server":63,"events":7,"util":33}],"net":[function(require,module,exports){
 (function (process,Buffer){
 /*global chrome */
 
@@ -28013,7 +15531,7 @@ function errnoException (err, syscall) {
 }
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":135,"buffer":127,"core-util-is":24,"events":132,"inherits":25,"stream":151,"timers":153,"util":156}],"path":[function(require,module,exports){
+},{"_process":13,"buffer":4,"core-util-is":57,"events":7,"inherits":66,"stream":28,"timers":30,"util":33}],"path":[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -28268,7 +15786,7 @@ var substr = 'ab'.substr(-1) === 'b'
 ;
 
 }).call(this,require('_process'))
-},{"_process":135}],"util-deprecate":[function(require,module,exports){
+},{"_process":13}],"util-deprecate":[function(require,module,exports){
 
 /**
  * Module exports.
@@ -28329,4 +15847,4 @@ function config (name) {
   return false
 }
 
-},{}]},{},[124]);
+},{}]},{},[68]);

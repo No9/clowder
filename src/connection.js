@@ -1,10 +1,9 @@
-var PouchDB = require('pouchdb')
-
 function Connection () {
-  this.db = new PouchDB('userinfo')
-  this.remoteCouch = false
-  this.CONNECTED = 'connected'
-  this.CONNECTING = 'connecting'
-  this.DISCONNECTED = 'disconnected'
-  this.status = this.DISCONNECTED
 }
+
+Connection.CONNECTED = 'connected'
+Connection.CONNECTING = 'connecting'
+Connection.DISCONNECTED = 'disconnected'
+Connection.prototype.status = Connection.DISCONNECTED
+
+module.exports = Connection
