@@ -10,6 +10,10 @@
 // })
 var Connection = require('./connection')
 var connection = new Connection()
+var Pages = require('./pages')
+var pages = new Pages()
+var pagestable = document.getElementById('pagestable')
+pages.appendTable(pagestable)
 
 function updateWebviews () {
   var webview = document.getElementById('wv')
