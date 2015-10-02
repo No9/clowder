@@ -1,5 +1,3 @@
-var level = require('level-browserify')
-var db = level('pages')
 var h = require('hyperscript')
 var Pages = function () {
   
