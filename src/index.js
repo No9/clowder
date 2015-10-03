@@ -9,6 +9,11 @@
 //   }
 // })
 var Connection = require('./connection')
+var createBus = require('chrome-bus')
+var wikidbevents = require('./wikidbevents')
+var bus = createBus()
+
+bus.emit(wikidbevents.RECENT)
 var connection = new Connection()
 var Pages = require('./pages')
 var pages = new Pages()

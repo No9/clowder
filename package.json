@@ -45,6 +45,7 @@
     "level-browserify": "^1.0.1",
     "node-ssdp": "git+https://github.com/No9/node-ssdp.git",
     "querystring": "^0.2.0",
+    "through2": "^2.0.0",
     "wikidb": "^4.1.0"
   },
   "devDependencies": {
