@@ -1,6 +1,6 @@
 function AppEvents () {
 }
 
-WikiEvents.ERROR = 'APPERROR'
+AppEvents.ERROR = 'APPERROR'
 
 module.exports = AppEvents

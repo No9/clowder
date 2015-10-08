@@ -378,6 +378,7 @@ exports.SlowBuffer = SlowBuffer
 exports.INSPECT_MAX_BYTES = 50
 Buffer.poolSize = 8192 // not used by this implementation
 
+var kMaxLength = 0x3fffffff
 var rootParent = {}
 
 /**
@@ -388,45 +389,32 @@ var rootParent = {}
  * Browsers that support typed arrays are IE 10+, Firefox 4+, Chrome 7+, Safari 5.1+,
  * Opera 11.6+, iOS 4.2+.
  *
- * Due to various browser bugs, sometimes the Object implementation will be used even
- * when the browser supports typed arrays.
- *
  * Note:
  *
- *   - Firefox 4-29 lacks support for adding new properties to `Uint8Array` instances,
- *     See: https://bugzilla.mozilla.org/show_bug.cgi?id=695438.
+ * - Implementation must support adding new properties to `Uint8Array` instances.
+ *   Firefox 4-29 lacked support, fixed in Firefox 30+.
+ *   See: https://bugzilla.mozilla.org/show_bug.cgi?id=695438.
  *
- *   - Safari 5-7 lacks support for changing the `Object.prototype.constructor` property
- *     on objects.
+ *  - Chrome 9-10 is missing the `TypedArray.prototype.subarray` function.
  *
- *   - Chrome 9-10 is missing the `TypedArray.prototype.subarray` function.
+ *  - IE10 has a broken `TypedArray.prototype.subarray` function which returns arrays of
+ *    incorrect length in some situations.
  *
- *   - IE10 has a broken `TypedArray.prototype.subarray` function which returns arrays of
- *     incorrect length in some situations.
-
- * We detect these buggy browsers and set `Buffer.TYPED_ARRAY_SUPPORT` to `false` so they
- * get the Object implementation, which is slower but behaves correctly.
+ * We detect these buggy browsers and set `Buffer.TYPED_ARRAY_SUPPORT` to `false` so they will
+ * get the Object implementation, which is slower but will work correctly.
  */
 Buffer.TYPED_ARRAY_SUPPORT = (function () {
-  function Bar () {}
   try {
-    var arr = new Uint8Array(1)
+    var buf = new ArrayBuffer(0)
+    var arr = new Uint8Array(buf)
     arr.foo = function () { return 42 }
-    arr.constructor = Bar
     return arr.foo() === 42 && // typed array instances can be augmented
-        arr.constructor === Bar && // constructor can be set
         typeof arr.subarray === 'function' && // chrome 9-10 lack `subarray`
-        arr.subarray(1, 1).byteLength === 0 // ie10 has broken `subarray`
+        new Uint8Array(1).subarray(1, 1).byteLength === 0 // ie10 has broken `subarray`
   } catch (e) {
     return false
   }
 })()
-
-function kMaxLength () {
-  return Buffer.TYPED_ARRAY_SUPPORT
-    ? 0x7fffffff
-    : 0x3fffffff
-}
 
 /**
  * Class: Buffer
@@ -494,13 +482,8 @@ function fromObject (that, object) {
     throw new TypeError('must start with number, buffer, array or string')
   }
 
-  if (typeof ArrayBuffer !== 'undefined') {
-    if (object.buffer instanceof ArrayBuffer) {
-      return fromTypedArray(that, object)
-    }
-    if (object instanceof ArrayBuffer) {
-      return fromArrayBuffer(that, object)
-    }
+  if (typeof ArrayBuffer !== 'undefined' && object.buffer instanceof ArrayBuffer) {
+    return fromTypedArray(that, object)
   }
 
   if (object.length) return fromArrayLike(that, object)
@@ -533,18 +516,6 @@ function fromTypedArray (that, array) {
   // of the old Buffer constructor.
   for (var i = 0; i < length; i += 1) {
     that[i] = array[i] & 255
-  }
-  return that
-}
-
-function fromArrayBuffer (that, array) {
-  if (Buffer.TYPED_ARRAY_SUPPORT) {
-    // Return an augmented `Uint8Array` instance, for best performance
-    array.byteLength
-    that = Buffer._augment(new Uint8Array(array))
-  } else {
-    // Fallback: Return an object instance of the Buffer class
-    that = fromTypedArray(that, new Uint8Array(array))
   }
   return that
 }
@@ -595,9 +566,9 @@ function allocate (that, length) {
 function checked (length) {
   // Note: cannot use `length < kMaxLength` here because that fails when
   // length is NaN (which is otherwise coerced to zero.)
-  if (length >= kMaxLength()) {
+  if (length >= kMaxLength) {
     throw new RangeError('Attempt to allocate Buffer larger than maximum ' +
-                         'size: 0x' + kMaxLength().toString(16) + ' bytes')
+                         'size: 0x' + kMaxLength.toString(16) + ' bytes')
   }
   return length | 0
 }
@@ -666,6 +637,8 @@ Buffer.concat = function concat (list, length) {
 
   if (list.length === 0) {
     return new Buffer(0)
+  } else if (list.length === 1) {
+    return list[0]
   }
 
   var i
@@ -687,38 +660,29 @@ Buffer.concat = function concat (list, length) {
 }
 
 function byteLength (string, encoding) {
-  if (typeof string !== 'string') string = '' + string
+  if (typeof string !== 'string') string = String(string)
 
-  var len = string.length
-  if (len === 0) return 0
+  if (string.length === 0) return 0
 
-  // Use a for loop to avoid recursion
-  var loweredCase = false
-  for (;;) {
-    switch (encoding) {
-      case 'ascii':
-      case 'binary':
-      // Deprecated
-      case 'raw':
-      case 'raws':
-        return len
-      case 'utf8':
-      case 'utf-8':
-        return utf8ToBytes(string).length
-      case 'ucs2':
-      case 'ucs-2':
-      case 'utf16le':
-      case 'utf-16le':
-        return len * 2
-      case 'hex':
-        return len >>> 1
-      case 'base64':
-        return base64ToBytes(string).length
-      default:
-        if (loweredCase) return utf8ToBytes(string).length // assume utf8
-        encoding = ('' + encoding).toLowerCase()
-        loweredCase = true
-    }
+  switch (encoding || 'utf8') {
+    case 'ascii':
+    case 'binary':
+    case 'raw':
+      return string.length
+    case 'ucs2':
+    case 'ucs-2':
+    case 'utf16le':
+    case 'utf-16le':
+      return string.length * 2
+    case 'hex':
+      return string.length >>> 1
+    case 'utf8':
+    case 'utf-8':
+      return utf8ToBytes(string).length
+    case 'base64':
+      return base64ToBytes(string).length
+    default:
+      return string.length
   }
 }
 Buffer.byteLength = byteLength
@@ -727,7 +691,8 @@ Buffer.byteLength = byteLength
 Buffer.prototype.length = undefined
 Buffer.prototype.parent = undefined
 
-function slowToString (encoding, start, end) {
+// toString(encoding, start=0, end=buffer.length)
+Buffer.prototype.toString = function toString (encoding, start, end) {
   var loweredCase = false
 
   start = start | 0
@@ -768,13 +733,6 @@ function slowToString (encoding, start, end) {
         loweredCase = true
     }
   }
-}
-
-Buffer.prototype.toString = function toString () {
-  var length = this.length | 0
-  if (length === 0) return ''
-  if (arguments.length === 0) return utf8Slice(this, 0, length)
-  return slowToString.apply(this, arguments)
 }
 
 Buffer.prototype.equals = function equals (b) {
@@ -840,13 +798,13 @@ Buffer.prototype.indexOf = function indexOf (val, byteOffset) {
   throw new TypeError('val must be string, number or Buffer')
 }
 
-// `get` is deprecated
+// `get` will be removed in Node 0.13+
 Buffer.prototype.get = function get (offset) {
   console.log('.get() is deprecated. Access using array indexes instead.')
   return this.readUInt8(offset)
 }
 
-// `set` is deprecated
+// `set` will be removed in Node 0.13+
 Buffer.prototype.set = function set (v, offset) {
   console.log('.set() is deprecated. Access using array indexes instead.')
   return this.writeUInt8(v, offset)
@@ -987,99 +945,20 @@ function base64Slice (buf, start, end) {
 }
 
 function utf8Slice (buf, start, end) {
-  end = Math.min(buf.length, end)
-  var res = []
-
-  var i = start
-  while (i < end) {
-    var firstByte = buf[i]
-    var codePoint = null
-    var bytesPerSequence = (firstByte > 0xEF) ? 4
-      : (firstByte > 0xDF) ? 3
-      : (firstByte > 0xBF) ? 2
-      : 1
-
-    if (i + bytesPerSequence <= end) {
-      var secondByte, thirdByte, fourthByte, tempCodePoint
-
-      switch (bytesPerSequence) {
-        case 1:
-          if (firstByte < 0x80) {
-            codePoint = firstByte
-          }
-          break
-        case 2:
-          secondByte = buf[i + 1]
-          if ((secondByte & 0xC0) === 0x80) {
-            tempCodePoint = (firstByte & 0x1F) << 0x6 | (secondByte & 0x3F)
-            if (tempCodePoint > 0x7F) {
-              codePoint = tempCodePoint
-            }
-          }
-          break
-        case 3:
-          secondByte = buf[i + 1]
-          thirdByte = buf[i + 2]
-          if ((secondByte & 0xC0) === 0x80 && (thirdByte & 0xC0) === 0x80) {
-            tempCodePoint = (firstByte & 0xF) << 0xC | (secondByte & 0x3F) << 0x6 | (thirdByte & 0x3F)
-            if (tempCodePoint > 0x7FF && (tempCodePoint < 0xD800 || tempCodePoint > 0xDFFF)) {
-              codePoint = tempCodePoint
-            }
-          }
-          break
-        case 4:
-          secondByte = buf[i + 1]
-          thirdByte = buf[i + 2]
-          fourthByte = buf[i + 3]
-          if ((secondByte & 0xC0) === 0x80 && (thirdByte & 0xC0) === 0x80 && (fourthByte & 0xC0) === 0x80) {
-            tempCodePoint = (firstByte & 0xF) << 0x12 | (secondByte & 0x3F) << 0xC | (thirdByte & 0x3F) << 0x6 | (fourthByte & 0x3F)
-            if (tempCodePoint > 0xFFFF && tempCodePoint < 0x110000) {
-              codePoint = tempCodePoint
-            }
-          }
-      }
-    }
-
-    if (codePoint === null) {
-      // we did not generate a valid codePoint so insert a
-      // replacement char (U+FFFD) and advance only 1 byte
-      codePoint = 0xFFFD
-      bytesPerSequence = 1
-    } else if (codePoint > 0xFFFF) {
-      // encode to utf16 (surrogate pair dance)
-      codePoint -= 0x10000
-      res.push(codePoint >>> 10 & 0x3FF | 0xD800)
-      codePoint = 0xDC00 | codePoint & 0x3FF
-    }
-
-    res.push(codePoint)
-    i += bytesPerSequence
-  }
-
-  return decodeCodePointsArray(res)
-}
-
-// Based on http://stackoverflow.com/a/22747272/680742, the browser with
-// the lowest limit is Chrome, with 0x10000 args.
-// We go 1 magnitude less, for safety
-var MAX_ARGUMENTS_LENGTH = 0x1000
-
-function decodeCodePointsArray (codePoints) {
-  var len = codePoints.length
-  if (len <= MAX_ARGUMENTS_LENGTH) {
-    return String.fromCharCode.apply(String, codePoints) // avoid extra slice()
-  }
-
-  // Decode in chunks to avoid "call stack size exceeded".
   var res = ''
-  var i = 0
-  while (i < len) {
-    res += String.fromCharCode.apply(
-      String,
-      codePoints.slice(i, i += MAX_ARGUMENTS_LENGTH)
-    )
+  var tmp = ''
+  end = Math.min(buf.length, end)
+
+  for (var i = start; i < end; i++) {
+    if (buf[i] <= 0x7F) {
+      res += decodeUtf8Char(tmp) + String.fromCharCode(buf[i])
+      tmp = ''
+    } else {
+      tmp += '%' + buf[i].toString(16)
+    }
   }
-  return res
+
+  return res + decodeUtf8Char(tmp)
 }
 
 function asciiSlice (buf, start, end) {
@@ -1614,16 +1493,9 @@ Buffer.prototype.copy = function copy (target, targetStart, start, end) {
   }
 
   var len = end - start
-  var i
 
-  if (this === target && start < targetStart && targetStart < end) {
-    // descending copy from end
-    for (i = len - 1; i >= 0; i--) {
-      target[i + targetStart] = this[i + start]
-    }
-  } else if (len < 1000 || !Buffer.TYPED_ARRAY_SUPPORT) {
-    // ascending copy from start
-    for (i = 0; i < len; i++) {
+  if (len < 1000 || !Buffer.TYPED_ARRAY_SUPPORT) {
+    for (var i = 0; i < len; i++) {
       target[i + targetStart] = this[i + start]
     }
   } else {
@@ -1699,7 +1571,7 @@ Buffer._augment = function _augment (arr) {
   // save reference to original Uint8Array set method before overwriting
   arr._set = arr.set
 
-  // deprecated
+  // deprecated, will be removed in node 0.13+
   arr.get = BP.get
   arr.set = BP.set
 
@@ -1755,7 +1627,7 @@ Buffer._augment = function _augment (arr) {
   return arr
 }
 
-var INVALID_BASE64_RE = /[^+\/0-9A-Za-z-_]/g
+var INVALID_BASE64_RE = /[^+\/0-9A-z\-]/g
 
 function base64clean (str) {
   // Node strips out invalid characters like \n and \t from the string, base64-js does not
@@ -1785,15 +1657,28 @@ function utf8ToBytes (string, units) {
   var length = string.length
   var leadSurrogate = null
   var bytes = []
+  var i = 0
 
-  for (var i = 0; i < length; i++) {
+  for (; i < length; i++) {
     codePoint = string.charCodeAt(i)
 
     // is surrogate component
     if (codePoint > 0xD7FF && codePoint < 0xE000) {
       // last char was a lead
-      if (!leadSurrogate) {
+      if (leadSurrogate) {
+        // 2 leads in a row
+        if (codePoint < 0xDC00) {
+          if ((units -= 3) > -1) bytes.push(0xEF, 0xBF, 0xBD)
+          leadSurrogate = codePoint
+          continue
+        } else {
+          // valid surrogate pair
+          codePoint = leadSurrogate - 0xD800 << 10 | codePoint - 0xDC00 | 0x10000
+          leadSurrogate = null
+        }
+      } else {
         // no lead yet
+
         if (codePoint > 0xDBFF) {
           // unexpected trail
           if ((units -= 3) > -1) bytes.push(0xEF, 0xBF, 0xBD)
@@ -1802,29 +1687,17 @@ function utf8ToBytes (string, units) {
           // unpaired lead
           if ((units -= 3) > -1) bytes.push(0xEF, 0xBF, 0xBD)
           continue
+        } else {
+          // valid lead
+          leadSurrogate = codePoint
+          continue
         }
-
-        // valid lead
-        leadSurrogate = codePoint
-
-        continue
       }
-
-      // 2 leads in a row
-      if (codePoint < 0xDC00) {
-        if ((units -= 3) > -1) bytes.push(0xEF, 0xBF, 0xBD)
-        leadSurrogate = codePoint
-        continue
-      }
-
-      // valid surrogate pair
-      codePoint = leadSurrogate - 0xD800 << 10 | codePoint - 0xDC00 | 0x10000
     } else if (leadSurrogate) {
       // valid bmp char, but last char was a lead
       if ((units -= 3) > -1) bytes.push(0xEF, 0xBF, 0xBD)
+      leadSurrogate = null
     }
-
-    leadSurrogate = null
 
     // encode utf8
     if (codePoint < 0x80) {
@@ -1843,7 +1716,7 @@ function utf8ToBytes (string, units) {
         codePoint >> 0x6 & 0x3F | 0x80,
         codePoint & 0x3F | 0x80
       )
-    } else if (codePoint < 0x110000) {
+    } else if (codePoint < 0x200000) {
       if ((units -= 4) < 0) break
       bytes.push(
         codePoint >> 0x12 | 0xF0,
@@ -1894,6 +1767,14 @@ function blitBuffer (src, dst, offset, length) {
     dst[i + offset] = src[i]
   }
   return i
+}
+
+function decodeUtf8Char (str) {
+  try {
+    return decodeURIComponent(str)
+  } catch (err) {
+    return String.fromCharCode(0xFFFD) // UTF 8 invalid char
+  }
 }
 
 },{"base64-js":4,"ieee754":5,"is-array":6}],4:[function(require,module,exports){
@@ -2024,14 +1905,14 @@ var lookup = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
 },{}],5:[function(require,module,exports){
 exports.read = function (buffer, offset, isLE, mLen, nBytes) {
-  var e, m
-  var eLen = nBytes * 8 - mLen - 1
-  var eMax = (1 << eLen) - 1
-  var eBias = eMax >> 1
-  var nBits = -7
-  var i = isLE ? (nBytes - 1) : 0
-  var d = isLE ? -1 : 1
-  var s = buffer[offset + i]
+  var e, m,
+      eLen = nBytes * 8 - mLen - 1,
+      eMax = (1 << eLen) - 1,
+      eBias = eMax >> 1,
+      nBits = -7,
+      i = isLE ? (nBytes - 1) : 0,
+      d = isLE ? -1 : 1,
+      s = buffer[offset + i]
 
   i += d
 
@@ -2057,14 +1938,14 @@ exports.read = function (buffer, offset, isLE, mLen, nBytes) {
 }
 
 exports.write = function (buffer, value, offset, isLE, mLen, nBytes) {
-  var e, m, c
-  var eLen = nBytes * 8 - mLen - 1
-  var eMax = (1 << eLen) - 1
-  var eBias = eMax >> 1
-  var rt = (mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0)
-  var i = isLE ? 0 : (nBytes - 1)
-  var d = isLE ? 1 : -1
-  var s = value < 0 || (value === 0 && 1 / value < 0) ? 1 : 0
+  var e, m, c,
+      eLen = nBytes * 8 - mLen - 1,
+      eMax = (1 << eLen) - 1,
+      eBias = eMax >> 1,
+      rt = (mLen === 23 ? Math.pow(2, -24) - Math.pow(2, -77) : 0),
+      i = isLE ? 0 : (nBytes - 1),
+      d = isLE ? 1 : -1,
+      s = value < 0 || (value === 0 && 1 / value < 0) ? 1 : 0
 
   value = Math.abs(value)
 
@@ -7163,6 +7044,5355 @@ function hasOwnProperty(obj, prop) {
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
 },{"./support/isBuffer":32,"_process":12,"inherits":9}],34:[function(require,module,exports){
+
+/**
+ * This is the common logic for both the Node.js and web browser
+ * implementations of `debug()`.
+ *
+ * Expose `debug()` as the module.
+ */
+
+exports = module.exports = debug;
+exports.coerce = coerce;
+exports.disable = disable;
+exports.enable = enable;
+exports.enabled = enabled;
+exports.humanize = require('ms');
+
+/**
+ * The currently active debug mode names, and names to skip.
+ */
+
+exports.names = [];
+exports.skips = [];
+
+/**
+ * Map of special "%n" handling functions, for the debug "format" argument.
+ *
+ * Valid key names are a single, lowercased letter, i.e. "n".
+ */
+
+exports.formatters = {};
+
+/**
+ * Previously assigned color.
+ */
+
+var prevColor = 0;
+
+/**
+ * Previous log timestamp.
+ */
+
+var prevTime;
+
+/**
+ * Select a color.
+ *
+ * @return {Number}
+ * @api private
+ */
+
+function selectColor() {
+  return exports.colors[prevColor++ % exports.colors.length];
+}
+
+/**
+ * Create a debugger with the given `namespace`.
+ *
+ * @param {String} namespace
+ * @return {Function}
+ * @api public
+ */
+
+function debug(namespace) {
+
+  // define the `disabled` version
+  function disabled() {
+  }
+  disabled.enabled = false;
+
+  // define the `enabled` version
+  function enabled() {
+
+    var self = enabled;
+
+    // set `diff` timestamp
+    var curr = +new Date();
+    var ms = curr - (prevTime || curr);
+    self.diff = ms;
+    self.prev = prevTime;
+    self.curr = curr;
+    prevTime = curr;
+
+    // add the `color` if not set
+    if (null == self.useColors) self.useColors = exports.useColors();
+    if (null == self.color && self.useColors) self.color = selectColor();
+
+    var args = Array.prototype.slice.call(arguments);
+
+    args[0] = exports.coerce(args[0]);
+
+    if ('string' !== typeof args[0]) {
+      // anything else let's inspect with %o
+      args = ['%o'].concat(args);
+    }
+
+    // apply any `formatters` transformations
+    var index = 0;
+    args[0] = args[0].replace(/%([a-z%])/g, function(match, format) {
+      // if we encounter an escaped % then don't increase the array index
+      if (match === '%%') return match;
+      index++;
+      var formatter = exports.formatters[format];
+      if ('function' === typeof formatter) {
+        var val = args[index];
+        match = formatter.call(self, val);
+
+        // now we need to remove `args[index]` since it's inlined in the `format`
+        args.splice(index, 1);
+        index--;
+      }
+      return match;
+    });
+
+    if ('function' === typeof exports.formatArgs) {
+      args = exports.formatArgs.apply(self, args);
+    }
+    var logFn = console.log.bind(console);
+    logFn.apply(self, args);
+  }
+  enabled.enabled = true;
+
+  var fn = exports.enabled(namespace) ? enabled : disabled;
+
+  fn.namespace = namespace;
+
+  return fn;
+}
+
+/**
+ * Enables a debug mode by namespaces. This can include modes
+ * separated by a colon and wildcards.
+ *
+ * @param {String} namespaces
+ * @api public
+ */
+
+function enable(namespaces) {
+  exports.save(namespaces);
+
+  var split = (namespaces || '').split(/[\s,]+/);
+  var len = split.length;
+
+  for (var i = 0; i < len; i++) {
+    if (!split[i]) continue; // ignore empty strings
+    namespaces = split[i].replace(/\*/g, '.*?');
+    if (namespaces[0] === '-') {
+      exports.skips.push(new RegExp('^' + namespaces.substr(1) + '$'));
+    } else {
+      exports.names.push(new RegExp('^' + namespaces + '$'));
+    }
+  }
+}
+
+/**
+ * Disable debug output.
+ *
+ * @api public
+ */
+
+function disable() {
+  exports.enable('');
+}
+
+/**
+ * Returns true if the given mode name is enabled, false otherwise.
+ *
+ * @param {String} name
+ * @return {Boolean}
+ * @api public
+ */
+
+function enabled(name) {
+  var i, len;
+  for (i = 0, len = exports.skips.length; i < len; i++) {
+    if (exports.skips[i].test(name)) {
+      return false;
+    }
+  }
+  for (i = 0, len = exports.names.length; i < len; i++) {
+    if (exports.names[i].test(name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Coerce `val`.
+ *
+ * @param {Mixed} val
+ * @return {Mixed}
+ * @api private
+ */
+
+function coerce(val) {
+  if (val instanceof Error) return val.stack || val.message;
+  return val;
+}
+
+},{"ms":36}],35:[function(require,module,exports){
+(function(root) {
+  var localStorageMemory = {};
+  var cache = {};
+
+  /**
+   * number of stored items.
+   */
+  localStorageMemory.length = 0;
+
+  /**
+   * returns item for passed key, or null
+   *
+   * @para {String} key
+   *       name of item to be returned
+   * @returns {String|null}
+   */
+  localStorageMemory.getItem = function(key) {
+    return cache[key] || null;
+  };
+
+  /**
+   * sets item for key to passed value, as String
+   *
+   * @para {String} key
+   *       name of item to be set
+   * @para {String} value
+   *       value, will always be turned into a String
+   * @returns {undefined}
+   */
+  localStorageMemory.setItem = function(key, value) {
+    if (typeof value === 'undefined') {
+      localStorageMemory.removeItem(key);
+    } else {
+      cache[key] = '' + value;
+      localStorageMemory.length++;
+    }
+  };
+
+  /**
+   * removes item for passed key
+   *
+   * @para {String} key
+   *       name of item to be removed
+   * @returns {undefined}
+   */
+  localStorageMemory.removeItem = function(key) {
+    delete cache[key];
+    localStorageMemory.length--;
+  };
+
+  /**
+   * returns name of key at passed index
+   *
+   * @para {Number} index
+   *       Position for key to be returned (starts at 0)
+   * @returns {String|null}
+   */
+  localStorageMemory.key = function(index) {
+    return Object.keys(cache)[index] || null;
+  };
+
+  /**
+   * removes all stored items and sets length to 0
+   *
+   * @returns {undefined}
+   */
+  localStorageMemory.clear = function() {
+    cache = {};
+    localStorageMemory.length = 0;
+  };
+
+  if (typeof exports === 'object') {
+    module.exports = localStorageMemory;
+  } else {
+    root.localStorageMemory = localStorageMemory;
+  }
+})(this);
+
+
+
+},{}],36:[function(require,module,exports){
+/**
+ * Helpers.
+ */
+
+var s = 1000;
+var m = s * 60;
+var h = m * 60;
+var d = h * 24;
+var y = d * 365.25;
+
+/**
+ * Parse or format the given `val`.
+ *
+ * Options:
+ *
+ *  - `long` verbose formatting [false]
+ *
+ * @param {String|Number} val
+ * @param {Object} options
+ * @return {String|Number}
+ * @api public
+ */
+
+module.exports = function(val, options){
+  options = options || {};
+  if ('string' == typeof val) return parse(val);
+  return options.long
+    ? long(val)
+    : short(val);
+};
+
+/**
+ * Parse the given `str` and return milliseconds.
+ *
+ * @param {String} str
+ * @return {Number}
+ * @api private
+ */
+
+function parse(str) {
+  str = '' + str;
+  if (str.length > 10000) return;
+  var match = /^((?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|years?|yrs?|y)?$/i.exec(str);
+  if (!match) return;
+  var n = parseFloat(match[1]);
+  var type = (match[2] || 'ms').toLowerCase();
+  switch (type) {
+    case 'years':
+    case 'year':
+    case 'yrs':
+    case 'yr':
+    case 'y':
+      return n * y;
+    case 'days':
+    case 'day':
+    case 'd':
+      return n * d;
+    case 'hours':
+    case 'hour':
+    case 'hrs':
+    case 'hr':
+    case 'h':
+      return n * h;
+    case 'minutes':
+    case 'minute':
+    case 'mins':
+    case 'min':
+    case 'm':
+      return n * m;
+    case 'seconds':
+    case 'second':
+    case 'secs':
+    case 'sec':
+    case 's':
+      return n * s;
+    case 'milliseconds':
+    case 'millisecond':
+    case 'msecs':
+    case 'msec':
+    case 'ms':
+      return n;
+  }
+}
+
+/**
+ * Short format for `ms`.
+ *
+ * @param {Number} ms
+ * @return {String}
+ * @api private
+ */
+
+function short(ms) {
+  if (ms >= d) return Math.round(ms / d) + 'd';
+  if (ms >= h) return Math.round(ms / h) + 'h';
+  if (ms >= m) return Math.round(ms / m) + 'm';
+  if (ms >= s) return Math.round(ms / s) + 's';
+  return ms + 'ms';
+}
+
+/**
+ * Long format for `ms`.
+ *
+ * @param {Number} ms
+ * @return {String}
+ * @api private
+ */
+
+function long(ms) {
+  return plural(ms, d, 'day')
+    || plural(ms, h, 'hour')
+    || plural(ms, m, 'minute')
+    || plural(ms, s, 'second')
+    || ms + ' ms';
+}
+
+/**
+ * Pluralization helper.
+ */
+
+function plural(ms, n, name) {
+  if (ms < n) return;
+  if (ms < n * 1.5) return Math.floor(ms / n) + ' ' + name;
+  return Math.ceil(ms / n) + ' ' + name + 's';
+}
+
+},{}],37:[function(require,module,exports){
+(function (Buffer){
+/*!
+ * depd
+ * Copyright(c) 2014 Douglas Christopher Wilson
+ * MIT Licensed
+ */
+
+/**
+ * Module exports.
+ */
+
+module.exports = bufferConcat
+
+/**
+ * Concatenate an array of Buffers.
+ */
+
+function bufferConcat(bufs) {
+  var length = 0
+
+  for (var i = 0, len = bufs.length; i < len; i++) {
+    length += bufs[i].length
+  }
+
+  var buf = new Buffer(length)
+  var pos = 0
+
+  for (var i = 0, len = bufs.length; i < len; i++) {
+    bufs[i].copy(buf, pos)
+    pos += bufs[i].length
+  }
+
+  return buf
+}
+
+}).call(this,require("buffer").Buffer)
+},{"buffer":3}],38:[function(require,module,exports){
+/*!
+ * depd
+ * Copyright(c) 2014 Douglas Christopher Wilson
+ * MIT Licensed
+ */
+
+/**
+ * Module exports.
+ */
+
+module.exports = callSiteToString
+
+/**
+ * Format a CallSite file location to a string.
+ */
+
+function callSiteFileLocation(callSite) {
+  var fileName
+  var fileLocation = ''
+
+  if (callSite.isNative()) {
+    fileLocation = 'native'
+  } else if (callSite.isEval()) {
+    fileName = callSite.getScriptNameOrSourceURL()
+    if (!fileName) {
+      fileLocation = callSite.getEvalOrigin()
+    }
+  } else {
+    fileName = callSite.getFileName()
+  }
+
+  if (fileName) {
+    fileLocation += fileName
+
+    var lineNumber = callSite.getLineNumber()
+    if (lineNumber != null) {
+      fileLocation += ':' + lineNumber
+
+      var columnNumber = callSite.getColumnNumber()
+      if (columnNumber) {
+        fileLocation += ':' + columnNumber
+      }
+    }
+  }
+
+  return fileLocation || 'unknown source'
+}
+
+/**
+ * Format a CallSite to a string.
+ */
+
+function callSiteToString(callSite) {
+  var addSuffix = true
+  var fileLocation = callSiteFileLocation(callSite)
+  var functionName = callSite.getFunctionName()
+  var isConstructor = callSite.isConstructor()
+  var isMethodCall = !(callSite.isToplevel() || isConstructor)
+  var line = ''
+
+  if (isMethodCall) {
+    var methodName = callSite.getMethodName()
+    var typeName = getConstructorName(callSite)
+
+    if (functionName) {
+      if (typeName && functionName.indexOf(typeName) !== 0) {
+        line += typeName + '.'
+      }
+
+      line += functionName
+
+      if (methodName && functionName.lastIndexOf('.' + methodName) !== functionName.length - methodName.length - 1) {
+        line += ' [as ' + methodName + ']'
+      }
+    } else {
+      line += typeName + '.' + (methodName || '<anonymous>')
+    }
+  } else if (isConstructor) {
+    line += 'new ' + (functionName || '<anonymous>')
+  } else if (functionName) {
+    line += functionName
+  } else {
+    addSuffix = false
+    line += fileLocation
+  }
+
+  if (addSuffix) {
+    line += ' (' + fileLocation + ')'
+  }
+
+  return line
+}
+
+/**
+ * Get constructor name of reviver.
+ */
+
+function getConstructorName(obj) {
+  var receiver = obj.receiver
+  return (receiver.constructor && receiver.constructor.name) || null
+}
+
+},{}],39:[function(require,module,exports){
+(function (Buffer){
+/*!
+ * depd
+ * Copyright(c) 2014 Douglas Christopher Wilson
+ * MIT Licensed
+ */
+
+/**
+ * Module exports.
+ */
+
+lazyProperty(module.exports, 'bufferConcat', function bufferConcat() {
+  return Buffer.concat || require('./buffer-concat')
+})
+
+lazyProperty(module.exports, 'callSiteToString', function callSiteToString() {
+  var limit = Error.stackTraceLimit
+  var obj = {}
+  var prep = Error.prepareStackTrace
+
+  function prepareObjectStackTrace(obj, stack) {
+    return stack
+  }
+
+  Error.prepareStackTrace = prepareObjectStackTrace
+  Error.stackTraceLimit = 2
+
+  // capture the stack
+  Error.captureStackTrace(obj)
+
+  // slice the stack
+  var stack = obj.stack.slice()
+
+  Error.prepareStackTrace = prep
+  Error.stackTraceLimit = limit
+
+  return stack[0].toString ? toString : require('./callsite-tostring')
+})
+
+/**
+ * Define a lazy property.
+ */
+
+function lazyProperty(obj, prop, getter) {
+  function get() {
+    var val = getter()
+
+    Object.defineProperty(obj, prop, {
+      configurable: true,
+      enumerable: true,
+      value: val
+    })
+
+    return val
+  }
+
+  Object.defineProperty(obj, prop, {
+    configurable: true,
+    enumerable: true,
+    get: get
+  })
+}
+
+/**
+ * Call toString() on the obj
+ */
+
+function toString(obj) {
+  return obj.toString()
+}
+
+}).call(this,require("buffer").Buffer)
+},{"./buffer-concat":37,"./callsite-tostring":38,"buffer":3}],40:[function(require,module,exports){
+arguments[4][9][0].apply(exports,arguments)
+},{"dup":9}],41:[function(require,module,exports){
+var dezalgo = require('dezalgo')
+
+module.exports = function (tasks, cb) {
+  var current = 0
+  var results = []
+  if (cb) cb = dezalgo(cb)
+
+  function done (err, result) {
+    results.push(result)
+    if (++current >= tasks.length || err) {
+      if (cb) cb(err, results)
+    } else {
+      tasks[current](done)
+    }
+  }
+
+  if (tasks.length) {
+    tasks[0](done)
+  } else {
+    if (cb) cb(null, results)
+  }
+}
+
+},{"dezalgo":42}],42:[function(require,module,exports){
+var wrappy = require('wrappy')
+module.exports = wrappy(dezalgo)
+
+var asap = require('asap')
+
+function dezalgo (cb) {
+  var sync = true
+  asap(function () {
+    sync = false
+  })
+
+  return function zalgoSafe() {
+    var args = arguments
+    var me = this
+    if (sync)
+      asap(function() {
+        cb.apply(me, args)
+      })
+    else
+      cb.apply(me, args)
+  }
+}
+
+},{"asap":43,"wrappy":45}],43:[function(require,module,exports){
+"use strict";
+
+// rawAsap provides everything we need except exception management.
+var rawAsap = require("./raw");
+// RawTasks are recycled to reduce GC churn.
+var freeTasks = [];
+// We queue errors to ensure they are thrown in right order (FIFO).
+// Array-as-queue is good enough here, since we are just dealing with exceptions.
+var pendingErrors = [];
+var requestErrorThrow = rawAsap.makeRequestCallFromTimer(throwFirstError);
+
+function throwFirstError() {
+    if (pendingErrors.length) {
+        throw pendingErrors.shift();
+    }
+}
+
+/**
+ * Calls a task as soon as possible after returning, in its own event, with priority
+ * over other events like animation, reflow, and repaint. An error thrown from an
+ * event will not interrupt, nor even substantially slow down the processing of
+ * other events, but will be rather postponed to a lower priority event.
+ * @param {{call}} task A callable object, typically a function that takes no
+ * arguments.
+ */
+module.exports = asap;
+function asap(task) {
+    var rawTask;
+    if (freeTasks.length) {
+        rawTask = freeTasks.pop();
+    } else {
+        rawTask = new RawTask();
+    }
+    rawTask.task = task;
+    rawAsap(rawTask);
+}
+
+// We wrap tasks with recyclable task objects.  A task object implements
+// `call`, just like a function.
+function RawTask() {
+    this.task = null;
+}
+
+// The sole purpose of wrapping the task is to catch the exception and recycle
+// the task object after its single use.
+RawTask.prototype.call = function () {
+    try {
+        this.task.call();
+    } catch (error) {
+        if (asap.onerror) {
+            // This hook exists purely for testing purposes.
+            // Its name will be periodically randomized to break any code that
+            // depends on its existence.
+            asap.onerror(error);
+        } else {
+            // In a web browser, exceptions are not fatal. However, to avoid
+            // slowing down the queue of pending tasks, we rethrow the error in a
+            // lower priority turn.
+            pendingErrors.push(error);
+            requestErrorThrow();
+        }
+    } finally {
+        this.task = null;
+        freeTasks[freeTasks.length] = this;
+    }
+};
+
+},{"./raw":44}],44:[function(require,module,exports){
+(function (global){
+"use strict";
+
+// Use the fastest means possible to execute a task in its own turn, with
+// priority over other events including IO, animation, reflow, and redraw
+// events in browsers.
+//
+// An exception thrown by a task will permanently interrupt the processing of
+// subsequent tasks. The higher level `asap` function ensures that if an
+// exception is thrown by a task, that the task queue will continue flushing as
+// soon as possible, but if you use `rawAsap` directly, you are responsible to
+// either ensure that no exceptions are thrown from your task, or to manually
+// call `rawAsap.requestFlush` if an exception is thrown.
+module.exports = rawAsap;
+function rawAsap(task) {
+    if (!queue.length) {
+        requestFlush();
+        flushing = true;
+    }
+    // Equivalent to push, but avoids a function call.
+    queue[queue.length] = task;
+}
+
+var queue = [];
+// Once a flush has been requested, no further calls to `requestFlush` are
+// necessary until the next `flush` completes.
+var flushing = false;
+// `requestFlush` is an implementation-specific method that attempts to kick
+// off a `flush` event as quickly as possible. `flush` will attempt to exhaust
+// the event queue before yielding to the browser's own event loop.
+var requestFlush;
+// The position of the next task to execute in the task queue. This is
+// preserved between calls to `flush` so that it can be resumed if
+// a task throws an exception.
+var index = 0;
+// If a task schedules additional tasks recursively, the task queue can grow
+// unbounded. To prevent memory exhaustion, the task queue will periodically
+// truncate already-completed tasks.
+var capacity = 1024;
+
+// The flush function processes all tasks that have been scheduled with
+// `rawAsap` unless and until one of those tasks throws an exception.
+// If a task throws an exception, `flush` ensures that its state will remain
+// consistent and will resume where it left off when called again.
+// However, `flush` does not make any arrangements to be called again if an
+// exception is thrown.
+function flush() {
+    while (index < queue.length) {
+        var currentIndex = index;
+        // Advance the index before calling the task. This ensures that we will
+        // begin flushing on the next task the task throws an error.
+        index = index + 1;
+        queue[currentIndex].call();
+        // Prevent leaking memory for long chains of recursive calls to `asap`.
+        // If we call `asap` within tasks scheduled by `asap`, the queue will
+        // grow, but to avoid an O(n) walk for every task we execute, we don't
+        // shift tasks off the queue after they have been executed.
+        // Instead, we periodically shift 1024 tasks off the queue.
+        if (index > capacity) {
+            // Manually shift all values starting at the index back to the
+            // beginning of the queue.
+            for (var scan = 0, newLength = queue.length - index; scan < newLength; scan++) {
+                queue[scan] = queue[scan + index];
+            }
+            queue.length -= index;
+            index = 0;
+        }
+    }
+    queue.length = 0;
+    index = 0;
+    flushing = false;
+}
+
+// `requestFlush` is implemented using a strategy based on data collected from
+// every available SauceLabs Selenium web driver worker at time of writing.
+// https://docs.google.com/spreadsheets/d/1mG-5UYGup5qxGdEMWkhP6BWCz053NUb2E1QoUTU16uA/edit#gid=783724593
+
+// Safari 6 and 6.1 for desktop, iPad, and iPhone are the only browsers that
+// have WebKitMutationObserver but not un-prefixed MutationObserver.
+// Must use `global` instead of `window` to work in both frames and web
+// workers. `global` is a provision of Browserify, Mr, Mrs, or Mop.
+var BrowserMutationObserver = global.MutationObserver || global.WebKitMutationObserver;
+
+// MutationObservers are desirable because they have high priority and work
+// reliably everywhere they are implemented.
+// They are implemented in all modern browsers.
+//
+// - Android 4-4.3
+// - Chrome 26-34
+// - Firefox 14-29
+// - Internet Explorer 11
+// - iPad Safari 6-7.1
+// - iPhone Safari 7-7.1
+// - Safari 6-7
+if (typeof BrowserMutationObserver === "function") {
+    requestFlush = makeRequestCallFromMutationObserver(flush);
+
+// MessageChannels are desirable because they give direct access to the HTML
+// task queue, are implemented in Internet Explorer 10, Safari 5.0-1, and Opera
+// 11-12, and in web workers in many engines.
+// Although message channels yield to any queued rendering and IO tasks, they
+// would be better than imposing the 4ms delay of timers.
+// However, they do not work reliably in Internet Explorer or Safari.
+
+// Internet Explorer 10 is the only browser that has setImmediate but does
+// not have MutationObservers.
+// Although setImmediate yields to the browser's renderer, it would be
+// preferrable to falling back to setTimeout since it does not have
+// the minimum 4ms penalty.
+// Unfortunately there appears to be a bug in Internet Explorer 10 Mobile (and
+// Desktop to a lesser extent) that renders both setImmediate and
+// MessageChannel useless for the purposes of ASAP.
+// https://github.com/kriskowal/q/issues/396
+
+// Timers are implemented universally.
+// We fall back to timers in workers in most engines, and in foreground
+// contexts in the following browsers.
+// However, note that even this simple case requires nuances to operate in a
+// broad spectrum of browsers.
+//
+// - Firefox 3-13
+// - Internet Explorer 6-9
+// - iPad Safari 4.3
+// - Lynx 2.8.7
+} else {
+    requestFlush = makeRequestCallFromTimer(flush);
+}
+
+// `requestFlush` requests that the high priority event queue be flushed as
+// soon as possible.
+// This is useful to prevent an error thrown in a task from stalling the event
+// queue if the exception handled by Node.js’s
+// `process.on("uncaughtException")` or by a domain.
+rawAsap.requestFlush = requestFlush;
+
+// To request a high priority event, we induce a mutation observer by toggling
+// the text of a text node between "1" and "-1".
+function makeRequestCallFromMutationObserver(callback) {
+    var toggle = 1;
+    var observer = new BrowserMutationObserver(callback);
+    var node = document.createTextNode("");
+    observer.observe(node, {characterData: true});
+    return function requestCall() {
+        toggle = -toggle;
+        node.data = toggle;
+    };
+}
+
+// The message channel technique was discovered by Malte Ubl and was the
+// original foundation for this library.
+// http://www.nonblocking.io/2011/06/windownexttick.html
+
+// Safari 6.0.5 (at least) intermittently fails to create message ports on a
+// page's first load. Thankfully, this version of Safari supports
+// MutationObservers, so we don't need to fall back in that case.
+
+// function makeRequestCallFromMessageChannel(callback) {
+//     var channel = new MessageChannel();
+//     channel.port1.onmessage = callback;
+//     return function requestCall() {
+//         channel.port2.postMessage(0);
+//     };
+// }
+
+// For reasons explained above, we are also unable to use `setImmediate`
+// under any circumstances.
+// Even if we were, there is another bug in Internet Explorer 10.
+// It is not sufficient to assign `setImmediate` to `requestFlush` because
+// `setImmediate` must be called *by name* and therefore must be wrapped in a
+// closure.
+// Never forget.
+
+// function makeRequestCallFromSetImmediate(callback) {
+//     return function requestCall() {
+//         setImmediate(callback);
+//     };
+// }
+
+// Safari 6.0 has a problem where timers will get lost while the user is
+// scrolling. This problem does not impact ASAP because Safari 6.0 supports
+// mutation observers, so that implementation is used instead.
+// However, if we ever elect to use timers in Safari, the prevalent work-around
+// is to add a scroll event listener that calls for a flush.
+
+// `setTimeout` does not call the passed callback if the delay is less than
+// approximately 7 in web workers in Firefox 8 through 18, and sometimes not
+// even then.
+
+function makeRequestCallFromTimer(callback) {
+    return function requestCall() {
+        // We dispatch a timeout with a specified delay of 0 for engines that
+        // can reliably accommodate that request. This will usually be snapped
+        // to a 4 milisecond delay, but once we're flushing, there's no delay
+        // between events.
+        var timeoutHandle = setTimeout(handleTimer, 0);
+        // However, since this timer gets frequently dropped in Firefox
+        // workers, we enlist an interval handle that will try to fire
+        // an event 20 times per second until it succeeds.
+        var intervalHandle = setInterval(handleTimer, 50);
+
+        function handleTimer() {
+            // Whichever timer succeeds will cancel both timers and
+            // execute the callback.
+            clearTimeout(timeoutHandle);
+            clearInterval(intervalHandle);
+            callback();
+        }
+    };
+}
+
+// This is for `asap.js` only.
+// Its name will be periodically randomized to break any code that depends on
+// its existence.
+rawAsap.makeRequestCallFromTimer = makeRequestCallFromTimer;
+
+// ASAP was originally a nextTick shim included in Q. This was factored out
+// into this ASAP package. It was later adapted to RSVP which made further
+// amendments. These decisions, particularly to marginalize MessageChannel and
+// to capture the MutationObserver implementation in a closure, were integrated
+// back into ASAP proper.
+// https://github.com/tildeio/rsvp.js/blob/cddf7232546a9cf858524b75cde6f9edf72620a7/lib/rsvp/asap.js
+
+}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+},{}],45:[function(require,module,exports){
+// Returns a wrapper function that returns a wrapped callback
+// The wrapper function should do some stuff, and return a
+// presumably different callback function.
+// This makes sure that own properties are retained, so that
+// decorations and such are not lost along the way.
+module.exports = wrappy
+function wrappy (fn, cb) {
+  if (fn && cb) return wrappy(fn)(cb)
+
+  if (typeof fn !== 'function')
+    throw new TypeError('need wrapper function')
+
+  Object.keys(fn).forEach(function (k) {
+    wrapper[k] = fn[k]
+  })
+
+  return wrapper
+
+  function wrapper() {
+    var args = new Array(arguments.length)
+    for (var i = 0; i < args.length; i++) {
+      args[i] = arguments[i]
+    }
+    var ret = fn.apply(this, args)
+    var cb = args[args.length-1]
+    if (typeof ret === 'function' && ret !== cb) {
+      Object.keys(cb).forEach(function (k) {
+        ret[k] = cb[k]
+      })
+    }
+    return ret
+  }
+}
+
+},{}],46:[function(require,module,exports){
+var ClientRequest = require('./lib/request')
+var extend = require('xtend')
+var statusCodes = require('builtin-status-codes')
+var url = require('url')
+
+var http = exports
+
+http.request = function (opts, cb) {
+	if (typeof opts === 'string')
+		opts = url.parse(opts)
+	else
+		opts = extend(opts)
+
+	// Split opts.host into its components
+	var hostHostname = opts.host ? opts.host.split(':')[0] : null
+	var hostPort = opts.host ? parseInt(opts.host.split(':')[1], 10) : null
+
+	opts.method = opts.method || 'GET'
+	opts.headers = opts.headers || {}
+	opts.path = opts.path || '/'
+	opts.protocol = opts.protocol || window.location.protocol
+	// If the hostname is provided, use the default port for the protocol. If
+	// the url is instead relative, use window.location.port
+	var defaultPort = (opts.hostname || hostHostname) ? (opts.protocol === 'https:' ? 443 : 80) : window.location.port
+	opts.hostname = opts.hostname || hostHostname || window.location.hostname
+	opts.port = opts.port || hostPort || defaultPort
+
+	// Also valid opts.auth, opts.mode
+
+	var req = new ClientRequest(opts)
+	if (cb)
+		req.on('response', cb)
+	return req
+}
+
+http.get = function get (opts, cb) {
+	var req = http.request(opts, cb)
+	req.end()
+	return req
+}
+
+http.Agent = function () {}
+http.Agent.defaultMaxSockets = 4
+
+http.STATUS_CODES = statusCodes
+
+http.METHODS = [
+	'GET',
+	'POST',
+	'PUT',
+	'DELETE' // TODO: include the methods from RFC 2616 and 2518?
+]
+},{"./lib/request":48,"builtin-status-codes":50,"url":31,"xtend":56}],47:[function(require,module,exports){
+exports.fetch = isFunction(window.fetch) && isFunction(window.ReadableByteStream)
+
+exports.blobConstructor = false
+try {
+	new Blob([new ArrayBuffer(1)])
+	exports.blobConstructor = true
+} catch (e) {}
+
+var xhr = new window.XMLHttpRequest()
+xhr.open('GET', '/')
+
+function checkTypeSupport (type) {
+	try {
+		xhr.responseType = type
+		return xhr.responseType === type
+	} catch (e) {}
+	return false
+}
+
+var haveArrayBuffer = isFunction(window.ArrayBuffer)
+var haveSlice = haveArrayBuffer && isFunction(window.ArrayBuffer.prototype.slice)
+
+exports.arraybuffer = haveArrayBuffer && checkTypeSupport('arraybuffer')
+exports.msstream = haveSlice && checkTypeSupport('ms-stream')
+exports.mozchunkedarraybuffer = haveArrayBuffer && checkTypeSupport('moz-chunked-arraybuffer')
+exports.overrideMimeType = isFunction(xhr.overrideMimeType)
+exports.vbArray = isFunction(window.VBArray)
+
+function isFunction (value) {
+  return typeof value === 'function'
+}
+
+xhr = null // Help gc
+},{}],48:[function(require,module,exports){
+(function (process,Buffer){
+var capability = require('./capability')
+var foreach = require('foreach')
+var indexOf = require('indexof')
+var inherits = require('inherits')
+var keys = require('object-keys')
+var response = require('./response')
+var stream = require('stream')
+
+var IncomingMessage = response.IncomingMessage
+var rStates = response.readyStates
+
+function decideMode (preferBinary) {
+	if (capability.fetch) {
+		return 'fetch'
+	} else if (capability.mozchunkedarraybuffer) {
+		return 'moz-chunked-arraybuffer'
+	} else if (capability.msstream) {
+		return 'ms-stream'
+	} else if (capability.arraybuffer && preferBinary) {
+		return 'arraybuffer'
+	} else if (capability.vbArray && preferBinary) {
+		return 'text:vbarray'
+	} else {
+		return 'text'
+	}
+}
+
+var ClientRequest = module.exports = function (opts) {
+	var self = this
+	stream.Writable.call(self)
+
+	self._opts = opts
+	self._url = opts.protocol + '//' + opts.hostname + ':' + opts.port + opts.path
+	self._body = []
+	self._headers = {}
+	if (opts.auth)
+		self.setHeader('Authorization', 'Basic ' + new Buffer(opts.auth).toString('base64'))
+	foreach(keys(opts.headers), function (name) {
+		self.setHeader(name, opts.headers[name])
+	})
+
+	var preferBinary
+	if (opts.mode === 'prefer-streaming') {
+		// If streaming is a high priority but binary compatibility isn't
+		preferBinary = false
+	} else if (opts.mode === 'prefer-fast') {
+		// If binary is preferred for speed
+		preferBinary = true
+	} else if (!opts.mode || opts.mode === 'default') {
+		// By default, use binary if text streaming may corrupt data
+		preferBinary = !capability.overrideMimeType
+	} else {
+		throw new Error('Invalid value for opts.mode')
+	}
+	self._mode = decideMode(preferBinary)
+
+	self.on('finish', function () {
+		self._onFinish()
+	})
+}
+
+inherits(ClientRequest, stream.Writable)
+
+ClientRequest.prototype.setHeader = function (name, value) {
+	var self = this
+	var lowerName = name.toLowerCase()
+	// This check is not necessary, but it prevents warnings from browsers about setting unsafe
+	// headers. To be honest I'm not entirely sure hiding these warnings is a good thing, but
+	// http-browserify did it, so I will too.
+	if (indexOf(unsafeHeaders, lowerName) !== -1)
+		return
+
+	self._headers[lowerName] = {
+		name: name,
+		value: value
+	}
+}
+
+ClientRequest.prototype.getHeader = function (name) {
+	var self = this
+	return self._headers[name.toLowerCase()].value
+}
+
+ClientRequest.prototype.removeHeader = function (name) {
+	var self = this
+	delete self._headers[name.toLowerCase()]
+}
+
+ClientRequest.prototype._onFinish = function () {
+	var self = this
+
+	if (self._destroyed)
+		return
+	var opts = self._opts
+
+	var headersObj = self._headers
+	var body
+	if (opts.method === 'POST' || opts.method === 'PUT') {
+		if (capability.blobConstructor) {
+			body = new window.Blob(self._body.map(function (buffer) {
+				return buffer.toArrayBuffer()
+			}), {
+				type: (headersObj['content-type'] || {}).value || ''
+			})
+		} else {
+			// get utf8 string
+			body = Buffer.concat(self._body).toString()
+		}
+	}
+
+	if (self._mode === 'fetch') {
+		var headers = keys(headersObj).map(function (name) {
+			return [headersObj[name].name, headersObj[name].value]
+		})
+
+		window.fetch(self._url, {
+			method: self._opts.method,
+			headers: headers,
+			body: body,
+			mode: 'cors',
+			credentials: opts.withCredentials ? 'include' : 'same-origin'
+		}).then(function (response) {
+			self._fetchResponse = response
+			self._connect()
+		}).then(undefined, function (reason) {
+			self.emit('error', reason)
+		})
+	} else {
+		var xhr = self._xhr = new window.XMLHttpRequest()
+		try {
+			xhr.open(self._opts.method, self._url, true)
+		} catch (err) {
+			process.nextTick(function () {
+				self.emit('error', err)
+			})
+			return
+		}
+
+		// Can't set responseType on really old browsers
+		if ('responseType' in xhr)
+			xhr.responseType = self._mode.split(':')[0]
+
+		if ('withCredentials' in xhr)
+			xhr.withCredentials = !!opts.withCredentials
+
+		if (self._mode === 'text' && 'overrideMimeType' in xhr)
+			xhr.overrideMimeType('text/plain; charset=x-user-defined')
+
+		foreach(keys(headersObj), function (name) {
+			xhr.setRequestHeader(headersObj[name].name, headersObj[name].value)
+		})
+
+		self._response = null
+		xhr.onreadystatechange = function () {
+			switch (xhr.readyState) {
+				case rStates.LOADING:
+				case rStates.DONE:
+					self._onXHRProgress()
+					break
+			}
+		}
+		// Necessary for streaming in Firefox, since xhr.response is ONLY defined
+		// in onprogress, not in onreadystatechange with xhr.readyState = 3
+		if (self._mode === 'moz-chunked-arraybuffer') {
+			xhr.onprogress = function () {
+				self._onXHRProgress()
+			}
+		}
+
+		xhr.onerror = function () {
+			if (self._destroyed)
+				return
+			self.emit('error', new Error('XHR error'))
+		}
+
+		try {
+			xhr.send(body)
+		} catch (err) {
+			process.nextTick(function () {
+				self.emit('error', err)
+			})
+			return
+		}
+	}
+}
+
+/**
+ * Checks if xhr.status is readable. Even though the spec says it should
+ * be available in readyState 3, accessing it throws an exception in IE8
+ */
+function statusValid (xhr) {
+	try {
+		return (xhr.status !== null)
+	} catch (e) {
+		return false
+	}
+}
+
+ClientRequest.prototype._onXHRProgress = function () {
+	var self = this
+
+	if (!statusValid(self._xhr) || self._destroyed)
+		return
+
+	if (!self._response)
+		self._connect()
+
+	self._response._onXHRProgress()
+}
+
+ClientRequest.prototype._connect = function () {
+	var self = this
+
+	if (self._destroyed)
+		return
+
+	self._response = new IncomingMessage(self._xhr, self._fetchResponse, self._mode)
+	self.emit('response', self._response)
+}
+
+ClientRequest.prototype._write = function (chunk, encoding, cb) {
+	var self = this
+
+	self._body.push(chunk)
+	cb()
+}
+
+ClientRequest.prototype.abort = ClientRequest.prototype.destroy = function () {
+	var self = this
+	self._destroyed = true
+	if (self._response)
+		self._response._destroyed = true
+	if (self._xhr)
+		self._xhr.abort()
+	// Currently, there isn't a way to truly abort a fetch.
+	// If you like bikeshedding, see https://github.com/whatwg/fetch/issues/27
+}
+
+ClientRequest.prototype.end = function (data, encoding, cb) {
+	var self = this
+	if (typeof data === 'function') {
+		cb = data
+		data = undefined
+	}
+
+	if (data)
+		stream.Writable.push.call(self, data, encoding)
+
+	stream.Writable.prototype.end.call(self, cb)
+}
+
+ClientRequest.prototype.flushHeaders = function () {}
+ClientRequest.prototype.setTimeout = function () {}
+ClientRequest.prototype.setNoDelay = function () {}
+ClientRequest.prototype.setSocketKeepAlive = function () {}
+
+// Taken from http://www.w3.org/TR/XMLHttpRequest/#the-setrequestheader%28%29-method
+var unsafeHeaders = [
+	'accept-charset',
+	'accept-encoding',
+	'access-control-request-headers',
+	'access-control-request-method',
+	'connection',
+	'content-length',
+	'cookie',
+	'cookie2',
+	'date',
+	'dnt',
+	'expect',
+	'host',
+	'keep-alive',
+	'origin',
+	'referer',
+	'te',
+	'trailer',
+	'transfer-encoding',
+	'upgrade',
+	'user-agent',
+	'via'
+]
+
+}).call(this,require('_process'),require("buffer").Buffer)
+},{"./capability":47,"./response":49,"_process":12,"buffer":3,"foreach":51,"indexof":52,"inherits":53,"object-keys":54,"stream":28}],49:[function(require,module,exports){
+(function (process,Buffer){
+var capability = require('./capability')
+var foreach = require('foreach')
+var inherits = require('inherits')
+var stream = require('stream')
+
+var rStates = exports.readyStates = {
+	UNSENT: 0,
+	OPENED: 1,
+	HEADERS_RECEIVED: 2,
+	LOADING: 3,
+	DONE: 4
+}
+
+var IncomingMessage = exports.IncomingMessage = function (xhr, response, mode) {
+	var self = this
+	stream.Readable.call(self)
+
+	self._mode = mode
+	self.headers = {}
+	self.rawHeaders = []
+	self.trailers = {}
+	self.rawTrailers = []
+
+	// Fake the 'close' event, but only once 'end' fires
+	self.on('end', function () {
+		// The nextTick is necessary to prevent the 'request' module from causing an infinite loop
+		process.nextTick(function () {
+			self.emit('close')
+		})
+	})
+
+	if (mode === 'fetch') {
+		self._fetchResponse = response
+
+		self.statusCode = response.status
+		self.statusMessage = response.statusText
+		// backwards compatible version of for (<item> of <iterable>):
+		// for (var <item>,_i,_it = <iterable>[Symbol.iterator](); <item> = (_i = _it.next()).value,!_i.done;)
+		for (var header, _i, _it = response.headers[Symbol.iterator](); header = (_i = _it.next()).value, !_i.done;) {
+			self.headers[header[0].toLowerCase()] = header[1]
+			self.rawHeaders.push(header[0], header[1])
+		}
+
+		// TODO: this doesn't respect backpressure. Once WritableStream is available, this can be fixed
+		var reader = response.body.getReader()
+		function read () {
+			reader.read().then(function (result) {
+				if (self._destroyed)
+					return
+				if (result.done) {
+					self.push(null)
+					return
+				}
+				self.push(new Buffer(result.value))
+				read()
+			})
+		}
+		read()
+
+	} else {
+		self._xhr = xhr
+		self._pos = 0
+
+		self.statusCode = xhr.status
+		self.statusMessage = xhr.statusText
+		var headers = xhr.getAllResponseHeaders().split(/\r?\n/)
+		foreach(headers, function (header) {
+			var matches = header.match(/^([^:]+):\s*(.*)/)
+			if (matches) {
+				var key = matches[1].toLowerCase()
+				if (self.headers[key] !== undefined)
+					self.headers[key] += ', ' + matches[2]
+				else
+					self.headers[key] = matches[2]
+				self.rawHeaders.push(matches[1], matches[2])
+			}
+		})
+
+		self._charset = 'x-user-defined'
+		if (!capability.overrideMimeType) {
+			var mimeType = self.rawHeaders['mime-type']
+			if (mimeType) {
+				var charsetMatch = mimeType.match(/;\s*charset=([^;])(;|$)/)
+				if (charsetMatch) {
+					self._charset = charsetMatch[1].toLowerCase()
+				}
+			}
+			if (!self._charset)
+				self._charset = 'utf-8' // best guess
+		}
+	}
+}
+
+inherits(IncomingMessage, stream.Readable)
+
+IncomingMessage.prototype._read = function () {}
+
+IncomingMessage.prototype._onXHRProgress = function () {
+	var self = this
+
+	var xhr = self._xhr
+
+	var response = null
+	switch (self._mode) {
+		case 'text:vbarray': // For IE9
+			if (xhr.readyState !== rStates.DONE)
+				break
+			try {
+				// This fails in IE8
+				response = new window.VBArray(xhr.responseBody).toArray()
+			} catch (e) {}
+			if (response !== null) {
+				self.push(new Buffer(response))
+				break
+			}
+			// Falls through in IE8	
+		case 'text':
+			try { // This will fail when readyState = 3 in IE9. Switch mode and wait for readyState = 4
+				response = xhr.responseText
+			} catch (e) {
+				self._mode = 'text:vbarray'
+				break
+			}
+			if (response.length > self._pos) {
+				var newData = response.substr(self._pos)
+				if (self._charset === 'x-user-defined') {
+					var buffer = new Buffer(newData.length)
+					for (var i = 0; i < newData.length; i++)
+						buffer[i] = newData.charCodeAt(i) & 0xff
+
+					self.push(buffer)
+				} else {
+					self.push(newData, self._charset)
+				}
+				self._pos = response.length
+			}
+			break
+		case 'arraybuffer':
+			if (xhr.readyState !== rStates.DONE)
+				break
+			response = xhr.response
+			self.push(new Buffer(new Uint8Array(response)))
+			break
+		case 'moz-chunked-arraybuffer': // take whole
+			response = xhr.response
+			if (xhr.readyState !== rStates.LOADING || !response)
+				break
+			self.push(new Buffer(new Uint8Array(response)))
+			break
+		case 'ms-stream':
+			response = xhr.response
+			if (xhr.readyState !== rStates.LOADING)
+				break
+			var reader = new window.MSStreamReader()
+			reader.onprogress = function () {
+				if (reader.result.byteLength > self._pos) {
+					self.push(new Buffer(new Uint8Array(reader.result.slice(self._pos))))
+					self._pos = reader.result.byteLength
+				}
+			}
+			reader.onload = function () {
+				self.push(null)
+			}
+			// reader.onerror = ??? // TODO: this
+			reader.readAsArrayBuffer(response)
+			break
+	}
+
+	// The ms-stream case handles end separately in reader.onload()
+	if (self._xhr.readyState === rStates.DONE && self._mode !== 'ms-stream') {
+		self.push(null)
+	}
+}
+
+}).call(this,require('_process'),require("buffer").Buffer)
+},{"./capability":47,"_process":12,"buffer":3,"foreach":51,"inherits":53,"stream":28}],50:[function(require,module,exports){
+module.exports = {
+  "100": "Continue",
+  "101": "Switching Protocols",
+  "102": "Processing",
+  "200": "OK",
+  "201": "Created",
+  "202": "Accepted",
+  "203": "Non-Authoritative Information",
+  "204": "No Content",
+  "205": "Reset Content",
+  "206": "Partial Content",
+  "207": "Multi-Status",
+  "300": "Multiple Choices",
+  "301": "Moved Permanently",
+  "302": "Moved Temporarily",
+  "303": "See Other",
+  "304": "Not Modified",
+  "305": "Use Proxy",
+  "307": "Temporary Redirect",
+  "308": "Permanent Redirect",
+  "400": "Bad Request",
+  "401": "Unauthorized",
+  "402": "Payment Required",
+  "403": "Forbidden",
+  "404": "Not Found",
+  "405": "Method Not Allowed",
+  "406": "Not Acceptable",
+  "407": "Proxy Authentication Required",
+  "408": "Request Time-out",
+  "409": "Conflict",
+  "410": "Gone",
+  "411": "Length Required",
+  "412": "Precondition Failed",
+  "413": "Request Entity Too Large",
+  "414": "Request-URI Too Large",
+  "415": "Unsupported Media Type",
+  "416": "Requested Range Not Satisfiable",
+  "417": "Expectation Failed",
+  "418": "I'm a teapot",
+  "422": "Unprocessable Entity",
+  "423": "Locked",
+  "424": "Failed Dependency",
+  "425": "Unordered Collection",
+  "426": "Upgrade Required",
+  "428": "Precondition Required",
+  "429": "Too Many Requests",
+  "431": "Request Header Fields Too Large",
+  "500": "Internal Server Error",
+  "501": "Not Implemented",
+  "502": "Bad Gateway",
+  "503": "Service Unavailable",
+  "504": "Gateway Time-out",
+  "505": "HTTP Version Not Supported",
+  "506": "Variant Also Negotiates",
+  "507": "Insufficient Storage",
+  "509": "Bandwidth Limit Exceeded",
+  "510": "Not Extended",
+  "511": "Network Authentication Required"
+}
+
+},{}],51:[function(require,module,exports){
+
+var hasOwn = Object.prototype.hasOwnProperty;
+var toString = Object.prototype.toString;
+
+module.exports = function forEach (obj, fn, ctx) {
+    if (toString.call(fn) !== '[object Function]') {
+        throw new TypeError('iterator must be a function');
+    }
+    var l = obj.length;
+    if (l === +l) {
+        for (var i = 0; i < l; i++) {
+            fn.call(ctx, obj[i], i, obj);
+        }
+    } else {
+        for (var k in obj) {
+            if (hasOwn.call(obj, k)) {
+                fn.call(ctx, obj[k], k, obj);
+            }
+        }
+    }
+};
+
+
+},{}],52:[function(require,module,exports){
+
+var indexOf = [].indexOf;
+
+module.exports = function(arr, obj){
+  if (indexOf) return arr.indexOf(obj);
+  for (var i = 0; i < arr.length; ++i) {
+    if (arr[i] === obj) return i;
+  }
+  return -1;
+};
+},{}],53:[function(require,module,exports){
+arguments[4][9][0].apply(exports,arguments)
+},{"dup":9}],54:[function(require,module,exports){
+'use strict';
+
+// modified from https://github.com/es-shims/es5-shim
+var has = Object.prototype.hasOwnProperty;
+var toStr = Object.prototype.toString;
+var slice = Array.prototype.slice;
+var isArgs = require('./isArguments');
+var hasDontEnumBug = !({ 'toString': null }).propertyIsEnumerable('toString');
+var hasProtoEnumBug = function () {}.propertyIsEnumerable('prototype');
+var dontEnums = [
+	'toString',
+	'toLocaleString',
+	'valueOf',
+	'hasOwnProperty',
+	'isPrototypeOf',
+	'propertyIsEnumerable',
+	'constructor'
+];
+
+var keysShim = function keys(object) {
+	var isObject = object !== null && typeof object === 'object';
+	var isFunction = toStr.call(object) === '[object Function]';
+	var isArguments = isArgs(object);
+	var isString = isObject && toStr.call(object) === '[object String]';
+	var theKeys = [];
+
+	if (!isObject && !isFunction && !isArguments) {
+		throw new TypeError('Object.keys called on a non-object');
+	}
+
+	var skipProto = hasProtoEnumBug && isFunction;
+	if (isString && object.length > 0 && !has.call(object, 0)) {
+		for (var i = 0; i < object.length; ++i) {
+			theKeys.push(String(i));
+		}
+	}
+
+	if (isArguments && object.length > 0) {
+		for (var j = 0; j < object.length; ++j) {
+			theKeys.push(String(j));
+		}
+	} else {
+		for (var name in object) {
+			if (!(skipProto && name === 'prototype') && has.call(object, name)) {
+				theKeys.push(String(name));
+			}
+		}
+	}
+
+	if (hasDontEnumBug) {
+		var ctor = object.constructor;
+		var skipConstructor = ctor && ctor.prototype === object;
+
+		for (var k = 0; k < dontEnums.length; ++k) {
+			if (!(skipConstructor && dontEnums[k] === 'constructor') && has.call(object, dontEnums[k])) {
+				theKeys.push(dontEnums[k]);
+			}
+		}
+	}
+	return theKeys;
+};
+
+keysShim.shim = function shimObjectKeys() {
+	if (!Object.keys) {
+		Object.keys = keysShim;
+	} else {
+		var keysWorksWithArguments = (function () {
+			// Safari 5.0 bug
+			return (Object.keys(arguments) || '').length === 2;
+		}(1, 2));
+		if (!keysWorksWithArguments) {
+			var originalKeys = Object.keys;
+			Object.keys = function keys(object) {
+				if (isArgs(object)) {
+					return originalKeys(slice.call(object));
+				} else {
+					return originalKeys(object);
+				}
+			};
+		}
+	}
+	return Object.keys || keysShim;
+};
+
+module.exports = keysShim;
+
+},{"./isArguments":55}],55:[function(require,module,exports){
+'use strict';
+
+var toStr = Object.prototype.toString;
+
+module.exports = function isArguments(value) {
+	var str = toStr.call(value);
+	var isArgs = str === '[object Arguments]';
+	if (!isArgs) {
+		isArgs = str !== '[object Array]' &&
+			value !== null &&
+			typeof value === 'object' &&
+			typeof value.length === 'number' &&
+			value.length >= 0 &&
+			toStr.call(value.callee) === '[object Function]';
+	}
+	return isArgs;
+};
+
+},{}],56:[function(require,module,exports){
+module.exports = extend
+
+function extend() {
+    var target = {}
+
+    for (var i = 0; i < arguments.length; i++) {
+        var source = arguments[i]
+
+        for (var key in source) {
+            if (source.hasOwnProperty(key)) {
+                target[key] = source[key]
+            }
+        }
+    }
+
+    return target
+}
+
+},{}],57:[function(require,module,exports){
+arguments[4][23][0].apply(exports,arguments)
+},{"buffer":3,"dup":23}],58:[function(require,module,exports){
+arguments[4][9][0].apply(exports,arguments)
+},{"dup":9}],59:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var net = require('net');
+var util = require('util');
+var EventEmitter = require('events').EventEmitter;
+var debug = util.debuglog('http');
+
+// New Agent code.
+
+// The largest departure from the previous implementation is that
+// an Agent instance holds connections for a variable number of host:ports.
+// Surprisingly, this is still API compatible as far as third parties are
+// concerned. The only code that really notices the difference is the
+// request object.
+
+// Another departure is that all code related to HTTP parsing is in
+// ClientRequest.onSocket(). The Agent is now *strictly*
+// concerned with managing a connection pool.
+
+function Agent(options) {
+  if (!(this instanceof Agent))
+    return new Agent(options);
+
+  EventEmitter.call(this);
+
+  var self = this;
+
+  self.defaultPort = 80;
+  self.protocol = 'http:';
+
+  self.options = util._extend({}, options);
+
+  // don't confuse net and make it think that we're connecting to a pipe
+  self.options.path = null;
+  self.requests = {};
+  self.sockets = {};
+  self.freeSockets = {};
+  self.keepAliveMsecs = self.options.keepAliveMsecs || 1000;
+  self.keepAlive = self.options.keepAlive || false;
+  self.maxSockets = self.options.maxSockets || Agent.defaultMaxSockets;
+  self.maxFreeSockets = self.options.maxFreeSockets || 256;
+
+  self.on('free', function(socket, options) {
+    var name = self.getName(options);
+    debug('agent.on(free)', name);
+
+    if (!socket.destroyed &&
+        self.requests[name] && self.requests[name].length) {
+      self.requests[name].shift().onSocket(socket);
+      if (self.requests[name].length === 0) {
+        // don't leak
+        delete self.requests[name];
+      }
+    } else {
+      // If there are no pending requests, then put it in
+      // the freeSockets pool, but only if we're allowed to do so.
+      var req = socket._httpMessage;
+      if (req &&
+          req.shouldKeepAlive &&
+          !socket.destroyed &&
+          self.options.keepAlive) {
+        var freeSockets = self.freeSockets[name];
+        var freeLen = freeSockets ? freeSockets.length : 0;
+        var count = freeLen;
+        if (self.sockets[name])
+          count += self.sockets[name].length;
+
+        if (count >= self.maxSockets || freeLen >= self.maxFreeSockets) {
+          self.removeSocket(socket, options);
+          socket.destroy();
+        } else {
+          freeSockets = freeSockets || [];
+          self.freeSockets[name] = freeSockets;
+          socket.setKeepAlive(true, self.keepAliveMsecs);
+          socket.unref();
+          socket._httpMessage = null;
+          self.removeSocket(socket, options);
+          freeSockets.push(socket);
+        }
+      } else {
+        self.removeSocket(socket, options);
+        socket.destroy();
+      }
+    }
+  });
+}
+
+util.inherits(Agent, EventEmitter);
+exports.Agent = Agent;
+
+Agent.defaultMaxSockets = Infinity;
+
+Agent.prototype.createConnection = net.createConnection;
+
+// Get the key for a given set of request options
+Agent.prototype.getName = function(options) {
+  var name = '';
+
+  if (options.host)
+    name += options.host;
+  else
+    name += 'localhost';
+
+  name += ':';
+  if (options.port)
+    name += options.port;
+  name += ':';
+  if (options.localAddress)
+    name += options.localAddress;
+  name += ':';
+  return name;
+};
+
+Agent.prototype.addRequest = function(req, options) {
+  // Legacy API: addRequest(req, host, port, path)
+  if (typeof options === 'string') {
+    options = {
+      host: options,
+      port: arguments[2],
+      path: arguments[3]
+    };
+  }
+
+  var name = this.getName(options);
+  if (!this.sockets[name]) {
+    this.sockets[name] = [];
+  }
+
+  var freeLen = this.freeSockets[name] ? this.freeSockets[name].length : 0;
+  var sockLen = freeLen + this.sockets[name].length;
+
+  if (freeLen) {
+    // we have a free socket, so use that.
+    var socket = this.freeSockets[name].shift();
+    debug('have free socket');
+
+    // don't leak
+    if (!this.freeSockets[name].length)
+      delete this.freeSockets[name];
+
+    socket.ref();
+    req.onSocket(socket);
+    this.sockets[name].push(socket);
+  } else if (sockLen < this.maxSockets) {
+    debug('call onSocket', sockLen, freeLen);
+    // If we are under maxSockets create a new one.
+    req.onSocket(this.createSocket(req, options));
+  } else {
+    debug('wait for socket');
+    // We are over limit so we'll add it to the queue.
+    if (!this.requests[name]) {
+      this.requests[name] = [];
+    }
+    this.requests[name].push(req);
+  }
+};
+
+Agent.prototype.createSocket = function(req, options) {
+  var self = this;
+  options = util._extend({}, options);
+  options = util._extend(options, self.options);
+
+  options.servername = options.host;
+  if (req) {
+    var hostHeader = req.getHeader('host');
+    if (hostHeader) {
+      options.servername = hostHeader.replace(/:.*$/, '');
+    }
+  }
+
+  var name = self.getName(options);
+
+  debug('createConnection', name, options);
+  options.encoding = null;
+  var s = self.createConnection(options);
+  if (!self.sockets[name]) {
+    self.sockets[name] = [];
+  }
+  this.sockets[name].push(s);
+  debug('sockets', name, this.sockets[name].length);
+
+  function onFree() {
+    self.emit('free', s, options);
+  }
+  s.on('free', onFree);
+
+  function onClose(err) {
+    debug('CLIENT socket onClose');
+    // This is the only place where sockets get removed from the Agent.
+    // If you want to remove a socket from the pool, just close it.
+    // All socket errors end in a close event anyway.
+    self.removeSocket(s, options);
+  }
+  s.on('close', onClose);
+
+  function onRemove() {
+    // We need this function for cases like HTTP 'upgrade'
+    // (defined by WebSockets) where we need to remove a socket from the
+    // pool because it'll be locked up indefinitely
+    debug('CLIENT socket onRemove');
+    self.removeSocket(s, options);
+    s.removeListener('close', onClose);
+    s.removeListener('free', onFree);
+    s.removeListener('agentRemove', onRemove);
+  }
+  s.on('agentRemove', onRemove);
+  return s;
+};
+
+Agent.prototype.removeSocket = function(s, options) {
+  var name = this.getName(options);
+  debug('removeSocket', name, 'destroyed:', s.destroyed);
+  var sets = [this.sockets];
+
+  // If the socket was destroyed, remove it from the free buffers too.
+  if (s.destroyed)
+    sets.push(this.freeSockets);
+
+  for (var sk = 0; sk < sets.length; sk++) {
+    var sockets = sets[sk];
+
+    if (sockets[name]) {
+      var index = sockets[name].indexOf(s);
+      if (index !== -1) {
+        sockets[name].splice(index, 1);
+        // Don't leak
+        if (sockets[name].length === 0)
+          delete sockets[name];
+      }
+    }
+  }
+
+  if (this.requests[name] && this.requests[name].length) {
+    debug('removeSocket, have a request, make a socket');
+    var req = this.requests[name][0];
+    // If we have pending requests and a socket gets closed make a new one
+    this.createSocket(req, options).emit('free');
+  }
+};
+
+Agent.prototype.destroy = function() {
+  var sets = [this.freeSockets, this.sockets];
+  for (var s = 0; s < sets.length; s++) {
+    var set = sets[s];
+    var keys = Object.keys(set);
+    for (var v = 0; v < keys.length; v++) {
+      var setName = set[keys[v]];
+      for (var n = 0; n < setName.length; n++) {
+        setName[n].destroy();
+      }
+    }
+  }
+};
+
+exports.globalAgent = new Agent();
+
+},{"events":8,"net":"net","util":33}],60:[function(require,module,exports){
+(function (process){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var util = require('util');
+var net = require('net');
+var url = require('url');
+var EventEmitter = require('events').EventEmitter;
+var HTTPParser = require('http-parser-js').HTTPParser;
+var assert = require('assert').ok;
+var Buffer = require('buffer').Buffer;
+
+var common = require('./_http_common');
+
+var httpSocketSetup = common.httpSocketSetup;
+var parsers = common.parsers;
+var freeParser = common.freeParser;
+var debug = common.debug;
+
+var OutgoingMessage = require('./_http_outgoing').OutgoingMessage;
+
+var Agent = require('./_http_agent');
+
+
+function ClientRequest(options, cb) {
+  var self = this;
+  OutgoingMessage.call(self);
+
+  if (util.isString(options)) {
+    options = url.parse(options);
+  } else {
+    options = util._extend({}, options);
+  }
+
+  var agent = options.agent;
+  var defaultAgent = options._defaultAgent || Agent.globalAgent;
+  if (agent === false) {
+    agent = new defaultAgent.constructor();
+  } else if (util.isNullOrUndefined(agent) && !options.createConnection) {
+    agent = defaultAgent;
+  }
+  self.agent = agent;
+
+  var protocol = options.protocol || defaultAgent.protocol;
+  var expectedProtocol = defaultAgent.protocol;
+  if (self.agent && self.agent.protocol)
+    expectedProtocol = self.agent.protocol;
+
+  if (options.path && / /.test(options.path)) {
+    // The actual regex is more like /[^A-Za-z0-9\-._~!$&'()*+,;=/:@]/
+    // with an additional rule for ignoring percentage-escaped characters
+    // but that's a) hard to capture in a regular expression that performs
+    // well, and b) possibly too restrictive for real-world usage. That's
+    // why it only scans for spaces because those are guaranteed to create
+    // an invalid request.
+    throw new TypeError('Request path contains unescaped characters.');
+  } else if (protocol !== expectedProtocol) {
+    throw new Error('Protocol "' + protocol + '" not supported. ' +
+                    'Expected "' + expectedProtocol + '".');
+  }
+
+  var defaultPort = options.defaultPort || self.agent && self.agent.defaultPort;
+
+  var port = options.port = options.port || defaultPort || 80;
+  var host = options.host = options.hostname || options.host || 'localhost';
+
+  if (util.isUndefined(options.setHost)) {
+    var setHost = true;
+  }
+
+  self.socketPath = options.socketPath;
+
+  var method = self.method = (options.method || 'GET').toUpperCase();
+  self.path = options.path || '/';
+  if (cb) {
+    self.once('response', cb);
+  }
+
+  if (!util.isArray(options.headers)) {
+    if (options.headers) {
+      var keys = Object.keys(options.headers);
+      for (var i = 0, l = keys.length; i < l; i++) {
+        var key = keys[i];
+        self.setHeader(key, options.headers[key]);
+      }
+    }
+    if (host && !this.getHeader('host') && setHost) {
+      var hostHeader = host;
+      if (port && +port !== defaultPort) {
+        hostHeader += ':' + port;
+      }
+      this.setHeader('Host', hostHeader);
+    }
+  }
+
+  if (options.auth && !this.getHeader('Authorization')) {
+    //basic auth
+    this.setHeader('Authorization', 'Basic ' +
+                   new Buffer(options.auth).toString('base64'));
+  }
+
+  if (method === 'GET' ||
+      method === 'HEAD' ||
+      method === 'DELETE' ||
+      method === 'OPTIONS' ||
+      method === 'CONNECT') {
+    self.useChunkedEncodingByDefault = false;
+  } else {
+    self.useChunkedEncodingByDefault = true;
+  }
+
+  if (util.isArray(options.headers)) {
+    self._storeHeader(self.method + ' ' + self.path + ' HTTP/1.1\r\n',
+                      options.headers);
+  } else if (self.getHeader('expect')) {
+    self._storeHeader(self.method + ' ' + self.path + ' HTTP/1.1\r\n',
+                      self._renderHeaders());
+  }
+
+  if (self.socketPath) {
+    self._last = true;
+    self.shouldKeepAlive = false;
+    var conn = self.agent.createConnection({ path: self.socketPath });
+    self.onSocket(conn);
+  } else if (self.agent) {
+    // If there is an agent we should default to Connection:keep-alive,
+    // but only if the Agent will actually reuse the connection!
+    // If it's not a keepAlive agent, and the maxSockets==Infinity, then
+    // there's never a case where this socket will actually be reused
+    if (!self.agent.keepAlive && !Number.isFinite(self.agent.maxSockets)) {
+      self._last = true;
+      self.shouldKeepAlive = false;
+    } else {
+      self._last = false;
+      self.shouldKeepAlive = true;
+    }
+    self.agent.addRequest(self, options);
+  } else {
+    // No agent, default to Connection:close.
+    self._last = true;
+    self.shouldKeepAlive = false;
+    if (options.createConnection) {
+      var conn = options.createConnection(options);
+    } else {
+      debug('CLIENT use net.createConnection', options);
+      var conn = net.createConnection(options);
+    }
+    self.onSocket(conn);
+  }
+
+  self._deferToConnect(null, null, function() {
+    self._flush();
+    self = null;
+  });
+}
+
+util.inherits(ClientRequest, OutgoingMessage);
+
+exports.ClientRequest = ClientRequest;
+
+ClientRequest.prototype.aborted = undefined;
+
+ClientRequest.prototype._finish = function() {
+  // DTRACE_HTTP_CLIENT_REQUEST(this, this.connection);
+  // COUNTER_HTTP_CLIENT_REQUEST();
+  OutgoingMessage.prototype._finish.call(this);
+};
+
+ClientRequest.prototype._implicitHeader = function() {
+  this._storeHeader(this.method + ' ' + this.path + ' HTTP/1.1\r\n',
+                    this._renderHeaders());
+};
+
+ClientRequest.prototype.abort = function() {
+  // Mark as aborting so we can avoid sending queued request data
+  // This is used as a truthy flag elsewhere. The use of Date.now is for
+  // debugging purposes only.
+  this.aborted = Date.now();
+
+  // If we're aborting, we don't care about any more response data.
+  if (this.res)
+    this.res._dump();
+  else
+    this.once('response', function(res) {
+      res._dump();
+    });
+
+  // In the event that we don't have a socket, we will pop out of
+  // the request queue through handling in onSocket.
+  if (this.socket) {
+    // in-progress
+    this.socket.destroy();
+  }
+};
+
+
+function createHangUpError() {
+  var error = new Error('socket hang up');
+  error.code = 'ECONNRESET';
+  return error;
+}
+
+
+function socketCloseListener() {
+  var socket = this;
+  var req = socket._httpMessage;
+  debug('HTTP socket close');
+
+  // Pull through final chunk, if anything is buffered.
+  // the ondata function will handle it properly, and this
+  // is a no-op if no final chunk remains.
+  socket.read();
+
+  // NOTE: Its important to get parser here, because it could be freed by
+  // the `socketOnData`.
+  var parser = socket.parser;
+  req.emit('close');
+  if (req.res && req.res.readable) {
+    // Socket closed before we emitted 'end' below.
+    req.res.emit('aborted');
+    var res = req.res;
+    res.on('end', function() {
+      res.emit('close');
+    });
+    res.push(null);
+  } else if (!req.res && !req.socket._hadError) {
+    // This socket error fired before we started to
+    // receive a response. The error needs to
+    // fire on the request.
+    req.emit('error', createHangUpError());
+    req.socket._hadError = true;
+  }
+
+  // Too bad.  That output wasn't getting written.
+  // This is pretty terrible that it doesn't raise an error.
+  // Fixed better in v0.10
+  if (req.output)
+    req.output.length = 0;
+  if (req.outputEncodings)
+    req.outputEncodings.length = 0;
+
+  if (parser) {
+    parser.finish();
+    freeParser(parser, req, socket);
+  }
+}
+
+function socketErrorListener(err) {
+  var socket = this;
+  var req = socket._httpMessage;
+  debug('SOCKET ERROR:', err.message, err.stack);
+
+  if (req) {
+    req.emit('error', err);
+    // For Safety. Some additional errors might fire later on
+    // and we need to make sure we don't double-fire the error event.
+    req.socket._hadError = true;
+  }
+
+  // Handle any pending data
+  socket.read();
+
+  var parser = socket.parser;
+  if (parser) {
+    parser.finish();
+    freeParser(parser, req, socket);
+  }
+
+  // Ensure that no further data will come out of the socket
+  socket.removeListener('data', socketOnData);
+  socket.removeListener('end', socketOnEnd);
+  socket.destroy();
+}
+
+function socketOnEnd() {
+  var socket = this;
+  var req = this._httpMessage;
+  var parser = this.parser;
+
+  if (!req.res && !req.socket._hadError) {
+    // If we don't have a response then we know that the socket
+    // ended prematurely and we need to emit an error on the request.
+    req.emit('error', createHangUpError());
+    req.socket._hadError = true;
+  }
+  if (parser) {
+    parser.finish();
+    freeParser(parser, req, socket);
+  }
+  socket.destroy();
+}
+
+function socketOnData(d) {
+  var socket = this;
+  var req = this._httpMessage;
+  var parser = this.parser;
+
+  assert(parser && parser.socket === socket);
+
+  var ret = parser.execute(d);
+  if (ret instanceof Error) {
+    debug('parse error');
+    freeParser(parser, req, socket);
+    socket.destroy();
+    req.emit('error', ret);
+    req.socket._hadError = true;
+  } else if (parser.incoming && parser.incoming.upgrade) {
+    // Upgrade or CONNECT
+    var bytesParsed = ret;
+    var res = parser.incoming;
+    req.res = res;
+
+    socket.removeListener('data', socketOnData);
+    socket.removeListener('end', socketOnEnd);
+    parser.finish();
+
+    var bodyHead = d.slice(bytesParsed, d.length);
+
+    var eventName = req.method === 'CONNECT' ? 'connect' : 'upgrade';
+    if (EventEmitter.listenerCount(req, eventName) > 0) {
+      req.upgradeOrConnect = true;
+
+      // detach the socket
+      socket.emit('agentRemove');
+      socket.removeListener('close', socketCloseListener);
+      socket.removeListener('error', socketErrorListener);
+
+      // TODO(isaacs): Need a way to reset a stream to fresh state
+      // IE, not flowing, and not explicitly paused.
+      socket._readableState.flowing = null;
+
+      req.emit(eventName, res, socket, bodyHead);
+      req.emit('close');
+    } else {
+      // Got Upgrade header or CONNECT method, but have no handler.
+      socket.destroy();
+    }
+    freeParser(parser, req, socket);
+  } else if (parser.incoming && parser.incoming.complete &&
+             // When the status code is 100 (Continue), the server will
+             // send a final response after this client sends a request
+             // body. So, we must not free the parser.
+             parser.incoming.statusCode !== 100) {
+    socket.removeListener('data', socketOnData);
+    socket.removeListener('end', socketOnEnd);
+    freeParser(parser, req, socket);
+  }
+}
+
+
+// client
+function parserOnIncomingClient(res, shouldKeepAlive) {
+  var socket = this.socket;
+  var req = socket._httpMessage;
+
+
+  // propogate "domain" setting...
+  if (req.domain && !res.domain) {
+    debug('setting "res.domain"');
+    res.domain = req.domain;
+  }
+
+  debug('AGENT incoming response!');
+
+  if (req.res) {
+    // We already have a response object, this means the server
+    // sent a double response.
+    socket.destroy();
+    return;
+  }
+  req.res = res;
+
+  // Responses to CONNECT request is handled as Upgrade.
+  if (req.method === 'CONNECT') {
+    res.upgrade = true;
+    return true; // skip body
+  }
+
+  // Responses to HEAD requests are crazy.
+  // HEAD responses aren't allowed to have an entity-body
+  // but *can* have a content-length which actually corresponds
+  // to the content-length of the entity-body had the request
+  // been a GET.
+  var isHeadResponse = req.method === 'HEAD';
+  debug('AGENT isHeadResponse', isHeadResponse);
+
+  if (res.statusCode === 100) {
+    // restart the parser, as this is a continue message.
+    delete req.res; // Clear res so that we don't hit double-responses.
+    req.emit('continue');
+    return true;
+  }
+
+  if (req.shouldKeepAlive && !shouldKeepAlive && !req.upgradeOrConnect) {
+    // Server MUST respond with Connection:keep-alive for us to enable it.
+    // If we've been upgraded (via WebSockets) we also shouldn't try to
+    // keep the connection open.
+    req.shouldKeepAlive = false;
+  }
+
+
+  // DTRACE_HTTP_CLIENT_RESPONSE(socket, req);
+  // COUNTER_HTTP_CLIENT_RESPONSE();
+  req.res = res;
+  res.req = req;
+
+  // add our listener first, so that we guarantee socket cleanup
+  res.on('end', responseOnEnd);
+  var handled = req.emit('response', res);
+
+  // If the user did not listen for the 'response' event, then they
+  // can't possibly read the data, so we ._dump() it into the void
+  // so that the socket doesn't hang there in a paused state.
+  if (!handled)
+    res._dump();
+
+  return isHeadResponse;
+}
+
+// client
+function responseOnEnd() {
+  var res = this;
+  var req = res.req;
+  var socket = req.socket;
+
+  if (!req.shouldKeepAlive) {
+    if (socket.writable) {
+      debug('AGENT socket.destroySoon()');
+      socket.destroySoon();
+    }
+    assert(!socket.writable);
+  } else {
+    debug('AGENT socket keep-alive');
+    if (req.timeoutCb) {
+      socket.setTimeout(0, req.timeoutCb);
+      req.timeoutCb = null;
+    }
+    socket.removeListener('close', socketCloseListener);
+    socket.removeListener('error', socketErrorListener);
+    // Mark this socket as available, AFTER user-added end
+    // handlers have a chance to run.
+    process.nextTick(function() {
+      socket.emit('free');
+    });
+  }
+}
+
+function tickOnSocket(req, socket) {
+  var parser = parsers.alloc();
+  req.socket = socket;
+  req.connection = socket;
+  parser.reinitialize(HTTPParser.RESPONSE);
+  parser.socket = socket;
+  parser.incoming = null;
+  req.parser = parser;
+
+  socket.parser = parser;
+  socket._httpMessage = req;
+
+  // Setup "drain" propogation.
+  httpSocketSetup(socket);
+
+  // Propagate headers limit from request object to parser
+  if (util.isNumber(req.maxHeadersCount)) {
+    parser.maxHeaderPairs = req.maxHeadersCount << 1;
+  } else {
+    // Set default value because parser may be reused from FreeList
+    parser.maxHeaderPairs = 2000;
+  }
+
+  parser.onIncoming = parserOnIncomingClient;
+  socket.on('error', socketErrorListener);
+  socket.on('data', socketOnData);
+  socket.on('end', socketOnEnd);
+  socket.on('close', socketCloseListener);
+  req.emit('socket', socket);
+}
+
+ClientRequest.prototype.onSocket = function(socket) {
+  var req = this;
+
+  process.nextTick(function() {
+    if (req.aborted) {
+      // If we were aborted while waiting for a socket, skip the whole thing.
+      socket.emit('free');
+    } else {
+      tickOnSocket(req, socket);
+    }
+  });
+};
+
+ClientRequest.prototype._deferToConnect = function(method, arguments_, cb) {
+  // This function is for calls that need to happen once the socket is
+  // connected and writable. It's an important promisy thing for all the socket
+  // calls that happen either now (when a socket is assigned) or
+  // in the future (when a socket gets assigned out of the pool and is
+  // eventually writable).
+  var self = this;
+  var onSocket = function() {
+    if (self.socket.writable) {
+      if (method) {
+        self.socket[method].apply(self.socket, arguments_);
+      }
+      if (cb) { cb(); }
+    } else {
+      self.socket.once('connect', function() {
+        if (method) {
+          self.socket[method].apply(self.socket, arguments_);
+        }
+        if (cb) { cb(); }
+      });
+    }
+  }
+  if (!self.socket) {
+    self.once('socket', onSocket);
+  } else {
+    onSocket();
+  }
+};
+
+ClientRequest.prototype.setTimeout = function(msecs, callback) {
+  if (callback) this.once('timeout', callback);
+
+  var self = this;
+  function emitTimeout() {
+    self.emit('timeout');
+  }
+
+  if (this.socket && this.socket.writable) {
+    if (this.timeoutCb)
+      this.socket.setTimeout(0, this.timeoutCb);
+    this.timeoutCb = emitTimeout;
+    this.socket.setTimeout(msecs, emitTimeout);
+    return;
+  }
+
+  // Set timeoutCb so that it'll get cleaned up on request end
+  this.timeoutCb = emitTimeout;
+  if (this.socket) {
+    var sock = this.socket;
+    this.socket.once('connect', function() {
+      sock.setTimeout(msecs, emitTimeout);
+    });
+    return;
+  }
+
+  this.once('socket', function(sock) {
+    sock.setTimeout(msecs, emitTimeout);
+  });
+};
+
+ClientRequest.prototype.setNoDelay = function() {
+  this._deferToConnect('setNoDelay', arguments);
+};
+ClientRequest.prototype.setSocketKeepAlive = function() {
+  this._deferToConnect('setKeepAlive', arguments);
+};
+
+ClientRequest.prototype.clearTimeout = function(cb) {
+  this.setTimeout(0, cb);
+};
+
+}).call(this,require('_process'))
+},{"./_http_agent":59,"./_http_common":61,"./_http_outgoing":63,"_process":12,"assert":1,"buffer":3,"events":8,"http-parser-js":66,"net":"net","url":31,"util":33}],61:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var FreeList = require('freelist').FreeList;
+var HTTPParser = require('http-parser-js').HTTPParser;
+
+var incoming = require('./_http_incoming');
+var IncomingMessage = incoming.IncomingMessage;
+var readStart = incoming.readStart;
+var readStop = incoming.readStop;
+
+var isNumber = require('util').isNumber;
+var debug = require('util').debuglog('http');
+exports.debug = debug;
+
+exports.CRLF = '\r\n';
+exports.chunkExpression = /chunk/i;
+exports.continueExpression = /100-continue/i;
+exports.methods = HTTPParser.methods;
+
+var kOnHeaders = HTTPParser.kOnHeaders | 0;
+var kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
+var kOnBody = HTTPParser.kOnBody | 0;
+var kOnMessageComplete = HTTPParser.kOnMessageComplete | 0;
+
+// Only called in the slow case where slow means
+// that the request headers were either fragmented
+// across multiple TCP packets or too large to be
+// processed in a single run. This method is also
+// called to process trailing HTTP headers.
+function parserOnHeaders(headers, url) {
+  // Once we exceeded headers limit - stop collecting them
+  if (this.maxHeaderPairs <= 0 ||
+      this._headers.length < this.maxHeaderPairs) {
+    this._headers = this._headers.concat(headers);
+  }
+  this._url += url;
+}
+
+// info.headers and info.url are set only if .onHeaders()
+// has not been called for this request.
+//
+// info.url is not set for response parsers but that's not
+// applicable here since all our parsers are request parsers.
+function parserOnHeadersComplete(info) {
+  debug('parserOnHeadersComplete', info);
+  var parser = this;
+  var headers = info.headers;
+  var url = info.url;
+
+  if (!headers) {
+    headers = parser._headers;
+    parser._headers = [];
+  }
+
+  if (!url) {
+    url = parser._url;
+    parser._url = '';
+  }
+
+  parser.incoming = new IncomingMessage(parser.socket);
+  parser.incoming.httpVersionMajor = info.versionMajor;
+  parser.incoming.httpVersionMinor = info.versionMinor;
+  parser.incoming.httpVersion = info.versionMajor + '.' + info.versionMinor;
+  parser.incoming.url = url;
+
+  var n = headers.length;
+
+  // If parser.maxHeaderPairs <= 0 - assume that there're no limit
+  if (parser.maxHeaderPairs > 0) {
+    n = Math.min(n, parser.maxHeaderPairs);
+  }
+
+  parser.incoming._addHeaderLines(headers, n);
+
+  if (isNumber(info.method)) {
+    // server only
+    parser.incoming.method = HTTPParser.methods[info.method];
+  } else {
+    // client only
+    parser.incoming.statusCode = info.statusCode;
+    parser.incoming.statusMessage = info.statusMessage;
+  }
+
+  parser.incoming.upgrade = info.upgrade;
+
+  var skipBody = false; // response to HEAD or CONNECT
+
+  if (!info.upgrade) {
+    // For upgraded connections and CONNECT method request,
+    // we'll emit this after parser.execute
+    // so that we can capture the first part of the new protocol
+    skipBody = parser.onIncoming(parser.incoming, info.shouldKeepAlive);
+  }
+
+  return skipBody;
+}
+
+// XXX This is a mess.
+// TODO: http.Parser should be a Writable emits request/response events.
+function parserOnBody(b, start, len) {
+  var parser = this;
+  var stream = parser.incoming;
+
+  // if the stream has already been removed, then drop it.
+  if (!stream)
+    return;
+
+  var socket = stream.socket;
+
+  // pretend this was the result of a stream._read call.
+  if (len > 0 && !stream._dumped) {
+    var slice = b.slice(start, start + len);
+    var ret = stream.push(slice);
+    if (!ret)
+      readStop(socket);
+  }
+}
+
+function parserOnMessageComplete() {
+  var parser = this;
+  var stream = parser.incoming;
+
+  if (stream) {
+    stream.complete = true;
+    // Emit any trailing headers.
+    var headers = parser._headers;
+    if (headers) {
+      parser.incoming._addHeaderLines(headers, headers.length);
+      parser._headers = [];
+      parser._url = '';
+    }
+
+    if (!stream.upgrade)
+      // For upgraded connections, also emit this after parser.execute
+      stream.push(null);
+  }
+
+  if (stream && !parser.incoming._pendings.length) {
+    // For emit end event
+    stream.push(null);
+  }
+
+  // force to read the next incoming message
+  readStart(parser.socket);
+}
+
+
+var parsers = new FreeList('parsers', 1000, function() {
+  var parser = new HTTPParser(HTTPParser.REQUEST);
+
+  parser._headers = [];
+  parser._url = '';
+
+  // Only called in the slow case where slow means
+  // that the request headers were either fragmented
+  // across multiple TCP packets or too large to be
+  // processed in a single run. This method is also
+  // called to process trailing HTTP headers.
+  parser[kOnHeaders] = parserOnHeaders;
+  parser[kOnHeadersComplete] = parserOnHeadersComplete;
+  parser[kOnBody] = parserOnBody;
+  parser[kOnMessageComplete] = parserOnMessageComplete;
+
+  return parser;
+});
+exports.parsers = parsers;
+
+
+// Free the parser and also break any links that it
+// might have to any other things.
+// TODO: All parser data should be attached to a
+// single object, so that it can be easily cleaned
+// up by doing `parser.data = {}`, which should
+// be done in FreeList.free.  `parsers.free(parser)`
+// should be all that is needed.
+function freeParser(parser, req, socket) {
+  if (parser) {
+    parser._headers = [];
+    parser.onIncoming = null;
+    if (parser.socket)
+      parser.socket.parser = null;
+    parser.socket = null;
+    parser.incoming = null;
+    if (parsers.free(parser) === false)
+      parser.close();
+    parser = null;
+  }
+  if (req) {
+    req.parser = null;
+  }
+  if (socket) {
+    socket.parser = null;
+  }
+}
+exports.freeParser = freeParser;
+
+
+function ondrain() {
+  if (this._httpMessage) this._httpMessage.emit('drain');
+}
+
+
+function httpSocketSetup(socket) {
+  socket.removeListener('drain', ondrain);
+  socket.on('drain', ondrain);
+}
+exports.httpSocketSetup = httpSocketSetup;
+
+},{"./_http_incoming":62,"freelist":65,"http-parser-js":66,"util":33}],62:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var util = require('util');
+var Stream = require('stream');
+
+function readStart(socket) {
+  if (socket && !socket._paused && socket.readable)
+    socket.resume();
+}
+exports.readStart = readStart;
+
+function readStop(socket) {
+  if (socket)
+    socket.pause();
+}
+exports.readStop = readStop;
+
+
+/* Abstract base class for ServerRequest and ClientResponse. */
+function IncomingMessage(socket) {
+  Stream.Readable.call(this);
+
+  // XXX This implementation is kind of all over the place
+  // When the parser emits body chunks, they go in this list.
+  // _read() pulls them out, and when it finds EOF, it ends.
+
+  this.socket = socket;
+  this.connection = socket;
+
+  this.httpVersionMajor = null;
+  this.httpVersionMinor = null;
+  this.httpVersion = null;
+  this.complete = false;
+  this.headers = {};
+  this.rawHeaders = [];
+  this.trailers = {};
+  this.rawTrailers = [];
+
+  this.readable = true;
+
+  this._pendings = [];
+  this._pendingIndex = 0;
+  this.upgrade = null;
+
+  // request (server) only
+  this.url = '';
+  this.method = null;
+
+  // response (client) only
+  this.statusCode = null;
+  this.statusMessage = null;
+  this.client = this.socket;
+
+  // flag for backwards compatibility grossness.
+  this._consuming = false;
+
+  // flag for when we decide that this message cannot possibly be
+  // read by the user, so there's no point continuing to handle it.
+  this._dumped = false;
+}
+util.inherits(IncomingMessage, Stream.Readable);
+
+
+exports.IncomingMessage = IncomingMessage;
+
+
+IncomingMessage.prototype.setTimeout = function(msecs, callback) {
+  if (callback)
+    this.on('timeout', callback);
+  this.socket.setTimeout(msecs);
+};
+
+
+IncomingMessage.prototype.read = function(n) {
+  this._consuming = true;
+  this.read = Stream.Readable.prototype.read;
+  return this.read(n);
+};
+
+
+IncomingMessage.prototype._read = function(n) {
+  // We actually do almost nothing here, because the parserOnBody
+  // function fills up our internal buffer directly.  However, we
+  // do need to unpause the underlying socket so that it flows.
+  if (this.socket.readable)
+    readStart(this.socket);
+};
+
+
+// It's possible that the socket will be destroyed, and removed from
+// any messages, before ever calling this.  In that case, just skip
+// it, since something else is destroying this connection anyway.
+IncomingMessage.prototype.destroy = function(error) {
+  if (this.socket)
+    this.socket.destroy(error);
+};
+
+
+IncomingMessage.prototype._addHeaderLines = function(headers, n) {
+  if (headers && headers.length) {
+    var raw, dest;
+    if (this.complete) {
+      raw = this.rawTrailers;
+      dest = this.trailers;
+    } else {
+      raw = this.rawHeaders;
+      dest = this.headers;
+    }
+
+    for (var i = 0; i < n; i += 2) {
+      var k = headers[i];
+      var v = headers[i + 1];
+      raw.push(k);
+      raw.push(v);
+      this._addHeaderLine(k, v, dest);
+    }
+  }
+};
+
+
+// Add the given (field, value) pair to the message
+//
+// Per RFC2616, section 4.2 it is acceptable to join multiple instances of the
+// same header with a ', ' if the header in question supports specification of
+// multiple values this way. If not, we declare the first instance the winner
+// and drop the second. Extended header fields (those beginning with 'x-') are
+// always joined.
+IncomingMessage.prototype._addHeaderLine = function(field, value, dest) {
+  field = field.toLowerCase();
+  switch (field) {
+    // Array headers:
+    case 'set-cookie':
+      if (!util.isUndefined(dest[field])) {
+        dest[field].push(value);
+      } else {
+        dest[field] = [value];
+      }
+      break;
+
+    // list is taken from:
+    // https://mxr.mozilla.org/mozilla/source/netwerk/protocol/http/src/nsHttpHeaderArray.cpp
+    case 'content-type':
+    case 'content-length':
+    case 'user-agent':
+    case 'referer':
+    case 'host':
+    case 'authorization':
+    case 'proxy-authorization':
+    case 'if-modified-since':
+    case 'if-unmodified-since':
+    case 'from':
+    case 'location':
+    case 'max-forwards':
+      // drop duplicates
+      if (util.isUndefined(dest[field]))
+        dest[field] = value;
+      break;
+
+    default:
+      // make comma-separated list
+      if (!util.isUndefined(dest[field]))
+        dest[field] += ', ' + value;
+      else {
+        dest[field] = value;
+      }
+  }
+};
+
+
+// Call this instead of resume() if we want to just
+// dump all the data to /dev/null
+IncomingMessage.prototype._dump = function() {
+  if (!this._dumped) {
+    this._dumped = true;
+    this.resume();
+  }
+};
+
+},{"stream":28,"util":33}],63:[function(require,module,exports){
+(function (process){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var assert = require('assert').ok;
+var Stream = require('stream');
+var timers = require('timers');
+var util = require('util');
+var Buffer = require('buffer').Buffer;
+var common = require('./_http_common');
+
+// fix if cork methods aren't available
+if (!Stream.Writable.prototype.cork) {
+  Stream.Writable.prototype.cork = Stream.Writable.prototype.uncork = function() {};
+}
+if (!Stream.Duplex.prototype.cork) {
+  Stream.Duplex.prototype.cork = Stream.Duplex.prototype.uncork = function() {};
+}
+
+var CRLF = common.CRLF;
+var chunkExpression = common.chunkExpression;
+var debug = common.debug;
+
+
+var connectionExpression = /Connection/i;
+var transferEncodingExpression = /Transfer-Encoding/i;
+var closeExpression = /close/i;
+var contentLengthExpression = /Content-Length/i;
+var dateExpression = /Date/i;
+var expectExpression = /Expect/i;
+
+var automaticHeaders = {
+  connection: true,
+  'content-length': true,
+  'transfer-encoding': true,
+  date: true
+};
+
+
+var dateCache;
+function utcDate() {
+  if (!dateCache) {
+    var d = new Date();
+    dateCache = d.toUTCString();
+    timers.enroll(utcDate, 1000 - d.getMilliseconds());
+    timers._unrefActive(utcDate);
+  }
+  return dateCache;
+}
+utcDate._onTimeout = function() {
+  dateCache = undefined;
+};
+
+
+function OutgoingMessage() {
+  Stream.call(this);
+
+  this.output = [];
+  this.outputEncodings = [];
+  this.outputCallbacks = [];
+
+  this.writable = true;
+
+  this._last = false;
+  this.chunkedEncoding = false;
+  this.shouldKeepAlive = true;
+  this.useChunkedEncodingByDefault = true;
+  this.sendDate = false;
+  this._removedHeader = {};
+
+  this._hasBody = true;
+  this._trailer = '';
+
+  this.finished = false;
+  this._hangupClose = false;
+  this._headerSent = false;
+
+  this.socket = null;
+  this.connection = null;
+  this._header = null;
+  this._headers = null;
+  this._headerNames = {};
+}
+util.inherits(OutgoingMessage, Stream);
+
+
+exports.OutgoingMessage = OutgoingMessage;
+
+
+OutgoingMessage.prototype.setTimeout = function(msecs, callback) {
+  if (callback)
+    this.on('timeout', callback);
+  if (!this.socket) {
+    this.once('socket', function(socket) {
+      socket.setTimeout(msecs);
+    });
+  } else
+    this.socket.setTimeout(msecs);
+};
+
+
+// It's possible that the socket will be destroyed, and removed from
+// any messages, before ever calling this.  In that case, just skip
+// it, since something else is destroying this connection anyway.
+OutgoingMessage.prototype.destroy = function(error) {
+  if (this.socket)
+    this.socket.destroy(error);
+  else
+    this.once('socket', function(socket) {
+      socket.destroy(error);
+    });
+};
+
+
+// This abstract either writing directly to the socket or buffering it.
+OutgoingMessage.prototype._send = function(data, encoding, callback) {
+  // This is a shameful hack to get the headers and first body chunk onto
+  // the same packet. Future versions of Node are going to take care of
+  // this at a lower level and in a more general way.
+  if (!this._headerSent) {
+    if (util.isString(data) &&
+        encoding !== 'hex' &&
+        encoding !== 'base64') {
+      data = this._header + data;
+    } else {
+      this.output.unshift(this._header);
+      this.outputEncodings.unshift('binary');
+      this.outputCallbacks.unshift(null);
+    }
+    this._headerSent = true;
+  }
+  return this._writeRaw(data, encoding, callback);
+};
+
+
+OutgoingMessage.prototype._writeRaw = function(data, encoding, callback) {
+  if (util.isFunction(encoding)) {
+    callback = encoding;
+    encoding = null;
+  }
+
+  if (data.length === 0) {
+    if (util.isFunction(callback))
+      process.nextTick(callback);
+    return true;
+  }
+
+  if (this.connection &&
+      this.connection._httpMessage === this &&
+      this.connection.writable &&
+      !this.connection.destroyed) {
+    // There might be pending data in the this.output buffer.
+    while (this.output.length) {
+      if (!this.connection.writable) {
+        this._buffer(data, encoding, callback);
+        return false;
+      }
+      var c = this.output.shift();
+      var e = this.outputEncodings.shift();
+      var cb = this.outputCallbacks.shift();
+      this.connection.write(c, e, cb);
+    }
+
+    // Directly write to socket.
+    return this.connection.write(data, encoding, callback);
+  } else if (this.connection && this.connection.destroyed) {
+    // The socket was destroyed.  If we're still trying to write to it,
+    // then we haven't gotten the 'close' event yet.
+    return false;
+  } else {
+    // buffer, as long as we're not destroyed.
+    this._buffer(data, encoding, callback);
+    return false;
+  }
+};
+
+
+OutgoingMessage.prototype._buffer = function(data, encoding, callback) {
+  this.output.push(data);
+  this.outputEncodings.push(encoding);
+  this.outputCallbacks.push(callback);
+  return false;
+};
+
+
+OutgoingMessage.prototype._storeHeader = function(firstLine, headers) {
+  // firstLine in the case of request is: 'GET /index.html HTTP/1.1\r\n'
+  // in the case of response it is: 'HTTP/1.1 200 OK\r\n'
+  var state = {
+    sentConnectionHeader: false,
+    sentContentLengthHeader: false,
+    sentTransferEncodingHeader: false,
+    sentDateHeader: false,
+    sentExpect: false,
+    messageHeader: firstLine
+  };
+
+  var field, value;
+
+  if (headers) {
+    var keys = Object.keys(headers);
+    var isArray = util.isArray(headers);
+    var field, value;
+
+    for (var i = 0, l = keys.length; i < l; i++) {
+      var key = keys[i];
+      if (isArray) {
+        field = headers[key][0];
+        value = headers[key][1];
+      } else {
+        field = key;
+        value = headers[key];
+      }
+
+      if (util.isArray(value)) {
+        for (var j = 0; j < value.length; j++) {
+          storeHeader(this, state, field, value[j]);
+        }
+      } else {
+        storeHeader(this, state, field, value);
+      }
+    }
+  }
+
+  // Date header
+  if (this.sendDate === true && state.sentDateHeader === false) {
+    state.messageHeader += 'Date: ' + utcDate() + CRLF;
+  }
+
+  // Force the connection to close when the response is a 204 No Content or
+  // a 304 Not Modified and the user has set a "Transfer-Encoding: chunked"
+  // header.
+  //
+  // RFC 2616 mandates that 204 and 304 responses MUST NOT have a body but
+  // node.js used to send out a zero chunk anyway to accommodate clients
+  // that don't have special handling for those responses.
+  //
+  // It was pointed out that this might confuse reverse proxies to the point
+  // of creating security liabilities, so suppress the zero chunk and force
+  // the connection to close.
+  var statusCode = this.statusCode;
+  if ((statusCode === 204 || statusCode === 304) &&
+      this.chunkedEncoding === true) {
+    debug(statusCode + ' response should not use chunked encoding,' +
+          ' closing connection.');
+    this.chunkedEncoding = false;
+    this.shouldKeepAlive = false;
+  }
+
+  // keep-alive logic
+  if (this._removedHeader.connection) {
+    this._last = true;
+    this.shouldKeepAlive = false;
+  } else if (state.sentConnectionHeader === false) {
+    var shouldSendKeepAlive = this.shouldKeepAlive &&
+        (state.sentContentLengthHeader ||
+         this.useChunkedEncodingByDefault ||
+         this.agent);
+    if (shouldSendKeepAlive) {
+      state.messageHeader += 'Connection: keep-alive\r\n';
+    } else {
+      this._last = true;
+      state.messageHeader += 'Connection: close\r\n';
+    }
+  }
+
+  if (state.sentContentLengthHeader === false &&
+      state.sentTransferEncodingHeader === false) {
+    if (this._hasBody && !this._removedHeader['transfer-encoding']) {
+      if (this.useChunkedEncodingByDefault) {
+        state.messageHeader += 'Transfer-Encoding: chunked\r\n';
+        this.chunkedEncoding = true;
+      } else {
+        this._last = true;
+      }
+    } else {
+      // Make sure we don't end the 0\r\n\r\n at the end of the message.
+      this.chunkedEncoding = false;
+    }
+  }
+
+  this._header = state.messageHeader + CRLF;
+  this._headerSent = false;
+
+  // wait until the first body chunk, or close(), is sent to flush,
+  // UNLESS we're sending Expect: 100-continue.
+  if (state.sentExpect) this._send('');
+};
+
+function storeHeader(self, state, field, value) {
+  // Protect against response splitting. The if statement is there to
+  // minimize the performance impact in the common case.
+  if (/[\r\n]/.test(value))
+    value = value.replace(/[\r\n]+[ \t]*/g, '');
+
+  state.messageHeader += field + ': ' + value + CRLF;
+
+  if (connectionExpression.test(field)) {
+    state.sentConnectionHeader = true;
+    if (closeExpression.test(value)) {
+      self._last = true;
+    } else {
+      self.shouldKeepAlive = true;
+    }
+
+  } else if (transferEncodingExpression.test(field)) {
+    state.sentTransferEncodingHeader = true;
+    if (chunkExpression.test(value)) self.chunkedEncoding = true;
+
+  } else if (contentLengthExpression.test(field)) {
+    state.sentContentLengthHeader = true;
+  } else if (dateExpression.test(field)) {
+    state.sentDateHeader = true;
+  } else if (expectExpression.test(field)) {
+    state.sentExpect = true;
+  }
+}
+
+
+OutgoingMessage.prototype.setHeader = function(name, value) {
+  if (typeof name !== 'string')
+    throw new TypeError('"name" should be a string');
+  if (value === undefined)
+    throw new Error('"name" and "value" are required for setHeader().');
+  if (this._header)
+    throw new Error('Can\'t set headers after they are sent.');
+
+  if (this._headers === null)
+    this._headers = {};
+
+  var key = name.toLowerCase();
+  this._headers[key] = value;
+  this._headerNames[key] = name;
+
+  if (automaticHeaders[key])
+    this._removedHeader[key] = false;
+};
+
+
+OutgoingMessage.prototype.getHeader = function(name) {
+  if (arguments.length < 1) {
+    throw new Error('`name` is required for getHeader().');
+  }
+
+  if (!this._headers) return;
+
+  var key = name.toLowerCase();
+  return this._headers[key];
+};
+
+
+OutgoingMessage.prototype.removeHeader = function(name) {
+  if (arguments.length < 1) {
+    throw new Error('`name` is required for removeHeader().');
+  }
+
+  if (this._header) {
+    throw new Error('Can\'t remove headers after they are sent.');
+  }
+
+  var key = name.toLowerCase();
+
+  if (key === 'date')
+    this.sendDate = false;
+  else if (automaticHeaders[key])
+    this._removedHeader[key] = true;
+
+  if (this._headers) {
+    delete this._headers[key];
+    delete this._headerNames[key];
+  }
+};
+
+
+OutgoingMessage.prototype._renderHeaders = function() {
+  if (this._header) {
+    throw new Error('Can\'t render headers after they are sent to the client.');
+  }
+
+  if (!this._headers) return {};
+
+  var headers = {};
+  var keys = Object.keys(this._headers);
+
+  for (var i = 0, l = keys.length; i < l; i++) {
+    var key = keys[i];
+    headers[this._headerNames[key]] = this._headers[key];
+  }
+  return headers;
+};
+
+
+Object.defineProperty(OutgoingMessage.prototype, 'headersSent', {
+  configurable: true,
+  enumerable: true,
+  get: function() { return !!this._header; }
+});
+
+
+OutgoingMessage.prototype.write = function(chunk, encoding, callback) {
+  var self = this;
+
+  if (this.finished) {
+    var err = new Error('write after end');
+    process.nextTick(function() {
+      self.emit('error', err);
+      if (callback) callback(err);
+    });
+
+    return true;
+  }
+
+  if (!this._header) {
+    this._implicitHeader();
+  }
+
+  if (!this._hasBody) {
+    debug('This type of response MUST NOT have a body. ' +
+          'Ignoring write() calls.');
+    return true;
+  }
+
+  if (!util.isString(chunk) && !util.isBuffer(chunk)) {
+    throw new TypeError('first argument must be a string or Buffer');
+  }
+
+
+  // If we get an empty string or buffer, then just do nothing, and
+  // signal the user to keep writing.
+  if (chunk.length === 0) return true;
+
+  var len, ret;
+  if (this.chunkedEncoding) {
+    if (util.isString(chunk) &&
+        encoding !== 'hex' &&
+        encoding !== 'base64' &&
+        encoding !== 'binary') {
+      len = Buffer.byteLength(chunk, encoding);
+      chunk = len.toString(16) + CRLF + chunk + CRLF;
+      ret = this._send(chunk, encoding, callback);
+    } else {
+      // buffer, or a non-toString-friendly encoding
+      if (util.isString(chunk))
+        len = Buffer.byteLength(chunk, encoding);
+      else
+        len = chunk.length;
+
+      if (this.connection && !this.connection.corked) {
+        this.connection.cork();
+        var conn = this.connection;
+        process.nextTick(function connectionCork() {
+          if (conn)
+            conn.uncork();
+        });
+      }
+      this._send(len.toString(16), 'binary', null);
+      this._send(crlf_buf, null, null);
+      this._send(chunk, encoding, null);
+      ret = this._send(crlf_buf, null, callback);
+    }
+  } else {
+    ret = this._send(chunk, encoding, callback);
+  }
+
+  debug('write ret = ' + ret);
+  return ret;
+};
+
+
+OutgoingMessage.prototype.addTrailers = function(headers) {
+  this._trailer = '';
+  var keys = Object.keys(headers);
+  var isArray = util.isArray(headers);
+  var field, value;
+  for (var i = 0, l = keys.length; i < l; i++) {
+    var key = keys[i];
+    if (isArray) {
+      field = headers[key][0];
+      value = headers[key][1];
+    } else {
+      field = key;
+      value = headers[key];
+    }
+
+    this._trailer += field + ': ' + value + CRLF;
+  }
+};
+
+
+var crlf_buf = new Buffer('\r\n');
+
+
+OutgoingMessage.prototype.end = function(data, encoding, callback) {
+  if (util.isFunction(data)) {
+    callback = data;
+    data = null;
+  } else if (util.isFunction(encoding)) {
+    callback = encoding;
+    encoding = null;
+  }
+
+  if (data && !util.isString(data) && !util.isBuffer(data)) {
+    throw new TypeError('first argument must be a string or Buffer');
+  }
+
+  if (this.finished) {
+    return false;
+  }
+
+  var self = this;
+  function finish() {
+    self.emit('finish');
+  }
+
+  if (util.isFunction(callback))
+    this.once('finish', callback);
+
+
+  if (!this._header) {
+    this._implicitHeader();
+  }
+
+  if (data && !this._hasBody) {
+    debug('This type of response MUST NOT have a body. ' +
+          'Ignoring data passed to end().');
+    data = null;
+  }
+
+  if (this.connection && data)
+    this.connection.cork();
+
+  var ret;
+  if (data) {
+    // Normal body write.
+    ret = this.write(data, encoding);
+  }
+
+  if (this._hasBody && this.chunkedEncoding) {
+    ret = this._send('0\r\n' + this._trailer + '\r\n', 'binary', finish);
+  } else {
+    // Force a flush, HACK.
+    ret = this._send('', 'binary', finish);
+  }
+
+  if (this.connection && data)
+    this.connection.uncork();
+
+  this.finished = true;
+
+  // There is the first message on the outgoing queue, and we've sent
+  // everything to the socket.
+  debug('outgoing message end.');
+  if (this.output.length === 0 && this.connection._httpMessage === this) {
+    this._finish();
+  }
+
+  return ret;
+};
+
+
+OutgoingMessage.prototype._finish = function() {
+  assert(this.connection);
+  this.emit('prefinish');
+};
+
+
+// This logic is probably a bit confusing. Let me explain a bit:
+//
+// In both HTTP servers and clients it is possible to queue up several
+// outgoing messages. This is easiest to imagine in the case of a client.
+// Take the following situation:
+//
+//    req1 = client.request('GET', '/');
+//    req2 = client.request('POST', '/');
+//
+// When the user does
+//
+//   req2.write('hello world\n');
+//
+// it's possible that the first request has not been completely flushed to
+// the socket yet. Thus the outgoing messages need to be prepared to queue
+// up data internally before sending it on further to the socket's queue.
+//
+// This function, outgoingFlush(), is called by both the Server and Client
+// to attempt to flush any pending messages out to the socket.
+OutgoingMessage.prototype._flush = function() {
+  if (this.socket && this.socket.writable) {
+    var ret;
+    while (this.output.length) {
+      var data = this.output.shift();
+      var encoding = this.outputEncodings.shift();
+      var cb = this.outputCallbacks.shift();
+      ret = this.socket.write(data, encoding, cb);
+    }
+
+    if (this.finished) {
+      // This is a queue to the server or client to bring in the next this.
+      this._finish();
+    } else if (ret) {
+      // This is necessary to prevent https from breaking
+      this.emit('drain');
+    }
+  }
+};
+
+
+OutgoingMessage.prototype.flushHeaders = function outgoingFlushHeaders() {
+  if (!this._header) {
+    // Force-flush the headers.
+    this._implicitHeader();
+    this._send('');
+  }
+};
+
+}).call(this,require('_process'))
+},{"./_http_common":61,"_process":12,"assert":1,"buffer":3,"stream":28,"timers":30,"util":33}],64:[function(require,module,exports){
+// Copyright Joyent, Inc. and other Node contributors.
+//
+// Permission is hereby granted, free of charge, to any person obtaining a
+// copy of this software and associated documentation files (the
+// "Software"), to deal in the Software without restriction, including
+// without limitation the rights to use, copy, modify, merge, publish,
+// distribute, sublicense, and/or sell copies of the Software, and to permit
+// persons to whom the Software is furnished to do so, subject to the
+// following conditions:
+//
+// The above copyright notice and this permission notice shall be included
+// in all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
+// USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+var util = require('util');
+var net = require('net');
+var EventEmitter = require('events').EventEmitter;
+var HTTPParser = require('http-parser-js').HTTPParser;
+var assert = require('assert').ok;
+
+var common = require('./_http_common');
+var parsers = common.parsers;
+var freeParser = common.freeParser;
+var debug = common.debug;
+var CRLF = common.CRLF;
+var continueExpression = common.continueExpression;
+var chunkExpression = common.chunkExpression;
+var httpSocketSetup = common.httpSocketSetup;
+
+var OutgoingMessage = require('./_http_outgoing').OutgoingMessage;
+
+
+var STATUS_CODES = exports.STATUS_CODES = {
+  100 : 'Continue',
+  101 : 'Switching Protocols',
+  102 : 'Processing',                 // RFC 2518, obsoleted by RFC 4918
+  200 : 'OK',
+  201 : 'Created',
+  202 : 'Accepted',
+  203 : 'Non-Authoritative Information',
+  204 : 'No Content',
+  205 : 'Reset Content',
+  206 : 'Partial Content',
+  207 : 'Multi-Status',               // RFC 4918
+  300 : 'Multiple Choices',
+  301 : 'Moved Permanently',
+  302 : 'Moved Temporarily',
+  303 : 'See Other',
+  304 : 'Not Modified',
+  305 : 'Use Proxy',
+  307 : 'Temporary Redirect',
+  308 : 'Permanent Redirect',         // RFC 7238
+  400 : 'Bad Request',
+  401 : 'Unauthorized',
+  402 : 'Payment Required',
+  403 : 'Forbidden',
+  404 : 'Not Found',
+  405 : 'Method Not Allowed',
+  406 : 'Not Acceptable',
+  407 : 'Proxy Authentication Required',
+  408 : 'Request Time-out',
+  409 : 'Conflict',
+  410 : 'Gone',
+  411 : 'Length Required',
+  412 : 'Precondition Failed',
+  413 : 'Request Entity Too Large',
+  414 : 'Request-URI Too Large',
+  415 : 'Unsupported Media Type',
+  416 : 'Requested Range Not Satisfiable',
+  417 : 'Expectation Failed',
+  418 : 'I\'m a teapot',              // RFC 2324
+  422 : 'Unprocessable Entity',       // RFC 4918
+  423 : 'Locked',                     // RFC 4918
+  424 : 'Failed Dependency',          // RFC 4918
+  425 : 'Unordered Collection',       // RFC 4918
+  426 : 'Upgrade Required',           // RFC 2817
+  428 : 'Precondition Required',      // RFC 6585
+  429 : 'Too Many Requests',          // RFC 6585
+  431 : 'Request Header Fields Too Large',// RFC 6585
+  500 : 'Internal Server Error',
+  501 : 'Not Implemented',
+  502 : 'Bad Gateway',
+  503 : 'Service Unavailable',
+  504 : 'Gateway Time-out',
+  505 : 'HTTP Version Not Supported',
+  506 : 'Variant Also Negotiates',    // RFC 2295
+  507 : 'Insufficient Storage',       // RFC 4918
+  509 : 'Bandwidth Limit Exceeded',
+  510 : 'Not Extended',               // RFC 2774
+  511 : 'Network Authentication Required' // RFC 6585
+};
+
+
+function ServerResponse(req) {
+  OutgoingMessage.call(this);
+
+  if (req.method === 'HEAD') this._hasBody = false;
+
+  this.sendDate = true;
+
+  if (req.httpVersionMajor < 1 || req.httpVersionMinor < 1) {
+    this.useChunkedEncodingByDefault = chunkExpression.test(req.headers.te);
+    this.shouldKeepAlive = false;
+  }
+}
+util.inherits(ServerResponse, OutgoingMessage);
+
+ServerResponse.prototype._finish = function() {
+  // DTRACE_HTTP_SERVER_RESPONSE(this.connection);
+  // COUNTER_HTTP_SERVER_RESPONSE();
+  OutgoingMessage.prototype._finish.call(this);
+};
+
+
+
+exports.ServerResponse = ServerResponse;
+
+ServerResponse.prototype.statusCode = 200;
+ServerResponse.prototype.statusMessage = undefined;
+
+function onServerResponseClose() {
+  // EventEmitter.emit makes a copy of the 'close' listeners array before
+  // calling the listeners. detachSocket() unregisters onServerResponseClose
+  // but if detachSocket() is called, directly or indirectly, by a 'close'
+  // listener, onServerResponseClose is still in that copy of the listeners
+  // array. That is, in the example below, b still gets called even though
+  // it's been removed by a:
+  //
+  //   var obj = new events.EventEmitter;
+  //   obj.on('event', a);
+  //   obj.on('event', b);
+  //   function a() { obj.removeListener('event', b) }
+  //   function b() { throw "BAM!" }
+  //   obj.emit('event');  // throws
+  //
+  // Ergo, we need to deal with stale 'close' events and handle the case
+  // where the ServerResponse object has already been deconstructed.
+  // Fortunately, that requires only a single if check. :-)
+  if (this._httpMessage) this._httpMessage.emit('close');
+}
+
+ServerResponse.prototype.assignSocket = function(socket) {
+  assert(!socket._httpMessage);
+  socket._httpMessage = this;
+  socket.on('close', onServerResponseClose);
+  this.socket = socket;
+  this.connection = socket;
+  this.emit('socket', socket);
+  this._flush();
+};
+
+ServerResponse.prototype.detachSocket = function(socket) {
+  assert(socket._httpMessage === this);
+  socket.removeListener('close', onServerResponseClose);
+  socket._httpMessage = null;
+  this.socket = this.connection = null;
+};
+
+ServerResponse.prototype.writeContinue = function(cb) {
+  this._writeRaw('HTTP/1.1 100 Continue' + CRLF + CRLF, 'ascii', cb);
+  this._sent100 = true;
+};
+
+ServerResponse.prototype._implicitHeader = function() {
+  this.writeHead(this.statusCode);
+};
+
+ServerResponse.prototype.writeHead = function(statusCode, reason, obj) {
+  var headers;
+
+  if (util.isString(reason)) {
+    // writeHead(statusCode, reasonPhrase[, headers])
+    this.statusMessage = reason;
+  } else {
+    // writeHead(statusCode[, headers])
+    this.statusMessage =
+        this.statusMessage || STATUS_CODES[statusCode] || 'unknown';
+    obj = reason;
+  }
+  this.statusCode = statusCode;
+
+  if (this._headers) {
+    // Slow-case: when progressive API and header fields are passed.
+    if (obj) {
+      var keys = Object.keys(obj);
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        if (k) this.setHeader(k, obj[k]);
+      }
+    }
+    // only progressive api is used
+    headers = this._renderHeaders();
+  } else {
+    // only writeHead() called
+    headers = obj;
+  }
+
+  var statusLine = 'HTTP/1.1 ' + statusCode.toString() + ' ' +
+                   this.statusMessage + CRLF;
+
+  if (statusCode === 204 || statusCode === 304 ||
+      (100 <= statusCode && statusCode <= 199)) {
+    // RFC 2616, 10.2.5:
+    // The 204 response MUST NOT include a message-body, and thus is always
+    // terminated by the first empty line after the header fields.
+    // RFC 2616, 10.3.5:
+    // The 304 response MUST NOT contain a message-body, and thus is always
+    // terminated by the first empty line after the header fields.
+    // RFC 2616, 10.1 Informational 1xx:
+    // This class of status code indicates a provisional response,
+    // consisting only of the Status-Line and optional headers, and is
+    // terminated by an empty line.
+    this._hasBody = false;
+  }
+
+  // don't keep alive connections where the client expects 100 Continue
+  // but we sent a final status; they may put extra bytes on the wire.
+  if (this._expect_continue && !this._sent100) {
+    this.shouldKeepAlive = false;
+  }
+
+  this._storeHeader(statusLine, headers);
+};
+
+ServerResponse.prototype.writeHeader = function() {
+  this.writeHead.apply(this, arguments);
+};
+
+
+function Server(requestListener) {
+  if (!(this instanceof Server)) return new Server(requestListener);
+  net.Server.call(this, { allowHalfOpen: true });
+
+  if (requestListener) {
+    this.addListener('request', requestListener);
+  }
+
+  // Similar option to this. Too lazy to write my own docs.
+  // http://www.squid-cache.org/Doc/config/half_closed_clients/
+  // http://wiki.squid-cache.org/SquidFaq/InnerWorkings#What_is_a_half-closed_filedescriptor.3F
+  this.httpAllowHalfOpen = false;
+
+  this.addListener('connection', connectionListener);
+
+  this.addListener('clientError', function(err, conn) {
+    conn.destroy(err);
+  });
+
+  this.timeout = 2 * 60 * 1000;
+}
+util.inherits(Server, net.Server);
+
+
+Server.prototype.setTimeout = function(msecs, callback) {
+  this.timeout = msecs;
+  if (callback)
+    this.on('timeout', callback);
+};
+
+
+exports.Server = Server;
+
+
+function connectionListener(socket) {
+  var self = this;
+  var outgoing = [];
+  var incoming = [];
+
+  function abortIncoming() {
+    while (incoming.length) {
+      var req = incoming.shift();
+      req.emit('aborted');
+      req.emit('close');
+    }
+    // abort socket._httpMessage ?
+  }
+
+  function serverSocketCloseListener() {
+    debug('server socket close');
+    // mark this parser as reusable
+    if (this.parser) {
+      freeParser(this.parser, null, this);
+    }
+
+    abortIncoming();
+  }
+
+  debug('SERVER new http connection');
+
+  httpSocketSetup(socket);
+
+  // If the user has added a listener to the server,
+  // request, or response, then it's their responsibility.
+  // otherwise, destroy on timeout by default
+  if (self.timeout)
+    socket.setTimeout(self.timeout);
+  socket.on('timeout', function() {
+    var req = socket.parser && socket.parser.incoming;
+    var reqTimeout = req && !req.complete && req.emit('timeout', socket);
+    var res = socket._httpMessage;
+    var resTimeout = res && res.emit('timeout', socket);
+    var serverTimeout = self.emit('timeout', socket);
+
+    if (!reqTimeout && !resTimeout && !serverTimeout)
+      socket.destroy();
+  });
+
+  var parser = parsers.alloc();
+  parser.reinitialize(HTTPParser.REQUEST);
+  parser.socket = socket;
+  socket.parser = parser;
+  parser.incoming = null;
+
+  // Propagate headers limit from server instance to parser
+  if (util.isNumber(this.maxHeadersCount)) {
+    parser.maxHeaderPairs = this.maxHeadersCount << 1;
+  } else {
+    // Set default value because parser may be reused from FreeList
+    parser.maxHeaderPairs = 2000;
+  }
+
+  socket.addListener('error', socketOnError);
+  socket.addListener('close', serverSocketCloseListener);
+  parser.onIncoming = parserOnIncoming;
+  socket.on('end', socketOnEnd);
+  socket.on('data', socketOnData);
+
+  // TODO(isaacs): Move all these functions out of here
+  function socketOnError(e) {
+    self.emit('clientError', e, this);
+  }
+
+  function socketOnData(d) {
+    assert(!socket._paused);
+    debug('SERVER socketOnData %d', d.length);
+    var ret = parser.execute(d);
+    if (ret instanceof Error) {
+      debug('parse error');
+      socket.destroy(ret);
+    } else if (parser.incoming && parser.incoming.upgrade) {
+      // Upgrade or CONNECT
+      var bytesParsed = ret;
+      var req = parser.incoming;
+      debug('SERVER upgrade or connect', req.method);
+
+      socket.removeListener('data', socketOnData);
+      socket.removeListener('end', socketOnEnd);
+      socket.removeListener('close', serverSocketCloseListener);
+      parser.finish();
+      freeParser(parser, req, null);
+      parser = null;
+
+      var eventName = req.method === 'CONNECT' ? 'connect' : 'upgrade';
+      if (EventEmitter.listenerCount(self, eventName) > 0) {
+        debug('SERVER have listener for %s', eventName);
+        var bodyHead = d.slice(bytesParsed, d.length);
+
+        // TODO(isaacs): Need a way to reset a stream to fresh state
+        // IE, not flowing, and not explicitly paused.
+        socket._readableState.flowing = null;
+        self.emit(eventName, req, socket, bodyHead);
+      } else {
+        // Got upgrade header or CONNECT method, but have no handler.
+        socket.destroy();
+      }
+    }
+
+    if (socket._paused) {
+      // onIncoming paused the socket, we should pause the parser as well
+      debug('pause parser');
+      socket.parser.pause();
+    }
+  }
+
+  function socketOnEnd() {
+    var socket = this;
+    var ret = parser.finish();
+
+    if (ret instanceof Error) {
+      debug('parse error');
+      socket.destroy(ret);
+      return;
+    }
+
+    if (!self.httpAllowHalfOpen) {
+      abortIncoming();
+      if (socket.writable) socket.end();
+    } else if (outgoing.length) {
+      outgoing[outgoing.length - 1]._last = true;
+    } else if (socket._httpMessage) {
+      socket._httpMessage._last = true;
+    } else {
+      if (socket.writable) socket.end();
+    }
+  }
+
+
+  // The following callback is issued after the headers have been read on a
+  // new message. In this callback we setup the response object and pass it
+  // to the user.
+
+  socket._paused = false;
+  function socketOnDrain() {
+    // If we previously paused, then start reading again.
+    if (socket._paused) {
+      socket._paused = false;
+      socket.parser.resume();
+      socket.resume();
+    }
+  }
+  socket.on('drain', socketOnDrain);
+
+  function parserOnIncoming(req, shouldKeepAlive) {
+    incoming.push(req);
+
+    // If the writable end isn't consuming, then stop reading
+    // so that we don't become overwhelmed by a flood of
+    // pipelined requests that may never be resolved.
+    if (!socket._paused) {
+      var needPause = socket._writableState.needDrain;
+      if (needPause) {
+        socket._paused = true;
+        // We also need to pause the parser, but don't do that until after
+        // the call to execute, because we may still be processing the last
+        // chunk.
+        socket.pause();
+      }
+    }
+
+    var res = new ServerResponse(req);
+
+    res.shouldKeepAlive = shouldKeepAlive;
+    // DTRACE_HTTP_SERVER_REQUEST(req, socket);
+    // COUNTER_HTTP_SERVER_REQUEST();
+
+    if (socket._httpMessage) {
+      // There are already pending outgoing res, append.
+      outgoing.push(res);
+    } else {
+      res.assignSocket(socket);
+    }
+
+    // When we're finished writing the response, check if this is the last
+    // respose, if so destroy the socket.
+    res.on('prefinish', resOnFinish);
+    function resOnFinish() {
+      // Usually the first incoming element should be our request.  it may
+      // be that in the case abortIncoming() was called that the incoming
+      // array will be empty.
+      assert(incoming.length === 0 || incoming[0] === req);
+
+      incoming.shift();
+
+      // if the user never called req.read(), and didn't pipe() or
+      // .resume() or .on('data'), then we call req._dump() so that the
+      // bytes will be pulled off the wire.
+      if (!req._consuming && !req._readableState.resumeScheduled)
+        req._dump();
+
+      res.detachSocket(socket);
+
+      if (res._last) {
+        socket.destroySoon();
+      } else {
+        // start sending the next message
+        var m = outgoing.shift();
+        if (m) {
+          m.assignSocket(socket);
+        }
+      }
+    }
+
+    if (!util.isUndefined(req.headers.expect) &&
+        (req.httpVersionMajor == 1 && req.httpVersionMinor == 1) &&
+        continueExpression.test(req.headers['expect'])) {
+      res._expect_continue = true;
+      if (EventEmitter.listenerCount(self, 'checkContinue') > 0) {
+        self.emit('checkContinue', req, res);
+      } else {
+        res.writeContinue();
+        self.emit('request', req, res);
+      }
+    } else {
+      self.emit('request', req, res);
+    }
+    return false; // Not a HEAD response. (Not even a response!)
+  }
+}
+exports._connectionListener = connectionListener;
+
+},{"./_http_common":61,"./_http_outgoing":63,"assert":1,"events":8,"http-parser-js":66,"net":"net","util":33}],65:[function(require,module,exports){
+var FreeList = (function() {
+	function FreeList(name, max, constructor) {
+		this.name = name;
+		this.max = max;
+		this.constructor = constructor != null ? constructor : function() {};
+		this.list = [];
+	}
+
+	FreeList.prototype.alloc = function() {
+		if (this.list.length) {
+			return this.list.shift();
+		} else {
+			return this.constructor.apply(this, arguments);
+		}
+	};
+
+	FreeList.prototype.free = function(obj) {
+		if (this.list.length < this.max) {
+			this.list.push(obj);
+			return true;
+		} else {
+			return false;
+		}
+	};
+
+	return FreeList;
+})();
+
+// remain backward compatible
+FreeList.FreeList = FreeList;
+
+module.exports = FreeList;
+
+},{}],66:[function(require,module,exports){
+/*jshint node:true */
+
+var assert = require('assert');
+
+exports.HTTPParser = HTTPParser;
+function HTTPParser(type) {
+  assert.ok(type === HTTPParser.REQUEST || type === HTTPParser.RESPONSE);
+  this.type = type;
+  this.state = type + '_LINE';
+  this.info = {
+    headers: [],
+    upgrade: false
+  };
+  this.trailers = [];
+  this.line = '';
+  this.isChunked = false;
+  this.connection = '';
+  this.headerSize = 0; // for preventing too big headers
+  this.body_bytes = null;
+  this.isUserCall = false;
+}
+HTTPParser.REQUEST = 'REQUEST';
+HTTPParser.RESPONSE = 'RESPONSE';
+var kOnHeaders = HTTPParser.kOnHeaders = 0;
+var kOnHeadersComplete = HTTPParser.kOnHeadersComplete = 1;
+var kOnBody = HTTPParser.kOnBody = 2;
+var kOnMessageComplete = HTTPParser.kOnMessageComplete = 3;
+var methods = HTTPParser.methods = [
+  'DELETE',
+  'GET',
+  'HEAD',
+  'POST',
+  'PUT',
+  'CONNECT',
+  'OPTIONS',
+  'TRACE',
+  'COPY',
+  'LOCK',
+  'MKCOL',
+  'MOVE',
+  'PROPFIND',
+  'PROPPATCH',
+  'SEARCH',
+  'UNLOCK',
+  'REPORT',
+  'MKACTIVITY',
+  'CHECKOUT',
+  'MERGE',
+  'M-SEARCH',
+  'NOTIFY',
+  'SUBSCRIBE',
+  'UNSUBSCRIBE',
+  'PATCH',
+  'PURGE'
+];
+HTTPParser.prototype.reinitialize = HTTPParser;
+HTTPParser.prototype.close =
+HTTPParser.prototype.pause =
+HTTPParser.prototype.resume = function () {};
+HTTPParser.prototype._compatMode = false;
+
+var maxHeaderSize = 80 * 1024;
+var headerState = {
+  REQUEST_LINE: true,
+  RESPONSE_LINE: true,
+  HEADER: true
+};
+HTTPParser.prototype.execute = function (chunk, start, length) {
+  if (!(this instanceof HTTPParser)) {
+    throw new TypeError('not a HTTPParser');
+  }
+  
+  // backward compat to node < 0.11.4
+  // Note: the start and length params were removed in newer version
+  start = start || 0;
+  length = typeof length === 'number' ? length : chunk.length;
+
+  this.chunk = chunk;
+  this.offset = start;
+  var end = this.end = start + length;
+  try {
+    while (this.offset < end) {
+      if (this[this.state]()) {
+        break;
+      }
+    }
+  } catch (err) {
+    if (this.isUserCall) {
+      throw err;
+    }
+    return err;
+  }
+  this.chunk = null;
+  var length = this.offset - start
+  if (headerState[this.state]) {
+    this.headerSize += length;
+    if (this.headerSize > maxHeaderSize) {
+      return new Error('max header size exceeded');
+    }
+  }
+  return length;
+};
+
+var stateFinishAllowed = {
+  REQUEST_LINE: true,
+  RESPONSE_LINE: true,
+  BODY_RAW: true
+};
+HTTPParser.prototype.finish = function () {
+  if (!stateFinishAllowed[this.state]) {
+    return new Error('invalid state for EOF');
+  }
+  if (this.state === 'BODY_RAW') {
+    this.userCall()(this[kOnMessageComplete]());
+  }
+};
+
+//For correct error handling - see HTTPParser#execute
+//Usage: this.userCall()(userFunction('arg'));
+HTTPParser.prototype.userCall = function () {
+  this.isUserCall = true;
+  var self = this;
+  return function (ret) {
+    self.isUserCall = false;
+    return ret;
+  };
+};
+
+HTTPParser.prototype.nextRequest = function () {
+  this.userCall()(this[kOnMessageComplete]());
+  this.reinitialize(this.type);
+};
+
+HTTPParser.prototype.consumeLine = function () {
+  var end = this.end,
+      chunk = this.chunk;
+  for (var i = this.offset; i < end; i++) {
+    if (chunk[i] === 0x0a) { // \n
+      var line = this.line + chunk.toString('ascii', this.offset, i);
+      if (line.charAt(line.length - 1) === '\r') {
+        line = line.substr(0, line.length - 1);
+      }
+      this.line = '';
+      this.offset = i + 1;
+      return line;
+    }
+  }
+  //line split over multiple chunks
+  this.line += chunk.toString('ascii', this.offset, this.end);
+  this.offset = this.end;
+};
+
+var headerExp = /^([^: \t]+):[ \t]*((?:.*[^ \t])|)/;
+var headerContinueExp = /^[ \t]+(.*[^ \t])/;
+HTTPParser.prototype.parseHeader = function (line, headers) {
+  var match = headerExp.exec(line);
+  var k = match && match[1];
+  if (k) { // skip empty string (malformed header)
+    headers.push(k);
+    headers.push(match[2]);
+  } else {
+    var matchContinue = headerContinueExp.exec(line);
+    if (matchContinue && headers.length) {
+      if (headers[headers.length - 1]) {
+        headers[headers.length - 1] += ' ';
+      }
+      headers[headers.length - 1] += matchContinue[1];
+    }
+  }
+};
+
+var requestExp = /^([A-Z-]+) ([^ ]+) HTTP\/(\d)\.(\d)$/;
+HTTPParser.prototype.REQUEST_LINE = function () {
+  var line = this.consumeLine();
+  if (!line) {
+    return;
+  }
+  var match = requestExp.exec(line);
+  if (match === null) {
+    var err = new Error('Parse Error');
+    err.code = 'HPE_INVALID_CONSTANT';
+    throw err;
+  }
+  this.info.method = this._compatMode ? match[1] : methods.indexOf(match[1]);
+  if (this.info.method === -1) {
+    throw new Error('invalid request method');
+  }
+  if (match[1] === 'CONNECT') {
+    this.info.upgrade = true;
+  }
+  this.info.url = match[2];
+  this.info.versionMajor = +match[3];
+  this.info.versionMinor = +match[4];
+  this.body_bytes = 0;
+  this.state = 'HEADER';
+};
+
+var responseExp = /^HTTP\/(\d)\.(\d) (\d{3}) ?(.*)$/;
+HTTPParser.prototype.RESPONSE_LINE = function () {
+  var line = this.consumeLine();
+  if (!line) {
+    return;
+  }
+  var match = responseExp.exec(line);
+  if (match === null) {
+    var err = new Error('Parse Error');
+    err.code = 'HPE_INVALID_CONSTANT';
+    throw err;
+  }
+  this.info.versionMajor = +match[1];
+  this.info.versionMinor = +match[2];
+  var statusCode = this.info.statusCode = +match[3];
+  this.info.statusMessage = match[4];
+  // Implied zero length.
+  if ((statusCode / 100 | 0) === 1 || statusCode === 204 || statusCode === 304) {
+    this.body_bytes = 0;
+  }
+  this.state = 'HEADER';
+};
+
+HTTPParser.prototype.shouldKeepAlive = function () {
+  if (this.info.versionMajor > 0 && this.info.versionMinor > 0) {
+    if (this.connection.indexOf('close') !== -1) {
+      return false;
+    }
+  } else if (this.connection.indexOf('keep-alive') === -1) {
+    return false;
+  }
+  if (this.body_bytes !== null || this.isChunked) { // || skipBody
+    return true;
+  }
+  return false;
+};
+
+HTTPParser.prototype.HEADER = function () {
+  var line = this.consumeLine();
+  if (line === undefined) {
+    return;
+  }
+  if (line) {
+    this.parseHeader(line, this.info.headers);
+  } else {
+    var headers = this.info.headers;
+    for (var i = 0; i < headers.length; i += 2) {
+      switch (headers[i].toLowerCase()) {
+        case 'transfer-encoding':
+          this.isChunked = headers[i + 1].toLowerCase() === 'chunked';
+          break;
+        case 'content-length':
+          this.body_bytes = +headers[i + 1];
+          break;
+        case 'connection':
+          this.connection += headers[i + 1].toLowerCase();
+          break;
+        case 'upgrade':
+          this.info.upgrade = true;
+          break;
+      }
+    }
+    
+    this.info.shouldKeepAlive = this.shouldKeepAlive();
+    //problem which also exists in original node: we should know skipBody before calling onHeadersComplete
+    var skipBody = this.userCall()(this[kOnHeadersComplete](this.info));
+    
+    if (this.info.upgrade) {
+      this.nextRequest();
+      return true;
+    } else if (this.isChunked && !skipBody) {
+      this.state = 'BODY_CHUNKHEAD';
+    } else if (skipBody || this.body_bytes === 0) {
+      this.nextRequest();
+    } else if (this.body_bytes === null) {
+      this.state = 'BODY_RAW';
+    } else {
+      this.state = 'BODY_SIZED';
+    }
+  }
+};
+
+HTTPParser.prototype.BODY_CHUNKHEAD = function () {
+  var line = this.consumeLine();
+  if (line === undefined) {
+    return;
+  }
+  this.body_bytes = parseInt(line, 16);
+  if (!this.body_bytes) {
+    this.state = 'BODY_CHUNKTRAILERS';
+  } else {
+    this.state = 'BODY_CHUNK';
+  }
+};
+
+HTTPParser.prototype.BODY_CHUNK = function () {
+  var length = Math.min(this.end - this.offset, this.body_bytes);
+  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
+  this.offset += length;
+  this.body_bytes -= length;
+  if (!this.body_bytes) {
+    this.state = 'BODY_CHUNKEMPTYLINE';
+  }
+};
+
+HTTPParser.prototype.BODY_CHUNKEMPTYLINE = function () {
+  var line = this.consumeLine();
+  if (line === undefined) {
+    return;
+  }
+  assert.equal(line, '');
+  this.state = 'BODY_CHUNKHEAD';
+};
+
+HTTPParser.prototype.BODY_CHUNKTRAILERS = function () {
+  var line = this.consumeLine();
+  if (line === undefined) {
+    return;
+  }
+  if (line) {
+    this.parseHeader(line, this.trailers);
+  } else {
+    if (this.trailers.length) {
+      this.userCall()(this[kOnHeaders](this.trailers, this.info.url));
+    }
+    this.nextRequest();
+  }
+};
+
+HTTPParser.prototype.BODY_RAW = function () {
+  var length = this.end - this.offset;
+  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
+  this.offset = this.end;
+};
+
+HTTPParser.prototype.BODY_SIZED = function () {
+  var length = Math.min(this.end - this.offset, this.body_bytes);
+  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
+  this.offset += length;
+  this.body_bytes -= length;
+  if (!this.body_bytes) {
+    this.nextRequest();
+  }
+};
+
+// backward compat to node < 0.11.6
+['Headers', 'HeadersComplete', 'Body', 'MessageComplete'].forEach(function (name) {
+  var k = HTTPParser['kOn' + name];
+  Object.defineProperty(HTTPParser.prototype, 'on' + name, {
+    get: function () {
+      return this[k];
+    },
+    set: function (to) {
+      // hack for backward compatibility
+      this._compatMode = true;
+      return (this[k] = to);
+    }
+  });
+});
+
+},{"assert":1}],67:[function(require,module,exports){
+module.exports = {
+  Server: require('./lib/server'),
+  Client: require('./lib/client'),
+  Base: require('./lib/index')
+}
+
+},{"./lib/client":68,"./lib/index":69,"./lib/server":71}],68:[function(require,module,exports){
+(function (Buffer){
+var SSDP = require('./')
+  , util = require('util')
+
+
+/**
+ *
+ * @param opts
+ * @param [sock]
+ * @constructor
+ */
+function SsdpClient(opts, sock) {
+  this._subclass = 'ssdp-client'
+  SSDP.call(this, opts, sock)
+}
+
+
+
+util.inherits(SsdpClient, SSDP)
+
+
+/**
+ *
+ * @param [cb]
+ */
+SsdpClient.prototype.start = function (cb) {
+  this._start(0, this._unicastHost, cb)
+}
+
+
+/**
+ *
+ * @param {String} serviceType
+ * @returns {*}
+ */
+SsdpClient.prototype.search = function search(serviceType) {
+  var self = this
+
+  if (!this._started) {
+    return this.start(function () {
+      self.search(serviceType)
+    })
+  }
+
+  var pkt = self._getSSDPHeader(
+    'M-SEARCH',
+    {
+      'HOST': self._ssdpServerHost,
+      'ST': serviceType,
+      'MAN': '"ssdp:discover"',
+      'MX': 3
+    }
+  )
+
+  self._logger.trace('Sending an M-SEARCH request')
+
+  var message = new Buffer(pkt)
+
+  self._send(message, function (err, bytes) {
+    self._logger.trace({'message': pkt}, 'Sent M-SEARCH request')
+  })
+}
+
+
+
+module.exports = SsdpClient
+
+}).call(this,require("buffer").Buffer)
+},{"./":69,"buffer":3,"util":33}],69:[function(require,module,exports){
+(function (process,Buffer){
+'use strict'
+
+var dgram = require('dgram')
+  , EE = require('events').EventEmitter
+  , util = require('util')
+  , ip = require('ip')
+  , Logger = require('./logger')
+
+var httpHeader = /HTTP\/\d{1}\.\d{1} \d+ .*/
+  , ssdpHeader = /^([^:]+):\s*(.*)$/
+
+var nodeVersion = process.version.substr(1)
+  , moduleVersion = require('../package.json').version
+  , moduleName = require('../package.json').name
+
+
+
+/**
+ * Options:
+ *
+ * @param {Object} opts
+ * @param {String} opts.ssdpSig SSDP signature
+ * @param {String} opts.ssdpIp SSDP multicast group
+ * @param {String} opts.ssdpPort SSDP port
+ * @param {Number} opts.ssdpTtl Multicast TTL
+ * @param {Number} opts.adInterval Interval at which to send out advertisement (ms)
+ * @param {String} opts.description Path to SSDP description file
+ * @param {String} opts.udn SSDP Unique Device Name
+ *
+ * @param {Number} opts.ttl Packet TTL
+ * @param {Boolean} opts.log Disable/enable logging
+ * @param {String} opts.logLevel Log level
+ * @param {Boolean} opts.allowWildcards Allow wildcards in M-SEARCH packets (non-standard)
+ *
+ * @returns {SSDP}
+ * @constructor
+ */
+function SSDP(opts, sock) {
+  var self = this
+
+  if (!(this instanceof SSDP)) return new SSDP(opts)
+
+  this._subclass = this._subclass || 'ssdp-base'
+
+  // we didn't get options, only socket
+  if (!sock) {
+    if (opts && /^udp\d$/.test(opts.type) && typeof opts.addMembership == 'function') {
+      sock = opts
+      opts = null
+    }
+  }
+
+  opts = opts || {}
+
+  if (sock) {
+    this.sock = sock
+  } else {
+    this.sock = this._createSocket()
+  }
+
+  EE.call(self)
+
+  this._init(opts)
+}
+
+
+util.inherits(SSDP, EE)
+
+
+/**
+ * Initializes instance properties.
+ * @param opts
+ * @private
+ */
+SSDP.prototype._init = function (opts) {
+  opts.logger_name = this._subclass
+
+  if (opts.logJSON === undefined) {
+    opts.logJSON = true
+  }
+
+  this._logger = Logger(opts)
+
+  this._ssdpSig = opts.ssdpSig || getSsdpSignature()
+
+  // User shouldn't need to set these
+  this._ssdpIp = opts.ssdpIp || '239.255.255.250'
+  this._ssdpPort = opts.ssdpPort || 1900
+  this._ssdpTtl = opts.ssdpTtl || 1
+
+  this._adInterval = opts.adInterval || 10000
+
+  this._ttl = opts.ttl || 1800
+
+  if (typeof opts.location === 'function') {
+    Object.defineProperty(this, '_location', {
+      enumerable: true,
+      get: opts.location
+    })
+  } else {
+    // Probably should specify these
+    this._location = opts.location || 'http://' + ip.address() + ':' + 10293 + '/upnp/desc.html'
+  }
+
+  this._unicastHost = opts.unicastHost || '0.0.0.0'
+  this._ssdpServerHost = this._ssdpIp + ':' + this._ssdpPort
+
+  this._usns = {}
+  this._udn = opts.udn || 'uuid:f40c2981-7329-40b7-8b04-27f187aecfb5'
+
+  this._allowWildcards = opts.allowWildcards
+}
+
+
+
+/**
+ * Creates and returns UDP4 socket.
+ * Prior to node v0.12.x `dgram.createSocket` did not accept
+ * an object and socket reuse was not available; this method
+ * contains a crappy workaround to make version of node before 0.12
+ * to work correctly. See https://github.com/diversario/node-ssdp/pull/38
+ *
+ * @returns {Socket}
+ * @private
+ */
+SSDP.prototype._createSocket = function () {
+  if (/^v0\.1[2-8]\.\d+/.test(process.version)) {
+    return dgram.createSocket({type: 'udp4', reuseAddr: true})
+  }
+
+  return dgram.createSocket('udp4')
+}
+
+
+/**
+ * Advertise shutdown and close UDP socket.
+ */
+SSDP.prototype._stop = function () {
+  if (!this.sock) {
+    this._logger.warn('Already stopped.')
+    return
+  }
+
+  this.sock.close()
+  this.sock = null
+
+  this._socketBound = this._started = false
+}
+
+
+/**
+ * Configures UDP socket `socket`.
+ * Binds event listeners.
+ */
+SSDP.prototype._start = function (port, host, cb) {
+  var self = this
+
+  if (self._started) {
+    self._logger.warn('Already started.')
+    return
+  }
+
+  self._started = true
+
+  this.sock.on('error', function onSocketError(err) {
+    self._logger.error(err, 'Socker error')
+  })
+
+  this.sock.on('message', function onSocketMessage(msg, rinfo) {
+    self._parseMessage(msg, rinfo)
+  })
+
+  this.sock.on('listening', function onSocketListening() {
+    var addr = self.sock.address()
+
+    self._logger.info({address: 'http://' + addr.address + ':' + addr.port}, 'SSDP listening')
+
+    addMembership()
+
+    function addMembership() {
+      try {
+        self.sock.addMembership(self._ssdpIp)
+        // self.sock.setMulticastTTL(self._ssdpTtl)
+      } catch (e) {
+        if (e.code === 'ENODEV') {
+          self._logger.warn(e, 'No interface present to add multicast group membership. Scheduling a retry.')
+          setTimeout(addMembership, 5000)
+        } else {
+          throw e
+        }
+      }
+    }
+  })
+
+  this.sock.bind(port, host, cb)
+}
+
+
+
+/**
+ * Routes a network message to the appropriate handler.
+ *
+ * @param msg
+ * @param rinfo
+ */
+SSDP.prototype._parseMessage = function (msg, rinfo) {
+  msg = msg.toString()
+
+  //this._logger.trace({message: msg}, 'Multicast message')
+
+  var type = msg.split('\r\n').shift()
+
+  // HTTP/#.# ### Response to M-SEARCH
+  if (httpHeader.test(type)) {
+    this._parseResponse(msg, rinfo)
+  } else {
+    this._parseCommand(msg, rinfo)
+  }
+}
+
+
+/**
+ * Parses SSDP command.
+ *
+ * @param msg
+ * @param rinfo
+ */
+SSDP.prototype._parseCommand = function parseCommand(msg, rinfo) {
+  var method = this._getMethod(msg)
+    , headers = this._getHeaders(msg)
+
+  switch (method) {
+    case 'NOTIFY':
+      this._notify(headers, msg, rinfo)
+      break
+    case 'M-SEARCH':
+      this._msearch(headers, msg, rinfo)
+      break
+    default:
+      this._logger.warn({'message': msg, 'rinfo': rinfo}, 'Unhandled command')
+  }
+}
+
+
+
+/**
+ * Handles NOTIFY command
+ * Emits `advertise-alive`, `advertise-bye` events.
+ *
+ * @param headers
+ * @param _msg
+ * @param _rinfo
+ */
+SSDP.prototype._notify = function (headers, _msg, _rinfo) {
+  if (!headers.NTS) this._logger.trace(headers, 'Missing NTS header')
+
+  switch (headers.NTS.toLowerCase()) {
+    // Device coming to life.
+    case 'ssdp:alive':
+      this.emit('advertise-alive', headers)
+      break
+
+    // Device shutting down.
+    case 'ssdp:byebye':
+      this.emit('advertise-bye', headers)
+      break
+
+    default:
+      this._logger.trace({'message': _msg, 'rinfo': _rinfo}, 'Unhandled NOTIFY event')
+  }
+}
+
+
+
+/**
+ * Handles M-SEARCH command.
+ *
+ * @param headers
+ * @param msg
+ * @param rinfo
+ */
+SSDP.prototype._msearch = function (headers, msg, rinfo) {
+  this._logger.trace({'ST': headers.ST, 'address': rinfo.address, 'port': rinfo.port}, 'SSDP M-SEARCH event')
+
+  if (!headers.MAN || !headers.MX || !headers.ST) return
+
+  this._respondToSearch(headers.ST, rinfo)
+}
+
+
+
+/**
+ * Sends out a response to M-SEARCH commands.
+ *
+ * @param {String} serviceType Service type requested by a client
+ * @param {Object} rinfo Remote client's address
+ * @private
+ */
+SSDP.prototype._respondToSearch = function (serviceType, rinfo) {
+  var self = this
+    , peer = rinfo.address
+    , port = rinfo.port
+    , stRegex
+    , acceptor
+
+  // unwrap quoted string
+  if (serviceType[0] == '"' && serviceType[serviceType.length-1] == '"') {
+    serviceType = serviceType.slice(1, -1)
+  }
+
+  if (self._allowWildcards) {
+      stRegex = new RegExp(serviceType.replace(/\*/g, '.*') + '$')
+      acceptor = function(usn, serviceType) {
+          return serviceType === 'ssdp:all' || stRegex.test(usn)
+      }
+  } else {
+      acceptor = function(usn, serviceType) {
+          return serviceType === 'ssdp:all' || usn === serviceType
+      }
+  }
+
+  Object.keys(self._usns).forEach(function (usn) {
+    var udn = self._usns[usn]
+
+    if (self._allowWildcards) {
+        udn = udn.replace(stRegex, serviceType)
+    }
+
+    if (acceptor(usn, serviceType)) {
+      var pkt = self._getSSDPHeader(
+        '200 OK',
+        {
+          'ST': serviceType === 'ssdp:all' ? usn : serviceType,
+          'USN': udn,
+          'LOCATION': self._location,
+          'CACHE-CONTROL': 'max-age=' + self._ttl,
+          'DATE': new Date().toUTCString(),
+          'SERVER': self._ssdpSig,
+          'EXT': ''
+        },
+        true
+      )
+
+      self._logger.trace({'peer': peer, 'port': port}, 'Sending a 200 OK for an M-SEARCH')
+
+      var message = new Buffer(pkt)
+
+      self._send(message, peer, port, function (err, bytes) {
+        self._logger.trace({'message': pkt}, 'Sent M-SEARCH response')
+      })
+    }
+  })
+}
+
+
+
+/**
+ * Parses SSDP response message.
+ *
+ * @param msg
+ * @param rinfo
+ */
+SSDP.prototype._parseResponse = function parseResponse(msg, rinfo) {
+  this._logger.info({'message': msg}, 'SSDP response')
+
+  var headers = this._getHeaders(msg)
+    , statusCode = this._getStatusCode(msg)
+
+  this.emit('response', headers, statusCode, rinfo)
+}
+
+
+
+SSDP.prototype.addUSN = function (device) {
+  this._usns[device] = this._udn + '::' + device
+}
+
+
+
+SSDP.prototype._getSSDPHeader = function (method, headers, isResponse) {
+  var message = []
+
+  if (isResponse) {
+    message.push('HTTP/1.1 ' + method)
+  } else {
+    message.push(method + ' * HTTP/1.1')
+  }
+
+  Object.keys(headers).forEach(function (header) {
+    message.push(header + ': ' + headers[header])
+  })
+
+  message.push('\r\n')
+
+  return message.join('\r\n')
+}
+
+
+
+SSDP.prototype._getMethod = function _getMethod(msg) {
+  var lines = msg.split("\r\n")
+    , type = lines.shift().split(' ')// command, such as "NOTIFY * HTTP/1.1"
+    , method = type[0]
+
+  return method
+}
+
+
+
+SSDP.prototype._getStatusCode = function _getStatusCode(msg) {
+  var lines = msg.split("\r\n")
+    , type = lines.shift().split(' ')// command, such as "NOTIFY * HTTP/1.1"
+    , code = parseInt(type[1], 10)
+
+  return code
+}
+
+
+
+SSDP.prototype._getHeaders = function _getHeaders(msg) {
+  var lines = msg.split("\r\n")
+
+  var headers = {}
+
+  lines.forEach(function (line) {
+    if (line.length) {
+      var pairs = line.match(ssdpHeader)
+      if (pairs) headers[pairs[1].toUpperCase()] = pairs[2] // e.g. {'HOST': 239.255.255.250:1900}
+    }
+  })
+
+  return headers
+}
+
+
+
+SSDP.prototype._send = function (message, host, port, cb) {
+  var self = this
+
+  if (typeof host === 'function') {
+    cb = host
+    host = this._ssdpIp
+    port = this._ssdpPort
+  }
+
+  self.sock.send(message, 0, message.length, port, host, cb)
+}
+
+
+
+function getSsdpSignature() {
+  return 'node.js/' + nodeVersion + ' UPnP/1.1 ' + moduleName + '/' + moduleVersion
+}
+
+
+
+module.exports = SSDP
+
+}).call(this,require('_process'),require("buffer").Buffer)
+},{"../package.json":76,"./logger":70,"_process":12,"buffer":3,"dgram":"dgram","events":8,"ip":75,"util":33}],70:[function(require,module,exports){
+(function (process){
+/**
+ * Use logging facilities when available
+ * and stub it out when not.
+ */
+
+try {
+  var bunyan = require('bunyan')
+  var PrettyStream = require('bunyan-prettystream')
+
+  process.stdout.setMaxListeners(100)
+} catch(e) {
+  module.exports = function () {
+    var stubs = {};
+
+    ['trace', 'debug', 'info', 'warn', 'error', 'fatal'].forEach(function (level) {
+      stubs[level] = function () {}
+    })
+
+    return stubs
+  }
+
+  return
+}
+
+module.exports = function(config) {
+  if (!config) config = {}
+  
+  var loggerConfig = {
+    name: config.logger_name,
+    streams: [],
+    src: false
+  }
+  
+  if (config.logLevel) {
+    if (config.logJSON) {
+      loggerConfig.streams.push({
+        level: 'error',
+        stream: process.stdout
+      })
+    } else {
+      var prettyStdOut = new PrettyStream()
+      prettyStdOut.pipe(process.stdout)
+
+      loggerConfig.streams.push({
+        level: 'error',
+          stream: prettyStdOut,
+          type: 'raw'
+      })
+    }
+  }
+
+  var logger = bunyan.createLogger(loggerConfig)
+
+  if (process.env.LOG_LEVEL) {
+    logger.level(process.env.LOG_LEVEL)
+  } else {
+  config.logLevel && logger.level(config.logLevel)
+  }
+
+  // enable call source location in the log
+  if (logger.level() <= 20) {
+    logger.src = true
+  }
+
+  return logger
+}
+
+}).call(this,require('_process'))
+},{"_process":12,"bunyan":73,"bunyan-prettystream":72}],71:[function(require,module,exports){
+(function (Buffer){
+var SSDP = require('./')
+  , util = require('util')
+  , assert = require('assert')
+
+function SsdpServer(opts, sock) {
+  this._subclass = 'ssdp-server'
+  SSDP.call(this, opts, sock)
+}
+
+util.inherits(SsdpServer, SSDP)
+
+
+/**
+ * Binds UDP socket to an interface/port
+ * and starts advertising.
+ *
+ * @param ipAddress
+ */
+SsdpServer.prototype.start = function () {
+  var self = this
+
+  if (self._socketBound) {
+    self._logger.warn('Server already running.')
+    return
+  }
+
+  self._socketBound = true
+
+  this._usns[this._udn] = this._udn
+
+  this._logger.trace('Will try to bind to ' + this._unicastHost + ':' + this._ssdpPort)
+
+  self._start(this._ssdpPort, this._unicastHost, this._initAdLoop.bind(this))
+}
+
+
+/**
+ * Binds UDP socket
+ *
+ * @param ipAddress
+ * @private
+ */
+SsdpServer.prototype._initAdLoop = function () {
+  var self = this
+
+  self._logger.info('UDP socket bound', {host: this._unicastHost, port: self._ssdpPort})
+
+  // FIXME: what's the point in advertising we're dead
+  // if the cache is going to be busted anyway?
+  self.advertise(false)
+
+  setTimeout(function () {
+    self.advertise(false)
+  }, 1000)
+
+  // Wake up.
+  setTimeout(self.advertise.bind(self), 2000)
+  setTimeout(self.advertise.bind(self), 3000)
+
+  self._startAdLoop()
+}
+
+
+
+
+/**
+ * Advertise shutdown and close UDP socket.
+ */
+SsdpServer.prototype.stop = function () {
+  if (!this.sock) {
+    this._logger.warn('Already stopped.')
+    return
+  }
+
+  this.advertise(false)
+  this.advertise(false)
+
+  this._stopAdLoop()
+
+  this._stop()
+}
+
+SsdpServer.prototype.pause = function () {
+  if (!this.sock) {
+    this._logger.warn('Already stopped.')
+    return
+  }
+
+  this.advertise(false)
+  this.advertise(false)
+
+  this._stopAdLoop()
+}
+
+SsdpServer.prototype.resume = function () {
+  if (!this.sock) {
+    this._logger.warn('Already stopped.')
+    return
+  }
+
+  this._initAdLoop()
+}
+
+SsdpServer.prototype._startAdLoop = function () {
+  assert.equal(this._adLoopInterval, null, 'Attempting to start a parallel ad loop')
+
+  this._adLoopInterval = setInterval(this.advertise.bind(this), this._adInterval)
+}
+
+
+
+SsdpServer.prototype._stopAdLoop = function () {
+  assert.notEqual(this._adLoopInterval, null, 'Attempting to clear a non-existing interval')
+
+  clearInterval(this._adLoopInterval)
+  this._adLoopInterval = null
+}
+
+
+
+/**
+ *
+ * @param alive
+ */
+SsdpServer.prototype.advertise = function (alive) {
+  var self = this
+
+  if (!this.sock) return
+  if (alive === undefined) alive = true
+
+  Object.keys(self._usns).forEach(function (usn) {
+    var udn = self._usns[usn]
+      , nts = alive ? 'ssdp:alive' : 'ssdp:byebye' // notification sub-type
+
+    var heads = {
+      'HOST': self._ssdpServerHost,
+      'NT': usn, // notification type, in this case same as ST
+      'NTS': nts,
+      'USN': udn
+    }
+
+    if (alive) {
+      heads['LOCATION'] = self._location
+      heads['CACHE-CONTROL'] = 'max-age=1800'
+      heads['SERVER'] = self._ssdpSig // why not include this?
+    }
+
+    self._logger.trace('Sending an advertisement event')
+
+    var message = self._getSSDPHeader('NOTIFY', heads)
+
+    self._send(new Buffer(message), function (err, bytes) {
+      self._logger.trace({'message': message}, 'Outgoing server message')
+    })
+  })
+}
+
+module.exports = SsdpServer
+
+}).call(this,require("buffer").Buffer)
+},{"./":69,"assert":1,"buffer":3,"util":33}],72:[function(require,module,exports){
 "use strict";
 
 var Stream = require('stream').Stream;
@@ -7594,7 +12824,7 @@ PrettyStream.prototype.end = function end(){
 
 module.exports = PrettyStream;
 
-},{"http":"http","stream":28,"util":33}],35:[function(require,module,exports){
+},{"http":"http","stream":28,"util":33}],73:[function(require,module,exports){
 (function (process,Buffer){
 /**
  * Copyright (c) 2014 Trent Mick. All rights reserved.
@@ -9032,4587 +14262,68 @@ module.exports.RotatingFileStream = RotatingFileStream;
 module.exports.safeCycles = safeCycles;
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":12,"assert":1,"buffer":3,"events":8,"fs":"fs","os":11,"safe-json-stringify":76,"util":33}],36:[function(require,module,exports){
+},{"_process":12,"assert":1,"buffer":3,"events":8,"fs":"fs","os":11,"safe-json-stringify":74,"util":33}],74:[function(require,module,exports){
+var hasProp = Object.prototype.hasOwnProperty;
 
-/**
- * This is the common logic for both the Node.js and web browser
- * implementations of `debug()`.
- *
- * Expose `debug()` as the module.
- */
-
-exports = module.exports = debug;
-exports.coerce = coerce;
-exports.disable = disable;
-exports.enable = enable;
-exports.enabled = enabled;
-exports.humanize = require('ms');
-
-/**
- * The currently active debug mode names, and names to skip.
- */
-
-exports.names = [];
-exports.skips = [];
-
-/**
- * Map of special "%n" handling functions, for the debug "format" argument.
- *
- * Valid key names are a single, lowercased letter, i.e. "n".
- */
-
-exports.formatters = {};
-
-/**
- * Previously assigned color.
- */
-
-var prevColor = 0;
-
-/**
- * Previous log timestamp.
- */
-
-var prevTime;
-
-/**
- * Select a color.
- *
- * @return {Number}
- * @api private
- */
-
-function selectColor() {
-  return exports.colors[prevColor++ % exports.colors.length];
+function throwsMessage(err) {
+	return '[Throws: ' + (err ? err.message : '?') + ']';
 }
 
-/**
- * Create a debugger with the given `namespace`.
- *
- * @param {String} namespace
- * @return {Function}
- * @api public
- */
-
-function debug(namespace) {
-
-  // define the `disabled` version
-  function disabled() {
-  }
-  disabled.enabled = false;
-
-  // define the `enabled` version
-  function enabled() {
-
-    var self = enabled;
-
-    // set `diff` timestamp
-    var curr = +new Date();
-    var ms = curr - (prevTime || curr);
-    self.diff = ms;
-    self.prev = prevTime;
-    self.curr = curr;
-    prevTime = curr;
-
-    // add the `color` if not set
-    if (null == self.useColors) self.useColors = exports.useColors();
-    if (null == self.color && self.useColors) self.color = selectColor();
-
-    var args = Array.prototype.slice.call(arguments);
-
-    args[0] = exports.coerce(args[0]);
-
-    if ('string' !== typeof args[0]) {
-      // anything else let's inspect with %o
-      args = ['%o'].concat(args);
-    }
-
-    // apply any `formatters` transformations
-    var index = 0;
-    args[0] = args[0].replace(/%([a-z%])/g, function(match, format) {
-      // if we encounter an escaped % then don't increase the array index
-      if (match === '%%') return match;
-      index++;
-      var formatter = exports.formatters[format];
-      if ('function' === typeof formatter) {
-        var val = args[index];
-        match = formatter.call(self, val);
-
-        // now we need to remove `args[index]` since it's inlined in the `format`
-        args.splice(index, 1);
-        index--;
-      }
-      return match;
-    });
-
-    if ('function' === typeof exports.formatArgs) {
-      args = exports.formatArgs.apply(self, args);
-    }
-    var logFn = console.log.bind(console);
-    logFn.apply(self, args);
-  }
-  enabled.enabled = true;
-
-  var fn = exports.enabled(namespace) ? enabled : disabled;
-
-  fn.namespace = namespace;
-
-  return fn;
-}
-
-/**
- * Enables a debug mode by namespaces. This can include modes
- * separated by a colon and wildcards.
- *
- * @param {String} namespaces
- * @api public
- */
-
-function enable(namespaces) {
-  exports.save(namespaces);
-
-  var split = (namespaces || '').split(/[\s,]+/);
-  var len = split.length;
-
-  for (var i = 0; i < len; i++) {
-    if (!split[i]) continue; // ignore empty strings
-    namespaces = split[i].replace(/\*/g, '.*?');
-    if (namespaces[0] === '-') {
-      exports.skips.push(new RegExp('^' + namespaces.substr(1) + '$'));
-    } else {
-      exports.names.push(new RegExp('^' + namespaces + '$'));
-    }
-  }
-}
-
-/**
- * Disable debug output.
- *
- * @api public
- */
-
-function disable() {
-  exports.enable('');
-}
-
-/**
- * Returns true if the given mode name is enabled, false otherwise.
- *
- * @param {String} name
- * @return {Boolean}
- * @api public
- */
-
-function enabled(name) {
-  var i, len;
-  for (i = 0, len = exports.skips.length; i < len; i++) {
-    if (exports.skips[i].test(name)) {
-      return false;
-    }
-  }
-  for (i = 0, len = exports.names.length; i < len; i++) {
-    if (exports.names[i].test(name)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Coerce `val`.
- *
- * @param {Mixed} val
- * @return {Mixed}
- * @api private
- */
-
-function coerce(val) {
-  if (val instanceof Error) return val.stack || val.message;
-  return val;
-}
-
-},{"ms":38}],37:[function(require,module,exports){
-(function(root) {
-  var localStorageMemory = {};
-  var cache = {};
-
-  /**
-   * number of stored items.
-   */
-  localStorageMemory.length = 0;
-
-  /**
-   * returns item for passed key, or null
-   *
-   * @para {String} key
-   *       name of item to be returned
-   * @returns {String|null}
-   */
-  localStorageMemory.getItem = function(key) {
-    return cache[key] || null;
-  };
-
-  /**
-   * sets item for key to passed value, as String
-   *
-   * @para {String} key
-   *       name of item to be set
-   * @para {String} value
-   *       value, will always be turned into a String
-   * @returns {undefined}
-   */
-  localStorageMemory.setItem = function(key, value) {
-    if (typeof value === 'undefined') {
-      localStorageMemory.removeItem(key);
-    } else {
-      cache[key] = '' + value;
-      localStorageMemory.length++;
-    }
-  };
-
-  /**
-   * removes item for passed key
-   *
-   * @para {String} key
-   *       name of item to be removed
-   * @returns {undefined}
-   */
-  localStorageMemory.removeItem = function(key) {
-    delete cache[key];
-    localStorageMemory.length--;
-  };
-
-  /**
-   * returns name of key at passed index
-   *
-   * @para {Number} index
-   *       Position for key to be returned (starts at 0)
-   * @returns {String|null}
-   */
-  localStorageMemory.key = function(index) {
-    return Object.keys(cache)[index] || null;
-  };
-
-  /**
-   * removes all stored items and sets length to 0
-   *
-   * @returns {undefined}
-   */
-  localStorageMemory.clear = function() {
-    cache = {};
-    localStorageMemory.length = 0;
-  };
-
-  if (typeof exports === 'object') {
-    module.exports = localStorageMemory;
-  } else {
-    root.localStorageMemory = localStorageMemory;
-  }
-})(this);
-
-
-
-},{}],38:[function(require,module,exports){
-/**
- * Helpers.
- */
-
-var s = 1000;
-var m = s * 60;
-var h = m * 60;
-var d = h * 24;
-var y = d * 365.25;
-
-/**
- * Parse or format the given `val`.
- *
- * Options:
- *
- *  - `long` verbose formatting [false]
- *
- * @param {String|Number} val
- * @param {Object} options
- * @return {String|Number}
- * @api public
- */
-
-module.exports = function(val, options){
-  options = options || {};
-  if ('string' == typeof val) return parse(val);
-  return options.long
-    ? long(val)
-    : short(val);
-};
-
-/**
- * Parse the given `str` and return milliseconds.
- *
- * @param {String} str
- * @return {Number}
- * @api private
- */
-
-function parse(str) {
-  str = '' + str;
-  if (str.length > 10000) return;
-  var match = /^((?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|years?|yrs?|y)?$/i.exec(str);
-  if (!match) return;
-  var n = parseFloat(match[1]);
-  var type = (match[2] || 'ms').toLowerCase();
-  switch (type) {
-    case 'years':
-    case 'year':
-    case 'yrs':
-    case 'yr':
-    case 'y':
-      return n * y;
-    case 'days':
-    case 'day':
-    case 'd':
-      return n * d;
-    case 'hours':
-    case 'hour':
-    case 'hrs':
-    case 'hr':
-    case 'h':
-      return n * h;
-    case 'minutes':
-    case 'minute':
-    case 'mins':
-    case 'min':
-    case 'm':
-      return n * m;
-    case 'seconds':
-    case 'second':
-    case 'secs':
-    case 'sec':
-    case 's':
-      return n * s;
-    case 'milliseconds':
-    case 'millisecond':
-    case 'msecs':
-    case 'msec':
-    case 'ms':
-      return n;
-  }
-}
-
-/**
- * Short format for `ms`.
- *
- * @param {Number} ms
- * @return {String}
- * @api private
- */
-
-function short(ms) {
-  if (ms >= d) return Math.round(ms / d) + 'd';
-  if (ms >= h) return Math.round(ms / h) + 'h';
-  if (ms >= m) return Math.round(ms / m) + 'm';
-  if (ms >= s) return Math.round(ms / s) + 's';
-  return ms + 'ms';
-}
-
-/**
- * Long format for `ms`.
- *
- * @param {Number} ms
- * @return {String}
- * @api private
- */
-
-function long(ms) {
-  return plural(ms, d, 'day')
-    || plural(ms, h, 'hour')
-    || plural(ms, m, 'minute')
-    || plural(ms, s, 'second')
-    || ms + ' ms';
-}
-
-/**
- * Pluralization helper.
- */
-
-function plural(ms, n, name) {
-  if (ms < n) return;
-  if (ms < n * 1.5) return Math.floor(ms / n) + ' ' + name;
-  return Math.ceil(ms / n) + ' ' + name + 's';
-}
-
-},{}],39:[function(require,module,exports){
-(function (Buffer){
-/*!
- * depd
- * Copyright(c) 2014 Douglas Christopher Wilson
- * MIT Licensed
- */
-
-/**
- * Module exports.
- */
-
-module.exports = bufferConcat
-
-/**
- * Concatenate an array of Buffers.
- */
-
-function bufferConcat(bufs) {
-  var length = 0
-
-  for (var i = 0, len = bufs.length; i < len; i++) {
-    length += bufs[i].length
-  }
-
-  var buf = new Buffer(length)
-  var pos = 0
-
-  for (var i = 0, len = bufs.length; i < len; i++) {
-    bufs[i].copy(buf, pos)
-    pos += bufs[i].length
-  }
-
-  return buf
-}
-
-}).call(this,require("buffer").Buffer)
-},{"buffer":3}],40:[function(require,module,exports){
-/*!
- * depd
- * Copyright(c) 2014 Douglas Christopher Wilson
- * MIT Licensed
- */
-
-/**
- * Module exports.
- */
-
-module.exports = callSiteToString
-
-/**
- * Format a CallSite file location to a string.
- */
-
-function callSiteFileLocation(callSite) {
-  var fileName
-  var fileLocation = ''
-
-  if (callSite.isNative()) {
-    fileLocation = 'native'
-  } else if (callSite.isEval()) {
-    fileName = callSite.getScriptNameOrSourceURL()
-    if (!fileName) {
-      fileLocation = callSite.getEvalOrigin()
-    }
-  } else {
-    fileName = callSite.getFileName()
-  }
-
-  if (fileName) {
-    fileLocation += fileName
-
-    var lineNumber = callSite.getLineNumber()
-    if (lineNumber != null) {
-      fileLocation += ':' + lineNumber
-
-      var columnNumber = callSite.getColumnNumber()
-      if (columnNumber) {
-        fileLocation += ':' + columnNumber
-      }
-    }
-  }
-
-  return fileLocation || 'unknown source'
-}
-
-/**
- * Format a CallSite to a string.
- */
-
-function callSiteToString(callSite) {
-  var addSuffix = true
-  var fileLocation = callSiteFileLocation(callSite)
-  var functionName = callSite.getFunctionName()
-  var isConstructor = callSite.isConstructor()
-  var isMethodCall = !(callSite.isToplevel() || isConstructor)
-  var line = ''
-
-  if (isMethodCall) {
-    var methodName = callSite.getMethodName()
-    var typeName = getConstructorName(callSite)
-
-    if (functionName) {
-      if (typeName && functionName.indexOf(typeName) !== 0) {
-        line += typeName + '.'
-      }
-
-      line += functionName
-
-      if (methodName && functionName.lastIndexOf('.' + methodName) !== functionName.length - methodName.length - 1) {
-        line += ' [as ' + methodName + ']'
-      }
-    } else {
-      line += typeName + '.' + (methodName || '<anonymous>')
-    }
-  } else if (isConstructor) {
-    line += 'new ' + (functionName || '<anonymous>')
-  } else if (functionName) {
-    line += functionName
-  } else {
-    addSuffix = false
-    line += fileLocation
-  }
-
-  if (addSuffix) {
-    line += ' (' + fileLocation + ')'
-  }
-
-  return line
-}
-
-/**
- * Get constructor name of reviver.
- */
-
-function getConstructorName(obj) {
-  var receiver = obj.receiver
-  return (receiver.constructor && receiver.constructor.name) || null
-}
-
-},{}],41:[function(require,module,exports){
-(function (Buffer){
-/*!
- * depd
- * Copyright(c) 2014 Douglas Christopher Wilson
- * MIT Licensed
- */
-
-/**
- * Module exports.
- */
-
-lazyProperty(module.exports, 'bufferConcat', function bufferConcat() {
-  return Buffer.concat || require('./buffer-concat')
-})
-
-lazyProperty(module.exports, 'callSiteToString', function callSiteToString() {
-  var limit = Error.stackTraceLimit
-  var obj = {}
-  var prep = Error.prepareStackTrace
-
-  function prepareObjectStackTrace(obj, stack) {
-    return stack
-  }
-
-  Error.prepareStackTrace = prepareObjectStackTrace
-  Error.stackTraceLimit = 2
-
-  // capture the stack
-  Error.captureStackTrace(obj)
-
-  // slice the stack
-  var stack = obj.stack.slice()
-
-  Error.prepareStackTrace = prep
-  Error.stackTraceLimit = limit
-
-  return stack[0].toString ? toString : require('./callsite-tostring')
-})
-
-/**
- * Define a lazy property.
- */
-
-function lazyProperty(obj, prop, getter) {
-  function get() {
-    var val = getter()
-
-    Object.defineProperty(obj, prop, {
-      configurable: true,
-      enumerable: true,
-      value: val
-    })
-
-    return val
-  }
-
-  Object.defineProperty(obj, prop, {
-    configurable: true,
-    enumerable: true,
-    get: get
-  })
-}
-
-/**
- * Call toString() on the obj
- */
-
-function toString(obj) {
-  return obj.toString()
-}
-
-}).call(this,require("buffer").Buffer)
-},{"./buffer-concat":39,"./callsite-tostring":40,"buffer":3}],42:[function(require,module,exports){
-arguments[4][9][0].apply(exports,arguments)
-},{"dup":9}],43:[function(require,module,exports){
-var dezalgo = require('dezalgo')
-
-module.exports = function (tasks, cb) {
-  var current = 0
-  var results = []
-  if (cb) cb = dezalgo(cb)
-
-  function done (err, result) {
-    results.push(result)
-    if (++current >= tasks.length || err) {
-      if (cb) cb(err, results)
-    } else {
-      tasks[current](done)
-    }
-  }
-
-  if (tasks.length) {
-    tasks[0](done)
-  } else {
-    if (cb) cb(null, results)
-  }
-}
-
-},{"dezalgo":44}],44:[function(require,module,exports){
-var wrappy = require('wrappy')
-module.exports = wrappy(dezalgo)
-
-var asap = require('asap')
-
-function dezalgo (cb) {
-  var sync = true
-  asap(function () {
-    sync = false
-  })
-
-  return function zalgoSafe() {
-    var args = arguments
-    var me = this
-    if (sync)
-      asap(function() {
-        cb.apply(me, args)
-      })
-    else
-      cb.apply(me, args)
-  }
-}
-
-},{"asap":45,"wrappy":47}],45:[function(require,module,exports){
-"use strict";
-
-// rawAsap provides everything we need except exception management.
-var rawAsap = require("./raw");
-// RawTasks are recycled to reduce GC churn.
-var freeTasks = [];
-// We queue errors to ensure they are thrown in right order (FIFO).
-// Array-as-queue is good enough here, since we are just dealing with exceptions.
-var pendingErrors = [];
-var requestErrorThrow = rawAsap.makeRequestCallFromTimer(throwFirstError);
-
-function throwFirstError() {
-    if (pendingErrors.length) {
-        throw pendingErrors.shift();
-    }
-}
-
-/**
- * Calls a task as soon as possible after returning, in its own event, with priority
- * over other events like animation, reflow, and repaint. An error thrown from an
- * event will not interrupt, nor even substantially slow down the processing of
- * other events, but will be rather postponed to a lower priority event.
- * @param {{call}} task A callable object, typically a function that takes no
- * arguments.
- */
-module.exports = asap;
-function asap(task) {
-    var rawTask;
-    if (freeTasks.length) {
-        rawTask = freeTasks.pop();
-    } else {
-        rawTask = new RawTask();
-    }
-    rawTask.task = task;
-    rawAsap(rawTask);
-}
-
-// We wrap tasks with recyclable task objects.  A task object implements
-// `call`, just like a function.
-function RawTask() {
-    this.task = null;
-}
-
-// The sole purpose of wrapping the task is to catch the exception and recycle
-// the task object after its single use.
-RawTask.prototype.call = function () {
-    try {
-        this.task.call();
-    } catch (error) {
-        if (asap.onerror) {
-            // This hook exists purely for testing purposes.
-            // Its name will be periodically randomized to break any code that
-            // depends on its existence.
-            asap.onerror(error);
-        } else {
-            // In a web browser, exceptions are not fatal. However, to avoid
-            // slowing down the queue of pending tasks, we rethrow the error in a
-            // lower priority turn.
-            pendingErrors.push(error);
-            requestErrorThrow();
-        }
-    } finally {
-        this.task = null;
-        freeTasks[freeTasks.length] = this;
-    }
-};
-
-},{"./raw":46}],46:[function(require,module,exports){
-(function (global){
-"use strict";
-
-// Use the fastest means possible to execute a task in its own turn, with
-// priority over other events including IO, animation, reflow, and redraw
-// events in browsers.
-//
-// An exception thrown by a task will permanently interrupt the processing of
-// subsequent tasks. The higher level `asap` function ensures that if an
-// exception is thrown by a task, that the task queue will continue flushing as
-// soon as possible, but if you use `rawAsap` directly, you are responsible to
-// either ensure that no exceptions are thrown from your task, or to manually
-// call `rawAsap.requestFlush` if an exception is thrown.
-module.exports = rawAsap;
-function rawAsap(task) {
-    if (!queue.length) {
-        requestFlush();
-        flushing = true;
-    }
-    // Equivalent to push, but avoids a function call.
-    queue[queue.length] = task;
-}
-
-var queue = [];
-// Once a flush has been requested, no further calls to `requestFlush` are
-// necessary until the next `flush` completes.
-var flushing = false;
-// `requestFlush` is an implementation-specific method that attempts to kick
-// off a `flush` event as quickly as possible. `flush` will attempt to exhaust
-// the event queue before yielding to the browser's own event loop.
-var requestFlush;
-// The position of the next task to execute in the task queue. This is
-// preserved between calls to `flush` so that it can be resumed if
-// a task throws an exception.
-var index = 0;
-// If a task schedules additional tasks recursively, the task queue can grow
-// unbounded. To prevent memory exhaustion, the task queue will periodically
-// truncate already-completed tasks.
-var capacity = 1024;
-
-// The flush function processes all tasks that have been scheduled with
-// `rawAsap` unless and until one of those tasks throws an exception.
-// If a task throws an exception, `flush` ensures that its state will remain
-// consistent and will resume where it left off when called again.
-// However, `flush` does not make any arrangements to be called again if an
-// exception is thrown.
-function flush() {
-    while (index < queue.length) {
-        var currentIndex = index;
-        // Advance the index before calling the task. This ensures that we will
-        // begin flushing on the next task the task throws an error.
-        index = index + 1;
-        queue[currentIndex].call();
-        // Prevent leaking memory for long chains of recursive calls to `asap`.
-        // If we call `asap` within tasks scheduled by `asap`, the queue will
-        // grow, but to avoid an O(n) walk for every task we execute, we don't
-        // shift tasks off the queue after they have been executed.
-        // Instead, we periodically shift 1024 tasks off the queue.
-        if (index > capacity) {
-            // Manually shift all values starting at the index back to the
-            // beginning of the queue.
-            for (var scan = 0, newLength = queue.length - index; scan < newLength; scan++) {
-                queue[scan] = queue[scan + index];
-            }
-            queue.length -= index;
-            index = 0;
-        }
-    }
-    queue.length = 0;
-    index = 0;
-    flushing = false;
-}
-
-// `requestFlush` is implemented using a strategy based on data collected from
-// every available SauceLabs Selenium web driver worker at time of writing.
-// https://docs.google.com/spreadsheets/d/1mG-5UYGup5qxGdEMWkhP6BWCz053NUb2E1QoUTU16uA/edit#gid=783724593
-
-// Safari 6 and 6.1 for desktop, iPad, and iPhone are the only browsers that
-// have WebKitMutationObserver but not un-prefixed MutationObserver.
-// Must use `global` instead of `window` to work in both frames and web
-// workers. `global` is a provision of Browserify, Mr, Mrs, or Mop.
-var BrowserMutationObserver = global.MutationObserver || global.WebKitMutationObserver;
-
-// MutationObservers are desirable because they have high priority and work
-// reliably everywhere they are implemented.
-// They are implemented in all modern browsers.
-//
-// - Android 4-4.3
-// - Chrome 26-34
-// - Firefox 14-29
-// - Internet Explorer 11
-// - iPad Safari 6-7.1
-// - iPhone Safari 7-7.1
-// - Safari 6-7
-if (typeof BrowserMutationObserver === "function") {
-    requestFlush = makeRequestCallFromMutationObserver(flush);
-
-// MessageChannels are desirable because they give direct access to the HTML
-// task queue, are implemented in Internet Explorer 10, Safari 5.0-1, and Opera
-// 11-12, and in web workers in many engines.
-// Although message channels yield to any queued rendering and IO tasks, they
-// would be better than imposing the 4ms delay of timers.
-// However, they do not work reliably in Internet Explorer or Safari.
-
-// Internet Explorer 10 is the only browser that has setImmediate but does
-// not have MutationObservers.
-// Although setImmediate yields to the browser's renderer, it would be
-// preferrable to falling back to setTimeout since it does not have
-// the minimum 4ms penalty.
-// Unfortunately there appears to be a bug in Internet Explorer 10 Mobile (and
-// Desktop to a lesser extent) that renders both setImmediate and
-// MessageChannel useless for the purposes of ASAP.
-// https://github.com/kriskowal/q/issues/396
-
-// Timers are implemented universally.
-// We fall back to timers in workers in most engines, and in foreground
-// contexts in the following browsers.
-// However, note that even this simple case requires nuances to operate in a
-// broad spectrum of browsers.
-//
-// - Firefox 3-13
-// - Internet Explorer 6-9
-// - iPad Safari 4.3
-// - Lynx 2.8.7
-} else {
-    requestFlush = makeRequestCallFromTimer(flush);
-}
-
-// `requestFlush` requests that the high priority event queue be flushed as
-// soon as possible.
-// This is useful to prevent an error thrown in a task from stalling the event
-// queue if the exception handled by Node.js’s
-// `process.on("uncaughtException")` or by a domain.
-rawAsap.requestFlush = requestFlush;
-
-// To request a high priority event, we induce a mutation observer by toggling
-// the text of a text node between "1" and "-1".
-function makeRequestCallFromMutationObserver(callback) {
-    var toggle = 1;
-    var observer = new BrowserMutationObserver(callback);
-    var node = document.createTextNode("");
-    observer.observe(node, {characterData: true});
-    return function requestCall() {
-        toggle = -toggle;
-        node.data = toggle;
-    };
-}
-
-// The message channel technique was discovered by Malte Ubl and was the
-// original foundation for this library.
-// http://www.nonblocking.io/2011/06/windownexttick.html
-
-// Safari 6.0.5 (at least) intermittently fails to create message ports on a
-// page's first load. Thankfully, this version of Safari supports
-// MutationObservers, so we don't need to fall back in that case.
-
-// function makeRequestCallFromMessageChannel(callback) {
-//     var channel = new MessageChannel();
-//     channel.port1.onmessage = callback;
-//     return function requestCall() {
-//         channel.port2.postMessage(0);
-//     };
-// }
-
-// For reasons explained above, we are also unable to use `setImmediate`
-// under any circumstances.
-// Even if we were, there is another bug in Internet Explorer 10.
-// It is not sufficient to assign `setImmediate` to `requestFlush` because
-// `setImmediate` must be called *by name* and therefore must be wrapped in a
-// closure.
-// Never forget.
-
-// function makeRequestCallFromSetImmediate(callback) {
-//     return function requestCall() {
-//         setImmediate(callback);
-//     };
-// }
-
-// Safari 6.0 has a problem where timers will get lost while the user is
-// scrolling. This problem does not impact ASAP because Safari 6.0 supports
-// mutation observers, so that implementation is used instead.
-// However, if we ever elect to use timers in Safari, the prevalent work-around
-// is to add a scroll event listener that calls for a flush.
-
-// `setTimeout` does not call the passed callback if the delay is less than
-// approximately 7 in web workers in Firefox 8 through 18, and sometimes not
-// even then.
-
-function makeRequestCallFromTimer(callback) {
-    return function requestCall() {
-        // We dispatch a timeout with a specified delay of 0 for engines that
-        // can reliably accommodate that request. This will usually be snapped
-        // to a 4 milisecond delay, but once we're flushing, there's no delay
-        // between events.
-        var timeoutHandle = setTimeout(handleTimer, 0);
-        // However, since this timer gets frequently dropped in Firefox
-        // workers, we enlist an interval handle that will try to fire
-        // an event 20 times per second until it succeeds.
-        var intervalHandle = setInterval(handleTimer, 50);
-
-        function handleTimer() {
-            // Whichever timer succeeds will cancel both timers and
-            // execute the callback.
-            clearTimeout(timeoutHandle);
-            clearInterval(intervalHandle);
-            callback();
-        }
-    };
-}
-
-// This is for `asap.js` only.
-// Its name will be periodically randomized to break any code that depends on
-// its existence.
-rawAsap.makeRequestCallFromTimer = makeRequestCallFromTimer;
-
-// ASAP was originally a nextTick shim included in Q. This was factored out
-// into this ASAP package. It was later adapted to RSVP which made further
-// amendments. These decisions, particularly to marginalize MessageChannel and
-// to capture the MutationObserver implementation in a closure, were integrated
-// back into ASAP proper.
-// https://github.com/tildeio/rsvp.js/blob/cddf7232546a9cf858524b75cde6f9edf72620a7/lib/rsvp/asap.js
-
-}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],47:[function(require,module,exports){
-// Returns a wrapper function that returns a wrapped callback
-// The wrapper function should do some stuff, and return a
-// presumably different callback function.
-// This makes sure that own properties are retained, so that
-// decorations and such are not lost along the way.
-module.exports = wrappy
-function wrappy (fn, cb) {
-  if (fn && cb) return wrappy(fn)(cb)
-
-  if (typeof fn !== 'function')
-    throw new TypeError('need wrapper function')
-
-  Object.keys(fn).forEach(function (k) {
-    wrapper[k] = fn[k]
-  })
-
-  return wrapper
-
-  function wrapper() {
-    var args = new Array(arguments.length)
-    for (var i = 0; i < args.length; i++) {
-      args[i] = arguments[i]
-    }
-    var ret = fn.apply(this, args)
-    var cb = args[args.length-1]
-    if (typeof ret === 'function' && ret !== cb) {
-      Object.keys(cb).forEach(function (k) {
-        ret[k] = cb[k]
-      })
-    }
-    return ret
-  }
-}
-
-},{}],48:[function(require,module,exports){
-var ClientRequest = require('./lib/request')
-var extend = require('xtend')
-var statusCodes = require('builtin-status-codes')
-var url = require('url')
-
-var http = exports
-
-http.request = function (opts, cb) {
-	if (typeof opts === 'string')
-		opts = url.parse(opts)
-	else
-		opts = extend(opts)
-
-	// Split opts.host into its components
-	var hostHostname = opts.host ? opts.host.split(':')[0] : null
-	var hostPort = opts.host ? parseInt(opts.host.split(':')[1], 10) : null
-
-	opts.method = opts.method || 'GET'
-	opts.headers = opts.headers || {}
-	opts.path = opts.path || '/'
-	opts.protocol = opts.protocol || window.location.protocol
-	// If the hostname is provided, use the default port for the protocol. If
-	// the url is instead relative, use window.location.port
-	var defaultPort = (opts.hostname || hostHostname) ? (opts.protocol === 'https:' ? 443 : 80) : window.location.port
-	opts.hostname = opts.hostname || hostHostname || window.location.hostname
-	opts.port = opts.port || hostPort || defaultPort
-
-	// Also valid opts.auth, opts.mode
-
-	var req = new ClientRequest(opts)
-	if (cb)
-		req.on('response', cb)
-	return req
-}
-
-http.get = function get (opts, cb) {
-	var req = http.request(opts, cb)
-	req.end()
-	return req
-}
-
-http.Agent = function () {}
-http.Agent.defaultMaxSockets = 4
-
-http.STATUS_CODES = statusCodes
-
-http.METHODS = [
-	'GET',
-	'POST',
-	'PUT',
-	'DELETE' // TODO: include the methods from RFC 2616 and 2518?
-]
-},{"./lib/request":50,"builtin-status-codes":52,"url":31,"xtend":58}],49:[function(require,module,exports){
-exports.fetch = isFunction(window.fetch) && isFunction(window.ReadableByteStream)
-
-exports.blobConstructor = false
-try {
-	new Blob([new ArrayBuffer(1)])
-	exports.blobConstructor = true
-} catch (e) {}
-
-var xhr = new window.XMLHttpRequest()
-xhr.open('GET', '/')
-
-function checkTypeSupport (type) {
-	try {
-		xhr.responseType = type
-		return xhr.responseType === type
-	} catch (e) {}
-	return false
-}
-
-var haveArrayBuffer = isFunction(window.ArrayBuffer)
-var haveSlice = haveArrayBuffer && isFunction(window.ArrayBuffer.prototype.slice)
-
-exports.arraybuffer = haveArrayBuffer && checkTypeSupport('arraybuffer')
-exports.msstream = haveSlice && checkTypeSupport('ms-stream')
-exports.mozchunkedarraybuffer = haveArrayBuffer && checkTypeSupport('moz-chunked-arraybuffer')
-exports.overrideMimeType = isFunction(xhr.overrideMimeType)
-exports.vbArray = isFunction(window.VBArray)
-
-function isFunction (value) {
-  return typeof value === 'function'
-}
-
-xhr = null // Help gc
-},{}],50:[function(require,module,exports){
-(function (process,Buffer){
-var capability = require('./capability')
-var foreach = require('foreach')
-var indexOf = require('indexof')
-var inherits = require('inherits')
-var keys = require('object-keys')
-var response = require('./response')
-var stream = require('stream')
-
-var IncomingMessage = response.IncomingMessage
-var rStates = response.readyStates
-
-function decideMode (preferBinary) {
-	if (capability.fetch) {
-		return 'fetch'
-	} else if (capability.mozchunkedarraybuffer) {
-		return 'moz-chunked-arraybuffer'
-	} else if (capability.msstream) {
-		return 'ms-stream'
-	} else if (capability.arraybuffer && preferBinary) {
-		return 'arraybuffer'
-	} else if (capability.vbArray && preferBinary) {
-		return 'text:vbarray'
-	} else {
-		return 'text'
-	}
-}
-
-var ClientRequest = module.exports = function (opts) {
-	var self = this
-	stream.Writable.call(self)
-
-	self._opts = opts
-	self._url = opts.protocol + '//' + opts.hostname + ':' + opts.port + opts.path
-	self._body = []
-	self._headers = {}
-	if (opts.auth)
-		self.setHeader('Authorization', 'Basic ' + new Buffer(opts.auth).toString('base64'))
-	foreach(keys(opts.headers), function (name) {
-		self.setHeader(name, opts.headers[name])
-	})
-
-	var preferBinary
-	if (opts.mode === 'prefer-streaming') {
-		// If streaming is a high priority but binary compatibility isn't
-		preferBinary = false
-	} else if (opts.mode === 'prefer-fast') {
-		// If binary is preferred for speed
-		preferBinary = true
-	} else if (!opts.mode || opts.mode === 'default') {
-		// By default, use binary if text streaming may corrupt data
-		preferBinary = !capability.overrideMimeType
-	} else {
-		throw new Error('Invalid value for opts.mode')
-	}
-	self._mode = decideMode(preferBinary)
-
-	self.on('finish', function () {
-		self._onFinish()
-	})
-}
-
-inherits(ClientRequest, stream.Writable)
-
-ClientRequest.prototype.setHeader = function (name, value) {
-	var self = this
-	var lowerName = name.toLowerCase()
-	// This check is not necessary, but it prevents warnings from browsers about setting unsafe
-	// headers. To be honest I'm not entirely sure hiding these warnings is a good thing, but
-	// http-browserify did it, so I will too.
-	if (indexOf(unsafeHeaders, lowerName) !== -1)
-		return
-
-	self._headers[lowerName] = {
-		name: name,
-		value: value
-	}
-}
-
-ClientRequest.prototype.getHeader = function (name) {
-	var self = this
-	return self._headers[name.toLowerCase()].value
-}
-
-ClientRequest.prototype.removeHeader = function (name) {
-	var self = this
-	delete self._headers[name.toLowerCase()]
-}
-
-ClientRequest.prototype._onFinish = function () {
-	var self = this
-
-	if (self._destroyed)
-		return
-	var opts = self._opts
-
-	var headersObj = self._headers
-	var body
-	if (opts.method === 'POST' || opts.method === 'PUT') {
-		if (capability.blobConstructor) {
-			body = new window.Blob(self._body.map(function (buffer) {
-				return buffer.toArrayBuffer()
-			}), {
-				type: (headersObj['content-type'] || {}).value || ''
-			})
-		} else {
-			// get utf8 string
-			body = Buffer.concat(self._body).toString()
-		}
-	}
-
-	if (self._mode === 'fetch') {
-		var headers = keys(headersObj).map(function (name) {
-			return [headersObj[name].name, headersObj[name].value]
-		})
-
-		window.fetch(self._url, {
-			method: self._opts.method,
-			headers: headers,
-			body: body,
-			mode: 'cors',
-			credentials: opts.withCredentials ? 'include' : 'same-origin'
-		}).then(function (response) {
-			self._fetchResponse = response
-			self._connect()
-		}).then(undefined, function (reason) {
-			self.emit('error', reason)
-		})
-	} else {
-		var xhr = self._xhr = new window.XMLHttpRequest()
+function safeGetValueFromPropertyOnObject(obj, property) {
+	if (hasProp.call(obj, property)) {
 		try {
-			xhr.open(self._opts.method, self._url, true)
-		} catch (err) {
-			process.nextTick(function () {
-				self.emit('error', err)
-			})
-			return
+			return obj[property];
 		}
-
-		// Can't set responseType on really old browsers
-		if ('responseType' in xhr)
-			xhr.responseType = self._mode.split(':')[0]
-
-		if ('withCredentials' in xhr)
-			xhr.withCredentials = !!opts.withCredentials
-
-		if (self._mode === 'text' && 'overrideMimeType' in xhr)
-			xhr.overrideMimeType('text/plain; charset=x-user-defined')
-
-		foreach(keys(headersObj), function (name) {
-			xhr.setRequestHeader(headersObj[name].name, headersObj[name].value)
-		})
-
-		self._response = null
-		xhr.onreadystatechange = function () {
-			switch (xhr.readyState) {
-				case rStates.LOADING:
-				case rStates.DONE:
-					self._onXHRProgress()
-					break
-			}
-		}
-		// Necessary for streaming in Firefox, since xhr.response is ONLY defined
-		// in onprogress, not in onreadystatechange with xhr.readyState = 3
-		if (self._mode === 'moz-chunked-arraybuffer') {
-			xhr.onprogress = function () {
-				self._onXHRProgress()
-			}
-		}
-
-		xhr.onerror = function () {
-			if (self._destroyed)
-				return
-			self.emit('error', new Error('XHR error'))
-		}
-
-		try {
-			xhr.send(body)
-		} catch (err) {
-			process.nextTick(function () {
-				self.emit('error', err)
-			})
-			return
+		catch (err) {
+			return throwsMessage(err);
 		}
 	}
+
+	return obj[property];
 }
 
-/**
- * Checks if xhr.status is readable. Even though the spec says it should
- * be available in readyState 3, accessing it throws an exception in IE8
- */
-function statusValid (xhr) {
-	try {
-		return (xhr.status !== null)
-	} catch (e) {
-		return false
-	}
-}
+function ensureProperties(obj) {
+	var seen = [ ]; // store references to objects we have seen before
 
-ClientRequest.prototype._onXHRProgress = function () {
-	var self = this
-
-	if (!statusValid(self._xhr) || self._destroyed)
-		return
-
-	if (!self._response)
-		self._connect()
-
-	self._response._onXHRProgress()
-}
-
-ClientRequest.prototype._connect = function () {
-	var self = this
-
-	if (self._destroyed)
-		return
-
-	self._response = new IncomingMessage(self._xhr, self._fetchResponse, self._mode)
-	self.emit('response', self._response)
-}
-
-ClientRequest.prototype._write = function (chunk, encoding, cb) {
-	var self = this
-
-	self._body.push(chunk)
-	cb()
-}
-
-ClientRequest.prototype.abort = ClientRequest.prototype.destroy = function () {
-	var self = this
-	self._destroyed = true
-	if (self._response)
-		self._response._destroyed = true
-	if (self._xhr)
-		self._xhr.abort()
-	// Currently, there isn't a way to truly abort a fetch.
-	// If you like bikeshedding, see https://github.com/whatwg/fetch/issues/27
-}
-
-ClientRequest.prototype.end = function (data, encoding, cb) {
-	var self = this
-	if (typeof data === 'function') {
-		cb = data
-		data = undefined
-	}
-
-	if (data)
-		stream.Writable.push.call(self, data, encoding)
-
-	stream.Writable.prototype.end.call(self, cb)
-}
-
-ClientRequest.prototype.flushHeaders = function () {}
-ClientRequest.prototype.setTimeout = function () {}
-ClientRequest.prototype.setNoDelay = function () {}
-ClientRequest.prototype.setSocketKeepAlive = function () {}
-
-// Taken from http://www.w3.org/TR/XMLHttpRequest/#the-setrequestheader%28%29-method
-var unsafeHeaders = [
-	'accept-charset',
-	'accept-encoding',
-	'access-control-request-headers',
-	'access-control-request-method',
-	'connection',
-	'content-length',
-	'cookie',
-	'cookie2',
-	'date',
-	'dnt',
-	'expect',
-	'host',
-	'keep-alive',
-	'origin',
-	'referer',
-	'te',
-	'trailer',
-	'transfer-encoding',
-	'upgrade',
-	'user-agent',
-	'via'
-]
-
-}).call(this,require('_process'),require("buffer").Buffer)
-},{"./capability":49,"./response":51,"_process":12,"buffer":3,"foreach":53,"indexof":54,"inherits":55,"object-keys":56,"stream":28}],51:[function(require,module,exports){
-(function (process,Buffer){
-var capability = require('./capability')
-var foreach = require('foreach')
-var inherits = require('inherits')
-var stream = require('stream')
-
-var rStates = exports.readyStates = {
-	UNSENT: 0,
-	OPENED: 1,
-	HEADERS_RECEIVED: 2,
-	LOADING: 3,
-	DONE: 4
-}
-
-var IncomingMessage = exports.IncomingMessage = function (xhr, response, mode) {
-	var self = this
-	stream.Readable.call(self)
-
-	self._mode = mode
-	self.headers = {}
-	self.rawHeaders = []
-	self.trailers = {}
-	self.rawTrailers = []
-
-	// Fake the 'close' event, but only once 'end' fires
-	self.on('end', function () {
-		// The nextTick is necessary to prevent the 'request' module from causing an infinite loop
-		process.nextTick(function () {
-			self.emit('close')
-		})
-	})
-
-	if (mode === 'fetch') {
-		self._fetchResponse = response
-
-		self.statusCode = response.status
-		self.statusMessage = response.statusText
-		// backwards compatible version of for (<item> of <iterable>):
-		// for (var <item>,_i,_it = <iterable>[Symbol.iterator](); <item> = (_i = _it.next()).value,!_i.done;)
-		for (var header, _i, _it = response.headers[Symbol.iterator](); header = (_i = _it.next()).value, !_i.done;) {
-			self.headers[header[0].toLowerCase()] = header[1]
-			self.rawHeaders.push(header[0], header[1])
+	function visit(obj) {
+		if (obj === null || typeof obj !== 'object') {
+			return obj;
 		}
 
-		// TODO: this doesn't respect backpressure. Once WritableStream is available, this can be fixed
-		var reader = response.body.getReader()
-		function read () {
-			reader.read().then(function (result) {
-				if (self._destroyed)
-					return
-				if (result.done) {
-					self.push(null)
-					return
-				}
-				self.push(new Buffer(result.value))
-				read()
-			})
+		if (seen.indexOf(obj) !== -1) {
+			return '[Circular]';
 		}
-		read()
+		seen.push(obj);
 
-	} else {
-		self._xhr = xhr
-		self._pos = 0
-
-		self.statusCode = xhr.status
-		self.statusMessage = xhr.statusText
-		var headers = xhr.getAllResponseHeaders().split(/\r?\n/)
-		foreach(headers, function (header) {
-			var matches = header.match(/^([^:]+):\s*(.*)/)
-			if (matches) {
-				var key = matches[1].toLowerCase()
-				if (self.headers[key] !== undefined)
-					self.headers[key] += ', ' + matches[2]
-				else
-					self.headers[key] = matches[2]
-				self.rawHeaders.push(matches[1], matches[2])
-			}
-		})
-
-		self._charset = 'x-user-defined'
-		if (!capability.overrideMimeType) {
-			var mimeType = self.rawHeaders['mime-type']
-			if (mimeType) {
-				var charsetMatch = mimeType.match(/;\s*charset=([^;])(;|$)/)
-				if (charsetMatch) {
-					self._charset = charsetMatch[1].toLowerCase()
-				}
-			}
-			if (!self._charset)
-				self._charset = 'utf-8' // best guess
-		}
-	}
-}
-
-inherits(IncomingMessage, stream.Readable)
-
-IncomingMessage.prototype._read = function () {}
-
-IncomingMessage.prototype._onXHRProgress = function () {
-	var self = this
-
-	var xhr = self._xhr
-
-	var response = null
-	switch (self._mode) {
-		case 'text:vbarray': // For IE9
-			if (xhr.readyState !== rStates.DONE)
-				break
+		if (typeof obj.toJSON === 'function') {
 			try {
-				// This fails in IE8
-				response = new window.VBArray(xhr.responseBody).toArray()
-			} catch (e) {}
-			if (response !== null) {
-				self.push(new Buffer(response))
-				break
-			}
-			// Falls through in IE8	
-		case 'text':
-			try { // This will fail when readyState = 3 in IE9. Switch mode and wait for readyState = 4
-				response = xhr.responseText
-			} catch (e) {
-				self._mode = 'text:vbarray'
-				break
-			}
-			if (response.length > self._pos) {
-				var newData = response.substr(self._pos)
-				if (self._charset === 'x-user-defined') {
-					var buffer = new Buffer(newData.length)
-					for (var i = 0; i < newData.length; i++)
-						buffer[i] = newData.charCodeAt(i) & 0xff
-
-					self.push(buffer)
-				} else {
-					self.push(newData, self._charset)
-				}
-				self._pos = response.length
-			}
-			break
-		case 'arraybuffer':
-			if (xhr.readyState !== rStates.DONE)
-				break
-			response = xhr.response
-			self.push(new Buffer(new Uint8Array(response)))
-			break
-		case 'moz-chunked-arraybuffer': // take whole
-			response = xhr.response
-			if (xhr.readyState !== rStates.LOADING || !response)
-				break
-			self.push(new Buffer(new Uint8Array(response)))
-			break
-		case 'ms-stream':
-			response = xhr.response
-			if (xhr.readyState !== rStates.LOADING)
-				break
-			var reader = new window.MSStreamReader()
-			reader.onprogress = function () {
-				if (reader.result.byteLength > self._pos) {
-					self.push(new Buffer(new Uint8Array(reader.result.slice(self._pos))))
-					self._pos = reader.result.byteLength
-				}
-			}
-			reader.onload = function () {
-				self.push(null)
-			}
-			// reader.onerror = ??? // TODO: this
-			reader.readAsArrayBuffer(response)
-			break
-	}
-
-	// The ms-stream case handles end separately in reader.onload()
-	if (self._xhr.readyState === rStates.DONE && self._mode !== 'ms-stream') {
-		self.push(null)
-	}
-}
-
-}).call(this,require('_process'),require("buffer").Buffer)
-},{"./capability":49,"_process":12,"buffer":3,"foreach":53,"inherits":55,"stream":28}],52:[function(require,module,exports){
-module.exports = {
-  "100": "Continue",
-  "101": "Switching Protocols",
-  "102": "Processing",
-  "200": "OK",
-  "201": "Created",
-  "202": "Accepted",
-  "203": "Non-Authoritative Information",
-  "204": "No Content",
-  "205": "Reset Content",
-  "206": "Partial Content",
-  "207": "Multi-Status",
-  "300": "Multiple Choices",
-  "301": "Moved Permanently",
-  "302": "Moved Temporarily",
-  "303": "See Other",
-  "304": "Not Modified",
-  "305": "Use Proxy",
-  "307": "Temporary Redirect",
-  "308": "Permanent Redirect",
-  "400": "Bad Request",
-  "401": "Unauthorized",
-  "402": "Payment Required",
-  "403": "Forbidden",
-  "404": "Not Found",
-  "405": "Method Not Allowed",
-  "406": "Not Acceptable",
-  "407": "Proxy Authentication Required",
-  "408": "Request Time-out",
-  "409": "Conflict",
-  "410": "Gone",
-  "411": "Length Required",
-  "412": "Precondition Failed",
-  "413": "Request Entity Too Large",
-  "414": "Request-URI Too Large",
-  "415": "Unsupported Media Type",
-  "416": "Requested Range Not Satisfiable",
-  "417": "Expectation Failed",
-  "418": "I'm a teapot",
-  "422": "Unprocessable Entity",
-  "423": "Locked",
-  "424": "Failed Dependency",
-  "425": "Unordered Collection",
-  "426": "Upgrade Required",
-  "428": "Precondition Required",
-  "429": "Too Many Requests",
-  "431": "Request Header Fields Too Large",
-  "500": "Internal Server Error",
-  "501": "Not Implemented",
-  "502": "Bad Gateway",
-  "503": "Service Unavailable",
-  "504": "Gateway Time-out",
-  "505": "HTTP Version Not Supported",
-  "506": "Variant Also Negotiates",
-  "507": "Insufficient Storage",
-  "509": "Bandwidth Limit Exceeded",
-  "510": "Not Extended",
-  "511": "Network Authentication Required"
-}
-
-},{}],53:[function(require,module,exports){
-
-var hasOwn = Object.prototype.hasOwnProperty;
-var toString = Object.prototype.toString;
-
-module.exports = function forEach (obj, fn, ctx) {
-    if (toString.call(fn) !== '[object Function]') {
-        throw new TypeError('iterator must be a function');
-    }
-    var l = obj.length;
-    if (l === +l) {
-        for (var i = 0; i < l; i++) {
-            fn.call(ctx, obj[i], i, obj);
-        }
-    } else {
-        for (var k in obj) {
-            if (hasOwn.call(obj, k)) {
-                fn.call(ctx, obj[k], k, obj);
-            }
-        }
-    }
-};
-
-
-},{}],54:[function(require,module,exports){
-
-var indexOf = [].indexOf;
-
-module.exports = function(arr, obj){
-  if (indexOf) return arr.indexOf(obj);
-  for (var i = 0; i < arr.length; ++i) {
-    if (arr[i] === obj) return i;
-  }
-  return -1;
-};
-},{}],55:[function(require,module,exports){
-arguments[4][9][0].apply(exports,arguments)
-},{"dup":9}],56:[function(require,module,exports){
-'use strict';
-
-// modified from https://github.com/es-shims/es5-shim
-var has = Object.prototype.hasOwnProperty;
-var toStr = Object.prototype.toString;
-var slice = Array.prototype.slice;
-var isArgs = require('./isArguments');
-var hasDontEnumBug = !({ 'toString': null }).propertyIsEnumerable('toString');
-var hasProtoEnumBug = function () {}.propertyIsEnumerable('prototype');
-var dontEnums = [
-	'toString',
-	'toLocaleString',
-	'valueOf',
-	'hasOwnProperty',
-	'isPrototypeOf',
-	'propertyIsEnumerable',
-	'constructor'
-];
-
-var keysShim = function keys(object) {
-	var isObject = object !== null && typeof object === 'object';
-	var isFunction = toStr.call(object) === '[object Function]';
-	var isArguments = isArgs(object);
-	var isString = isObject && toStr.call(object) === '[object String]';
-	var theKeys = [];
-
-	if (!isObject && !isFunction && !isArguments) {
-		throw new TypeError('Object.keys called on a non-object');
-	}
-
-	var skipProto = hasProtoEnumBug && isFunction;
-	if (isString && object.length > 0 && !has.call(object, 0)) {
-		for (var i = 0; i < object.length; ++i) {
-			theKeys.push(String(i));
-		}
-	}
-
-	if (isArguments && object.length > 0) {
-		for (var j = 0; j < object.length; ++j) {
-			theKeys.push(String(j));
-		}
-	} else {
-		for (var name in object) {
-			if (!(skipProto && name === 'prototype') && has.call(object, name)) {
-				theKeys.push(String(name));
+				return visit(obj.toJSON());
+			} catch(err) {
+				return throwsMessage(err);
 			}
 		}
-	}
 
-	if (hasDontEnumBug) {
-		var ctor = object.constructor;
-		var skipConstructor = ctor && ctor.prototype === object;
-
-		for (var k = 0; k < dontEnums.length; ++k) {
-			if (!(skipConstructor && dontEnums[k] === 'constructor') && has.call(object, dontEnums[k])) {
-				theKeys.push(dontEnums[k]);
-			}
+		if (Array.isArray(obj)) {
+			return obj.map(visit);
 		}
-	}
-	return theKeys;
-};
 
-keysShim.shim = function shimObjectKeys() {
-	if (!Object.keys) {
-		Object.keys = keysShim;
-	} else {
-		var keysWorksWithArguments = (function () {
-			// Safari 5.0 bug
-			return (Object.keys(arguments) || '').length === 2;
-		}(1, 2));
-		if (!keysWorksWithArguments) {
-			var originalKeys = Object.keys;
-			Object.keys = function keys(object) {
-				if (isArgs(object)) {
-					return originalKeys(slice.call(object));
-				} else {
-					return originalKeys(object);
-				}
-			};
-		}
-	}
-	return Object.keys || keysShim;
-};
-
-module.exports = keysShim;
-
-},{"./isArguments":57}],57:[function(require,module,exports){
-'use strict';
-
-var toStr = Object.prototype.toString;
-
-module.exports = function isArguments(value) {
-	var str = toStr.call(value);
-	var isArgs = str === '[object Arguments]';
-	if (!isArgs) {
-		isArgs = str !== '[object Array]' &&
-			value !== null &&
-			typeof value === 'object' &&
-			typeof value.length === 'number' &&
-			value.length >= 0 &&
-			toStr.call(value.callee) === '[object Function]';
-	}
-	return isArgs;
-};
-
-},{}],58:[function(require,module,exports){
-module.exports = extend
-
-function extend() {
-    var target = {}
-
-    for (var i = 0; i < arguments.length; i++) {
-        var source = arguments[i]
-
-        for (var key in source) {
-            if (source.hasOwnProperty(key)) {
-                target[key] = source[key]
-            }
-        }
-    }
-
-    return target
-}
-
-},{}],59:[function(require,module,exports){
-arguments[4][23][0].apply(exports,arguments)
-},{"buffer":3,"dup":23}],60:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var net = require('net');
-var util = require('util');
-var EventEmitter = require('events').EventEmitter;
-var debug = util.debuglog('http');
-
-// New Agent code.
-
-// The largest departure from the previous implementation is that
-// an Agent instance holds connections for a variable number of host:ports.
-// Surprisingly, this is still API compatible as far as third parties are
-// concerned. The only code that really notices the difference is the
-// request object.
-
-// Another departure is that all code related to HTTP parsing is in
-// ClientRequest.onSocket(). The Agent is now *strictly*
-// concerned with managing a connection pool.
-
-function Agent(options) {
-  if (!(this instanceof Agent))
-    return new Agent(options);
-
-  EventEmitter.call(this);
-
-  var self = this;
-
-  self.defaultPort = 80;
-  self.protocol = 'http:';
-
-  self.options = util._extend({}, options);
-
-  // don't confuse net and make it think that we're connecting to a pipe
-  self.options.path = null;
-  self.requests = {};
-  self.sockets = {};
-  self.freeSockets = {};
-  self.keepAliveMsecs = self.options.keepAliveMsecs || 1000;
-  self.keepAlive = self.options.keepAlive || false;
-  self.maxSockets = self.options.maxSockets || Agent.defaultMaxSockets;
-  self.maxFreeSockets = self.options.maxFreeSockets || 256;
-
-  self.on('free', function(socket, options) {
-    var name = self.getName(options);
-    debug('agent.on(free)', name);
-
-    if (!socket.destroyed &&
-        self.requests[name] && self.requests[name].length) {
-      self.requests[name].shift().onSocket(socket);
-      if (self.requests[name].length === 0) {
-        // don't leak
-        delete self.requests[name];
-      }
-    } else {
-      // If there are no pending requests, then put it in
-      // the freeSockets pool, but only if we're allowed to do so.
-      var req = socket._httpMessage;
-      if (req &&
-          req.shouldKeepAlive &&
-          !socket.destroyed &&
-          self.options.keepAlive) {
-        var freeSockets = self.freeSockets[name];
-        var freeLen = freeSockets ? freeSockets.length : 0;
-        var count = freeLen;
-        if (self.sockets[name])
-          count += self.sockets[name].length;
-
-        if (count >= self.maxSockets || freeLen >= self.maxFreeSockets) {
-          self.removeSocket(socket, options);
-          socket.destroy();
-        } else {
-          freeSockets = freeSockets || [];
-          self.freeSockets[name] = freeSockets;
-          socket.setKeepAlive(true, self.keepAliveMsecs);
-          socket.unref();
-          socket._httpMessage = null;
-          self.removeSocket(socket, options);
-          freeSockets.push(socket);
-        }
-      } else {
-        self.removeSocket(socket, options);
-        socket.destroy();
-      }
-    }
-  });
-}
-
-util.inherits(Agent, EventEmitter);
-exports.Agent = Agent;
-
-Agent.defaultMaxSockets = Infinity;
-
-Agent.prototype.createConnection = net.createConnection;
-
-// Get the key for a given set of request options
-Agent.prototype.getName = function(options) {
-  var name = '';
-
-  if (options.host)
-    name += options.host;
-  else
-    name += 'localhost';
-
-  name += ':';
-  if (options.port)
-    name += options.port;
-  name += ':';
-  if (options.localAddress)
-    name += options.localAddress;
-  name += ':';
-  return name;
-};
-
-Agent.prototype.addRequest = function(req, options) {
-  // Legacy API: addRequest(req, host, port, path)
-  if (typeof options === 'string') {
-    options = {
-      host: options,
-      port: arguments[2],
-      path: arguments[3]
-    };
-  }
-
-  var name = this.getName(options);
-  if (!this.sockets[name]) {
-    this.sockets[name] = [];
-  }
-
-  var freeLen = this.freeSockets[name] ? this.freeSockets[name].length : 0;
-  var sockLen = freeLen + this.sockets[name].length;
-
-  if (freeLen) {
-    // we have a free socket, so use that.
-    var socket = this.freeSockets[name].shift();
-    debug('have free socket');
-
-    // don't leak
-    if (!this.freeSockets[name].length)
-      delete this.freeSockets[name];
-
-    socket.ref();
-    req.onSocket(socket);
-    this.sockets[name].push(socket);
-  } else if (sockLen < this.maxSockets) {
-    debug('call onSocket', sockLen, freeLen);
-    // If we are under maxSockets create a new one.
-    req.onSocket(this.createSocket(req, options));
-  } else {
-    debug('wait for socket');
-    // We are over limit so we'll add it to the queue.
-    if (!this.requests[name]) {
-      this.requests[name] = [];
-    }
-    this.requests[name].push(req);
-  }
-};
-
-Agent.prototype.createSocket = function(req, options) {
-  var self = this;
-  options = util._extend({}, options);
-  options = util._extend(options, self.options);
-
-  options.servername = options.host;
-  if (req) {
-    var hostHeader = req.getHeader('host');
-    if (hostHeader) {
-      options.servername = hostHeader.replace(/:.*$/, '');
-    }
-  }
-
-  var name = self.getName(options);
-
-  debug('createConnection', name, options);
-  options.encoding = null;
-  var s = self.createConnection(options);
-  if (!self.sockets[name]) {
-    self.sockets[name] = [];
-  }
-  this.sockets[name].push(s);
-  debug('sockets', name, this.sockets[name].length);
-
-  function onFree() {
-    self.emit('free', s, options);
-  }
-  s.on('free', onFree);
-
-  function onClose(err) {
-    debug('CLIENT socket onClose');
-    // This is the only place where sockets get removed from the Agent.
-    // If you want to remove a socket from the pool, just close it.
-    // All socket errors end in a close event anyway.
-    self.removeSocket(s, options);
-  }
-  s.on('close', onClose);
-
-  function onRemove() {
-    // We need this function for cases like HTTP 'upgrade'
-    // (defined by WebSockets) where we need to remove a socket from the
-    // pool because it'll be locked up indefinitely
-    debug('CLIENT socket onRemove');
-    self.removeSocket(s, options);
-    s.removeListener('close', onClose);
-    s.removeListener('free', onFree);
-    s.removeListener('agentRemove', onRemove);
-  }
-  s.on('agentRemove', onRemove);
-  return s;
-};
-
-Agent.prototype.removeSocket = function(s, options) {
-  var name = this.getName(options);
-  debug('removeSocket', name, 'destroyed:', s.destroyed);
-  var sets = [this.sockets];
-
-  // If the socket was destroyed, remove it from the free buffers too.
-  if (s.destroyed)
-    sets.push(this.freeSockets);
-
-  for (var sk = 0; sk < sets.length; sk++) {
-    var sockets = sets[sk];
-
-    if (sockets[name]) {
-      var index = sockets[name].indexOf(s);
-      if (index !== -1) {
-        sockets[name].splice(index, 1);
-        // Don't leak
-        if (sockets[name].length === 0)
-          delete sockets[name];
-      }
-    }
-  }
-
-  if (this.requests[name] && this.requests[name].length) {
-    debug('removeSocket, have a request, make a socket');
-    var req = this.requests[name][0];
-    // If we have pending requests and a socket gets closed make a new one
-    this.createSocket(req, options).emit('free');
-  }
-};
-
-Agent.prototype.destroy = function() {
-  var sets = [this.freeSockets, this.sockets];
-  for (var s = 0; s < sets.length; s++) {
-    var set = sets[s];
-    var keys = Object.keys(set);
-    for (var v = 0; v < keys.length; v++) {
-      var setName = set[keys[v]];
-      for (var n = 0; n < setName.length; n++) {
-        setName[n].destroy();
-      }
-    }
-  }
-};
-
-exports.globalAgent = new Agent();
-
-},{"events":8,"net":"net","util":33}],61:[function(require,module,exports){
-(function (process){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var util = require('util');
-var net = require('net');
-var url = require('url');
-var EventEmitter = require('events').EventEmitter;
-var HTTPParser = require('http-parser-js').HTTPParser;
-var assert = require('assert').ok;
-var Buffer = require('buffer').Buffer;
-
-var common = require('./_http_common');
-
-var httpSocketSetup = common.httpSocketSetup;
-var parsers = common.parsers;
-var freeParser = common.freeParser;
-var debug = common.debug;
-
-var OutgoingMessage = require('./_http_outgoing').OutgoingMessage;
-
-var Agent = require('./_http_agent');
-
-
-function ClientRequest(options, cb) {
-  var self = this;
-  OutgoingMessage.call(self);
-
-  if (util.isString(options)) {
-    options = url.parse(options);
-  } else {
-    options = util._extend({}, options);
-  }
-
-  var agent = options.agent;
-  var defaultAgent = options._defaultAgent || Agent.globalAgent;
-  if (agent === false) {
-    agent = new defaultAgent.constructor();
-  } else if (util.isNullOrUndefined(agent) && !options.createConnection) {
-    agent = defaultAgent;
-  }
-  self.agent = agent;
-
-  var protocol = options.protocol || defaultAgent.protocol;
-  var expectedProtocol = defaultAgent.protocol;
-  if (self.agent && self.agent.protocol)
-    expectedProtocol = self.agent.protocol;
-
-  if (options.path && / /.test(options.path)) {
-    // The actual regex is more like /[^A-Za-z0-9\-._~!$&'()*+,;=/:@]/
-    // with an additional rule for ignoring percentage-escaped characters
-    // but that's a) hard to capture in a regular expression that performs
-    // well, and b) possibly too restrictive for real-world usage. That's
-    // why it only scans for spaces because those are guaranteed to create
-    // an invalid request.
-    throw new TypeError('Request path contains unescaped characters.');
-  } else if (protocol !== expectedProtocol) {
-    throw new Error('Protocol "' + protocol + '" not supported. ' +
-                    'Expected "' + expectedProtocol + '".');
-  }
-
-  var defaultPort = options.defaultPort || self.agent && self.agent.defaultPort;
-
-  var port = options.port = options.port || defaultPort || 80;
-  var host = options.host = options.hostname || options.host || 'localhost';
-
-  if (util.isUndefined(options.setHost)) {
-    var setHost = true;
-  }
-
-  self.socketPath = options.socketPath;
-
-  var method = self.method = (options.method || 'GET').toUpperCase();
-  self.path = options.path || '/';
-  if (cb) {
-    self.once('response', cb);
-  }
-
-  if (!util.isArray(options.headers)) {
-    if (options.headers) {
-      var keys = Object.keys(options.headers);
-      for (var i = 0, l = keys.length; i < l; i++) {
-        var key = keys[i];
-        self.setHeader(key, options.headers[key]);
-      }
-    }
-    if (host && !this.getHeader('host') && setHost) {
-      var hostHeader = host;
-      if (port && +port !== defaultPort) {
-        hostHeader += ':' + port;
-      }
-      this.setHeader('Host', hostHeader);
-    }
-  }
-
-  if (options.auth && !this.getHeader('Authorization')) {
-    //basic auth
-    this.setHeader('Authorization', 'Basic ' +
-                   new Buffer(options.auth).toString('base64'));
-  }
-
-  if (method === 'GET' ||
-      method === 'HEAD' ||
-      method === 'DELETE' ||
-      method === 'OPTIONS' ||
-      method === 'CONNECT') {
-    self.useChunkedEncodingByDefault = false;
-  } else {
-    self.useChunkedEncodingByDefault = true;
-  }
-
-  if (util.isArray(options.headers)) {
-    self._storeHeader(self.method + ' ' + self.path + ' HTTP/1.1\r\n',
-                      options.headers);
-  } else if (self.getHeader('expect')) {
-    self._storeHeader(self.method + ' ' + self.path + ' HTTP/1.1\r\n',
-                      self._renderHeaders());
-  }
-
-  if (self.socketPath) {
-    self._last = true;
-    self.shouldKeepAlive = false;
-    var conn = self.agent.createConnection({ path: self.socketPath });
-    self.onSocket(conn);
-  } else if (self.agent) {
-    // If there is an agent we should default to Connection:keep-alive,
-    // but only if the Agent will actually reuse the connection!
-    // If it's not a keepAlive agent, and the maxSockets==Infinity, then
-    // there's never a case where this socket will actually be reused
-    if (!self.agent.keepAlive && !Number.isFinite(self.agent.maxSockets)) {
-      self._last = true;
-      self.shouldKeepAlive = false;
-    } else {
-      self._last = false;
-      self.shouldKeepAlive = true;
-    }
-    self.agent.addRequest(self, options);
-  } else {
-    // No agent, default to Connection:close.
-    self._last = true;
-    self.shouldKeepAlive = false;
-    if (options.createConnection) {
-      var conn = options.createConnection(options);
-    } else {
-      debug('CLIENT use net.createConnection', options);
-      var conn = net.createConnection(options);
-    }
-    self.onSocket(conn);
-  }
-
-  self._deferToConnect(null, null, function() {
-    self._flush();
-    self = null;
-  });
-}
-
-util.inherits(ClientRequest, OutgoingMessage);
-
-exports.ClientRequest = ClientRequest;
-
-ClientRequest.prototype.aborted = undefined;
-
-ClientRequest.prototype._finish = function() {
-  // DTRACE_HTTP_CLIENT_REQUEST(this, this.connection);
-  // COUNTER_HTTP_CLIENT_REQUEST();
-  OutgoingMessage.prototype._finish.call(this);
-};
-
-ClientRequest.prototype._implicitHeader = function() {
-  this._storeHeader(this.method + ' ' + this.path + ' HTTP/1.1\r\n',
-                    this._renderHeaders());
-};
-
-ClientRequest.prototype.abort = function() {
-  // Mark as aborting so we can avoid sending queued request data
-  // This is used as a truthy flag elsewhere. The use of Date.now is for
-  // debugging purposes only.
-  this.aborted = Date.now();
-
-  // If we're aborting, we don't care about any more response data.
-  if (this.res)
-    this.res._dump();
-  else
-    this.once('response', function(res) {
-      res._dump();
-    });
-
-  // In the event that we don't have a socket, we will pop out of
-  // the request queue through handling in onSocket.
-  if (this.socket) {
-    // in-progress
-    this.socket.destroy();
-  }
-};
-
-
-function createHangUpError() {
-  var error = new Error('socket hang up');
-  error.code = 'ECONNRESET';
-  return error;
-}
-
-
-function socketCloseListener() {
-  var socket = this;
-  var req = socket._httpMessage;
-  debug('HTTP socket close');
-
-  // Pull through final chunk, if anything is buffered.
-  // the ondata function will handle it properly, and this
-  // is a no-op if no final chunk remains.
-  socket.read();
-
-  // NOTE: Its important to get parser here, because it could be freed by
-  // the `socketOnData`.
-  var parser = socket.parser;
-  req.emit('close');
-  if (req.res && req.res.readable) {
-    // Socket closed before we emitted 'end' below.
-    req.res.emit('aborted');
-    var res = req.res;
-    res.on('end', function() {
-      res.emit('close');
-    });
-    res.push(null);
-  } else if (!req.res && !req.socket._hadError) {
-    // This socket error fired before we started to
-    // receive a response. The error needs to
-    // fire on the request.
-    req.emit('error', createHangUpError());
-    req.socket._hadError = true;
-  }
-
-  // Too bad.  That output wasn't getting written.
-  // This is pretty terrible that it doesn't raise an error.
-  // Fixed better in v0.10
-  if (req.output)
-    req.output.length = 0;
-  if (req.outputEncodings)
-    req.outputEncodings.length = 0;
-
-  if (parser) {
-    parser.finish();
-    freeParser(parser, req, socket);
-  }
-}
-
-function socketErrorListener(err) {
-  var socket = this;
-  var req = socket._httpMessage;
-  debug('SOCKET ERROR:', err.message, err.stack);
-
-  if (req) {
-    req.emit('error', err);
-    // For Safety. Some additional errors might fire later on
-    // and we need to make sure we don't double-fire the error event.
-    req.socket._hadError = true;
-  }
-
-  // Handle any pending data
-  socket.read();
-
-  var parser = socket.parser;
-  if (parser) {
-    parser.finish();
-    freeParser(parser, req, socket);
-  }
-
-  // Ensure that no further data will come out of the socket
-  socket.removeListener('data', socketOnData);
-  socket.removeListener('end', socketOnEnd);
-  socket.destroy();
-}
-
-function socketOnEnd() {
-  var socket = this;
-  var req = this._httpMessage;
-  var parser = this.parser;
-
-  if (!req.res && !req.socket._hadError) {
-    // If we don't have a response then we know that the socket
-    // ended prematurely and we need to emit an error on the request.
-    req.emit('error', createHangUpError());
-    req.socket._hadError = true;
-  }
-  if (parser) {
-    parser.finish();
-    freeParser(parser, req, socket);
-  }
-  socket.destroy();
-}
-
-function socketOnData(d) {
-  var socket = this;
-  var req = this._httpMessage;
-  var parser = this.parser;
-
-  assert(parser && parser.socket === socket);
-
-  var ret = parser.execute(d);
-  if (ret instanceof Error) {
-    debug('parse error');
-    freeParser(parser, req, socket);
-    socket.destroy();
-    req.emit('error', ret);
-    req.socket._hadError = true;
-  } else if (parser.incoming && parser.incoming.upgrade) {
-    // Upgrade or CONNECT
-    var bytesParsed = ret;
-    var res = parser.incoming;
-    req.res = res;
-
-    socket.removeListener('data', socketOnData);
-    socket.removeListener('end', socketOnEnd);
-    parser.finish();
-
-    var bodyHead = d.slice(bytesParsed, d.length);
-
-    var eventName = req.method === 'CONNECT' ? 'connect' : 'upgrade';
-    if (EventEmitter.listenerCount(req, eventName) > 0) {
-      req.upgradeOrConnect = true;
-
-      // detach the socket
-      socket.emit('agentRemove');
-      socket.removeListener('close', socketCloseListener);
-      socket.removeListener('error', socketErrorListener);
-
-      // TODO(isaacs): Need a way to reset a stream to fresh state
-      // IE, not flowing, and not explicitly paused.
-      socket._readableState.flowing = null;
-
-      req.emit(eventName, res, socket, bodyHead);
-      req.emit('close');
-    } else {
-      // Got Upgrade header or CONNECT method, but have no handler.
-      socket.destroy();
-    }
-    freeParser(parser, req, socket);
-  } else if (parser.incoming && parser.incoming.complete &&
-             // When the status code is 100 (Continue), the server will
-             // send a final response after this client sends a request
-             // body. So, we must not free the parser.
-             parser.incoming.statusCode !== 100) {
-    socket.removeListener('data', socketOnData);
-    socket.removeListener('end', socketOnEnd);
-    freeParser(parser, req, socket);
-  }
-}
-
-
-// client
-function parserOnIncomingClient(res, shouldKeepAlive) {
-  var socket = this.socket;
-  var req = socket._httpMessage;
-
-
-  // propogate "domain" setting...
-  if (req.domain && !res.domain) {
-    debug('setting "res.domain"');
-    res.domain = req.domain;
-  }
-
-  debug('AGENT incoming response!');
-
-  if (req.res) {
-    // We already have a response object, this means the server
-    // sent a double response.
-    socket.destroy();
-    return;
-  }
-  req.res = res;
-
-  // Responses to CONNECT request is handled as Upgrade.
-  if (req.method === 'CONNECT') {
-    res.upgrade = true;
-    return true; // skip body
-  }
-
-  // Responses to HEAD requests are crazy.
-  // HEAD responses aren't allowed to have an entity-body
-  // but *can* have a content-length which actually corresponds
-  // to the content-length of the entity-body had the request
-  // been a GET.
-  var isHeadResponse = req.method === 'HEAD';
-  debug('AGENT isHeadResponse', isHeadResponse);
-
-  if (res.statusCode === 100) {
-    // restart the parser, as this is a continue message.
-    delete req.res; // Clear res so that we don't hit double-responses.
-    req.emit('continue');
-    return true;
-  }
-
-  if (req.shouldKeepAlive && !shouldKeepAlive && !req.upgradeOrConnect) {
-    // Server MUST respond with Connection:keep-alive for us to enable it.
-    // If we've been upgraded (via WebSockets) we also shouldn't try to
-    // keep the connection open.
-    req.shouldKeepAlive = false;
-  }
-
-
-  // DTRACE_HTTP_CLIENT_RESPONSE(socket, req);
-  // COUNTER_HTTP_CLIENT_RESPONSE();
-  req.res = res;
-  res.req = req;
-
-  // add our listener first, so that we guarantee socket cleanup
-  res.on('end', responseOnEnd);
-  var handled = req.emit('response', res);
-
-  // If the user did not listen for the 'response' event, then they
-  // can't possibly read the data, so we ._dump() it into the void
-  // so that the socket doesn't hang there in a paused state.
-  if (!handled)
-    res._dump();
-
-  return isHeadResponse;
-}
-
-// client
-function responseOnEnd() {
-  var res = this;
-  var req = res.req;
-  var socket = req.socket;
-
-  if (!req.shouldKeepAlive) {
-    if (socket.writable) {
-      debug('AGENT socket.destroySoon()');
-      socket.destroySoon();
-    }
-    assert(!socket.writable);
-  } else {
-    debug('AGENT socket keep-alive');
-    if (req.timeoutCb) {
-      socket.setTimeout(0, req.timeoutCb);
-      req.timeoutCb = null;
-    }
-    socket.removeListener('close', socketCloseListener);
-    socket.removeListener('error', socketErrorListener);
-    // Mark this socket as available, AFTER user-added end
-    // handlers have a chance to run.
-    process.nextTick(function() {
-      socket.emit('free');
-    });
-  }
-}
-
-function tickOnSocket(req, socket) {
-  var parser = parsers.alloc();
-  req.socket = socket;
-  req.connection = socket;
-  parser.reinitialize(HTTPParser.RESPONSE);
-  parser.socket = socket;
-  parser.incoming = null;
-  req.parser = parser;
-
-  socket.parser = parser;
-  socket._httpMessage = req;
-
-  // Setup "drain" propogation.
-  httpSocketSetup(socket);
-
-  // Propagate headers limit from request object to parser
-  if (util.isNumber(req.maxHeadersCount)) {
-    parser.maxHeaderPairs = req.maxHeadersCount << 1;
-  } else {
-    // Set default value because parser may be reused from FreeList
-    parser.maxHeaderPairs = 2000;
-  }
-
-  parser.onIncoming = parserOnIncomingClient;
-  socket.on('error', socketErrorListener);
-  socket.on('data', socketOnData);
-  socket.on('end', socketOnEnd);
-  socket.on('close', socketCloseListener);
-  req.emit('socket', socket);
-}
-
-ClientRequest.prototype.onSocket = function(socket) {
-  var req = this;
-
-  process.nextTick(function() {
-    if (req.aborted) {
-      // If we were aborted while waiting for a socket, skip the whole thing.
-      socket.emit('free');
-    } else {
-      tickOnSocket(req, socket);
-    }
-  });
-};
-
-ClientRequest.prototype._deferToConnect = function(method, arguments_, cb) {
-  // This function is for calls that need to happen once the socket is
-  // connected and writable. It's an important promisy thing for all the socket
-  // calls that happen either now (when a socket is assigned) or
-  // in the future (when a socket gets assigned out of the pool and is
-  // eventually writable).
-  var self = this;
-  var onSocket = function() {
-    if (self.socket.writable) {
-      if (method) {
-        self.socket[method].apply(self.socket, arguments_);
-      }
-      if (cb) { cb(); }
-    } else {
-      self.socket.once('connect', function() {
-        if (method) {
-          self.socket[method].apply(self.socket, arguments_);
-        }
-        if (cb) { cb(); }
-      });
-    }
-  }
-  if (!self.socket) {
-    self.once('socket', onSocket);
-  } else {
-    onSocket();
-  }
-};
-
-ClientRequest.prototype.setTimeout = function(msecs, callback) {
-  if (callback) this.once('timeout', callback);
-
-  var self = this;
-  function emitTimeout() {
-    self.emit('timeout');
-  }
-
-  if (this.socket && this.socket.writable) {
-    if (this.timeoutCb)
-      this.socket.setTimeout(0, this.timeoutCb);
-    this.timeoutCb = emitTimeout;
-    this.socket.setTimeout(msecs, emitTimeout);
-    return;
-  }
-
-  // Set timeoutCb so that it'll get cleaned up on request end
-  this.timeoutCb = emitTimeout;
-  if (this.socket) {
-    var sock = this.socket;
-    this.socket.once('connect', function() {
-      sock.setTimeout(msecs, emitTimeout);
-    });
-    return;
-  }
-
-  this.once('socket', function(sock) {
-    sock.setTimeout(msecs, emitTimeout);
-  });
-};
-
-ClientRequest.prototype.setNoDelay = function() {
-  this._deferToConnect('setNoDelay', arguments);
-};
-ClientRequest.prototype.setSocketKeepAlive = function() {
-  this._deferToConnect('setKeepAlive', arguments);
-};
-
-ClientRequest.prototype.clearTimeout = function(cb) {
-  this.setTimeout(0, cb);
-};
-
-}).call(this,require('_process'))
-},{"./_http_agent":60,"./_http_common":62,"./_http_outgoing":64,"_process":12,"assert":1,"buffer":3,"events":8,"http-parser-js":67,"net":"net","url":31,"util":33}],62:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var FreeList = require('freelist').FreeList;
-var HTTPParser = require('http-parser-js').HTTPParser;
-
-var incoming = require('./_http_incoming');
-var IncomingMessage = incoming.IncomingMessage;
-var readStart = incoming.readStart;
-var readStop = incoming.readStop;
-
-var isNumber = require('util').isNumber;
-var debug = require('util').debuglog('http');
-exports.debug = debug;
-
-exports.CRLF = '\r\n';
-exports.chunkExpression = /chunk/i;
-exports.continueExpression = /100-continue/i;
-exports.methods = HTTPParser.methods;
-
-var kOnHeaders = HTTPParser.kOnHeaders | 0;
-var kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
-var kOnBody = HTTPParser.kOnBody | 0;
-var kOnMessageComplete = HTTPParser.kOnMessageComplete | 0;
-
-// Only called in the slow case where slow means
-// that the request headers were either fragmented
-// across multiple TCP packets or too large to be
-// processed in a single run. This method is also
-// called to process trailing HTTP headers.
-function parserOnHeaders(headers, url) {
-  // Once we exceeded headers limit - stop collecting them
-  if (this.maxHeaderPairs <= 0 ||
-      this._headers.length < this.maxHeaderPairs) {
-    this._headers = this._headers.concat(headers);
-  }
-  this._url += url;
-}
-
-// info.headers and info.url are set only if .onHeaders()
-// has not been called for this request.
-//
-// info.url is not set for response parsers but that's not
-// applicable here since all our parsers are request parsers.
-function parserOnHeadersComplete(info) {
-  debug('parserOnHeadersComplete', info);
-  var parser = this;
-  var headers = info.headers;
-  var url = info.url;
-
-  if (!headers) {
-    headers = parser._headers;
-    parser._headers = [];
-  }
-
-  if (!url) {
-    url = parser._url;
-    parser._url = '';
-  }
-
-  parser.incoming = new IncomingMessage(parser.socket);
-  parser.incoming.httpVersionMajor = info.versionMajor;
-  parser.incoming.httpVersionMinor = info.versionMinor;
-  parser.incoming.httpVersion = info.versionMajor + '.' + info.versionMinor;
-  parser.incoming.url = url;
-
-  var n = headers.length;
-
-  // If parser.maxHeaderPairs <= 0 - assume that there're no limit
-  if (parser.maxHeaderPairs > 0) {
-    n = Math.min(n, parser.maxHeaderPairs);
-  }
-
-  parser.incoming._addHeaderLines(headers, n);
-
-  if (isNumber(info.method)) {
-    // server only
-    parser.incoming.method = HTTPParser.methods[info.method];
-  } else {
-    // client only
-    parser.incoming.statusCode = info.statusCode;
-    parser.incoming.statusMessage = info.statusMessage;
-  }
-
-  parser.incoming.upgrade = info.upgrade;
-
-  var skipBody = false; // response to HEAD or CONNECT
-
-  if (!info.upgrade) {
-    // For upgraded connections and CONNECT method request,
-    // we'll emit this after parser.execute
-    // so that we can capture the first part of the new protocol
-    skipBody = parser.onIncoming(parser.incoming, info.shouldKeepAlive);
-  }
-
-  return skipBody;
-}
-
-// XXX This is a mess.
-// TODO: http.Parser should be a Writable emits request/response events.
-function parserOnBody(b, start, len) {
-  var parser = this;
-  var stream = parser.incoming;
-
-  // if the stream has already been removed, then drop it.
-  if (!stream)
-    return;
-
-  var socket = stream.socket;
-
-  // pretend this was the result of a stream._read call.
-  if (len > 0 && !stream._dumped) {
-    var slice = b.slice(start, start + len);
-    var ret = stream.push(slice);
-    if (!ret)
-      readStop(socket);
-  }
-}
-
-function parserOnMessageComplete() {
-  var parser = this;
-  var stream = parser.incoming;
-
-  if (stream) {
-    stream.complete = true;
-    // Emit any trailing headers.
-    var headers = parser._headers;
-    if (headers) {
-      parser.incoming._addHeaderLines(headers, headers.length);
-      parser._headers = [];
-      parser._url = '';
-    }
-
-    if (!stream.upgrade)
-      // For upgraded connections, also emit this after parser.execute
-      stream.push(null);
-  }
-
-  if (stream && !parser.incoming._pendings.length) {
-    // For emit end event
-    stream.push(null);
-  }
-
-  // force to read the next incoming message
-  readStart(parser.socket);
-}
-
-
-var parsers = new FreeList('parsers', 1000, function() {
-  var parser = new HTTPParser(HTTPParser.REQUEST);
-
-  parser._headers = [];
-  parser._url = '';
-
-  // Only called in the slow case where slow means
-  // that the request headers were either fragmented
-  // across multiple TCP packets or too large to be
-  // processed in a single run. This method is also
-  // called to process trailing HTTP headers.
-  parser[kOnHeaders] = parserOnHeaders;
-  parser[kOnHeadersComplete] = parserOnHeadersComplete;
-  parser[kOnBody] = parserOnBody;
-  parser[kOnMessageComplete] = parserOnMessageComplete;
-
-  return parser;
-});
-exports.parsers = parsers;
-
-
-// Free the parser and also break any links that it
-// might have to any other things.
-// TODO: All parser data should be attached to a
-// single object, so that it can be easily cleaned
-// up by doing `parser.data = {}`, which should
-// be done in FreeList.free.  `parsers.free(parser)`
-// should be all that is needed.
-function freeParser(parser, req, socket) {
-  if (parser) {
-    parser._headers = [];
-    parser.onIncoming = null;
-    if (parser.socket)
-      parser.socket.parser = null;
-    parser.socket = null;
-    parser.incoming = null;
-    if (parsers.free(parser) === false)
-      parser.close();
-    parser = null;
-  }
-  if (req) {
-    req.parser = null;
-  }
-  if (socket) {
-    socket.parser = null;
-  }
-}
-exports.freeParser = freeParser;
-
-
-function ondrain() {
-  if (this._httpMessage) this._httpMessage.emit('drain');
-}
-
-
-function httpSocketSetup(socket) {
-  socket.removeListener('drain', ondrain);
-  socket.on('drain', ondrain);
-}
-exports.httpSocketSetup = httpSocketSetup;
-
-},{"./_http_incoming":63,"freelist":66,"http-parser-js":67,"util":33}],63:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var util = require('util');
-var Stream = require('stream');
-
-function readStart(socket) {
-  if (socket && !socket._paused && socket.readable)
-    socket.resume();
-}
-exports.readStart = readStart;
-
-function readStop(socket) {
-  if (socket)
-    socket.pause();
-}
-exports.readStop = readStop;
-
-
-/* Abstract base class for ServerRequest and ClientResponse. */
-function IncomingMessage(socket) {
-  Stream.Readable.call(this);
-
-  // XXX This implementation is kind of all over the place
-  // When the parser emits body chunks, they go in this list.
-  // _read() pulls them out, and when it finds EOF, it ends.
-
-  this.socket = socket;
-  this.connection = socket;
-
-  this.httpVersionMajor = null;
-  this.httpVersionMinor = null;
-  this.httpVersion = null;
-  this.complete = false;
-  this.headers = {};
-  this.rawHeaders = [];
-  this.trailers = {};
-  this.rawTrailers = [];
-
-  this.readable = true;
-
-  this._pendings = [];
-  this._pendingIndex = 0;
-  this.upgrade = null;
-
-  // request (server) only
-  this.url = '';
-  this.method = null;
-
-  // response (client) only
-  this.statusCode = null;
-  this.statusMessage = null;
-  this.client = this.socket;
-
-  // flag for backwards compatibility grossness.
-  this._consuming = false;
-
-  // flag for when we decide that this message cannot possibly be
-  // read by the user, so there's no point continuing to handle it.
-  this._dumped = false;
-}
-util.inherits(IncomingMessage, Stream.Readable);
-
-
-exports.IncomingMessage = IncomingMessage;
-
-
-IncomingMessage.prototype.setTimeout = function(msecs, callback) {
-  if (callback)
-    this.on('timeout', callback);
-  this.socket.setTimeout(msecs);
-};
-
-
-IncomingMessage.prototype.read = function(n) {
-  this._consuming = true;
-  this.read = Stream.Readable.prototype.read;
-  return this.read(n);
-};
-
-
-IncomingMessage.prototype._read = function(n) {
-  // We actually do almost nothing here, because the parserOnBody
-  // function fills up our internal buffer directly.  However, we
-  // do need to unpause the underlying socket so that it flows.
-  if (this.socket.readable)
-    readStart(this.socket);
-};
-
-
-// It's possible that the socket will be destroyed, and removed from
-// any messages, before ever calling this.  In that case, just skip
-// it, since something else is destroying this connection anyway.
-IncomingMessage.prototype.destroy = function(error) {
-  if (this.socket)
-    this.socket.destroy(error);
-};
-
-
-IncomingMessage.prototype._addHeaderLines = function(headers, n) {
-  if (headers && headers.length) {
-    var raw, dest;
-    if (this.complete) {
-      raw = this.rawTrailers;
-      dest = this.trailers;
-    } else {
-      raw = this.rawHeaders;
-      dest = this.headers;
-    }
-
-    for (var i = 0; i < n; i += 2) {
-      var k = headers[i];
-      var v = headers[i + 1];
-      raw.push(k);
-      raw.push(v);
-      this._addHeaderLine(k, v, dest);
-    }
-  }
-};
-
-
-// Add the given (field, value) pair to the message
-//
-// Per RFC2616, section 4.2 it is acceptable to join multiple instances of the
-// same header with a ', ' if the header in question supports specification of
-// multiple values this way. If not, we declare the first instance the winner
-// and drop the second. Extended header fields (those beginning with 'x-') are
-// always joined.
-IncomingMessage.prototype._addHeaderLine = function(field, value, dest) {
-  field = field.toLowerCase();
-  switch (field) {
-    // Array headers:
-    case 'set-cookie':
-      if (!util.isUndefined(dest[field])) {
-        dest[field].push(value);
-      } else {
-        dest[field] = [value];
-      }
-      break;
-
-    // list is taken from:
-    // https://mxr.mozilla.org/mozilla/source/netwerk/protocol/http/src/nsHttpHeaderArray.cpp
-    case 'content-type':
-    case 'content-length':
-    case 'user-agent':
-    case 'referer':
-    case 'host':
-    case 'authorization':
-    case 'proxy-authorization':
-    case 'if-modified-since':
-    case 'if-unmodified-since':
-    case 'from':
-    case 'location':
-    case 'max-forwards':
-      // drop duplicates
-      if (util.isUndefined(dest[field]))
-        dest[field] = value;
-      break;
-
-    default:
-      // make comma-separated list
-      if (!util.isUndefined(dest[field]))
-        dest[field] += ', ' + value;
-      else {
-        dest[field] = value;
-      }
-  }
-};
-
-
-// Call this instead of resume() if we want to just
-// dump all the data to /dev/null
-IncomingMessage.prototype._dump = function() {
-  if (!this._dumped) {
-    this._dumped = true;
-    this.resume();
-  }
-};
-
-},{"stream":28,"util":33}],64:[function(require,module,exports){
-(function (process){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var assert = require('assert').ok;
-var Stream = require('stream');
-var timers = require('timers');
-var util = require('util');
-var Buffer = require('buffer').Buffer;
-var common = require('./_http_common');
-
-// fix if cork methods aren't available
-if (!Stream.Writable.prototype.cork) {
-  Stream.Writable.prototype.cork = Stream.Writable.prototype.uncork = function() {};
-}
-if (!Stream.Duplex.prototype.cork) {
-  Stream.Duplex.prototype.cork = Stream.Duplex.prototype.uncork = function() {};
-}
-
-var CRLF = common.CRLF;
-var chunkExpression = common.chunkExpression;
-var debug = common.debug;
-
-
-var connectionExpression = /Connection/i;
-var transferEncodingExpression = /Transfer-Encoding/i;
-var closeExpression = /close/i;
-var contentLengthExpression = /Content-Length/i;
-var dateExpression = /Date/i;
-var expectExpression = /Expect/i;
-
-var automaticHeaders = {
-  connection: true,
-  'content-length': true,
-  'transfer-encoding': true,
-  date: true
-};
-
-
-var dateCache;
-function utcDate() {
-  if (!dateCache) {
-    var d = new Date();
-    dateCache = d.toUTCString();
-    timers.enroll(utcDate, 1000 - d.getMilliseconds());
-    timers._unrefActive(utcDate);
-  }
-  return dateCache;
-}
-utcDate._onTimeout = function() {
-  dateCache = undefined;
-};
-
-
-function OutgoingMessage() {
-  Stream.call(this);
-
-  this.output = [];
-  this.outputEncodings = [];
-  this.outputCallbacks = [];
-
-  this.writable = true;
-
-  this._last = false;
-  this.chunkedEncoding = false;
-  this.shouldKeepAlive = true;
-  this.useChunkedEncodingByDefault = true;
-  this.sendDate = false;
-  this._removedHeader = {};
-
-  this._hasBody = true;
-  this._trailer = '';
-
-  this.finished = false;
-  this._hangupClose = false;
-  this._headerSent = false;
-
-  this.socket = null;
-  this.connection = null;
-  this._header = null;
-  this._headers = null;
-  this._headerNames = {};
-}
-util.inherits(OutgoingMessage, Stream);
-
-
-exports.OutgoingMessage = OutgoingMessage;
-
-
-OutgoingMessage.prototype.setTimeout = function(msecs, callback) {
-  if (callback)
-    this.on('timeout', callback);
-  if (!this.socket) {
-    this.once('socket', function(socket) {
-      socket.setTimeout(msecs);
-    });
-  } else
-    this.socket.setTimeout(msecs);
-};
-
-
-// It's possible that the socket will be destroyed, and removed from
-// any messages, before ever calling this.  In that case, just skip
-// it, since something else is destroying this connection anyway.
-OutgoingMessage.prototype.destroy = function(error) {
-  if (this.socket)
-    this.socket.destroy(error);
-  else
-    this.once('socket', function(socket) {
-      socket.destroy(error);
-    });
-};
-
-
-// This abstract either writing directly to the socket or buffering it.
-OutgoingMessage.prototype._send = function(data, encoding, callback) {
-  // This is a shameful hack to get the headers and first body chunk onto
-  // the same packet. Future versions of Node are going to take care of
-  // this at a lower level and in a more general way.
-  if (!this._headerSent) {
-    if (util.isString(data) &&
-        encoding !== 'hex' &&
-        encoding !== 'base64') {
-      data = this._header + data;
-    } else {
-      this.output.unshift(this._header);
-      this.outputEncodings.unshift('binary');
-      this.outputCallbacks.unshift(null);
-    }
-    this._headerSent = true;
-  }
-  return this._writeRaw(data, encoding, callback);
-};
-
-
-OutgoingMessage.prototype._writeRaw = function(data, encoding, callback) {
-  if (util.isFunction(encoding)) {
-    callback = encoding;
-    encoding = null;
-  }
-
-  if (data.length === 0) {
-    if (util.isFunction(callback))
-      process.nextTick(callback);
-    return true;
-  }
-
-  if (this.connection &&
-      this.connection._httpMessage === this &&
-      this.connection.writable &&
-      !this.connection.destroyed) {
-    // There might be pending data in the this.output buffer.
-    while (this.output.length) {
-      if (!this.connection.writable) {
-        this._buffer(data, encoding, callback);
-        return false;
-      }
-      var c = this.output.shift();
-      var e = this.outputEncodings.shift();
-      var cb = this.outputCallbacks.shift();
-      this.connection.write(c, e, cb);
-    }
-
-    // Directly write to socket.
-    return this.connection.write(data, encoding, callback);
-  } else if (this.connection && this.connection.destroyed) {
-    // The socket was destroyed.  If we're still trying to write to it,
-    // then we haven't gotten the 'close' event yet.
-    return false;
-  } else {
-    // buffer, as long as we're not destroyed.
-    this._buffer(data, encoding, callback);
-    return false;
-  }
-};
-
-
-OutgoingMessage.prototype._buffer = function(data, encoding, callback) {
-  this.output.push(data);
-  this.outputEncodings.push(encoding);
-  this.outputCallbacks.push(callback);
-  return false;
-};
-
-
-OutgoingMessage.prototype._storeHeader = function(firstLine, headers) {
-  // firstLine in the case of request is: 'GET /index.html HTTP/1.1\r\n'
-  // in the case of response it is: 'HTTP/1.1 200 OK\r\n'
-  var state = {
-    sentConnectionHeader: false,
-    sentContentLengthHeader: false,
-    sentTransferEncodingHeader: false,
-    sentDateHeader: false,
-    sentExpect: false,
-    messageHeader: firstLine
-  };
-
-  var field, value;
-
-  if (headers) {
-    var keys = Object.keys(headers);
-    var isArray = util.isArray(headers);
-    var field, value;
-
-    for (var i = 0, l = keys.length; i < l; i++) {
-      var key = keys[i];
-      if (isArray) {
-        field = headers[key][0];
-        value = headers[key][1];
-      } else {
-        field = key;
-        value = headers[key];
-      }
-
-      if (util.isArray(value)) {
-        for (var j = 0; j < value.length; j++) {
-          storeHeader(this, state, field, value[j]);
-        }
-      } else {
-        storeHeader(this, state, field, value);
-      }
-    }
-  }
-
-  // Date header
-  if (this.sendDate === true && state.sentDateHeader === false) {
-    state.messageHeader += 'Date: ' + utcDate() + CRLF;
-  }
-
-  // Force the connection to close when the response is a 204 No Content or
-  // a 304 Not Modified and the user has set a "Transfer-Encoding: chunked"
-  // header.
-  //
-  // RFC 2616 mandates that 204 and 304 responses MUST NOT have a body but
-  // node.js used to send out a zero chunk anyway to accommodate clients
-  // that don't have special handling for those responses.
-  //
-  // It was pointed out that this might confuse reverse proxies to the point
-  // of creating security liabilities, so suppress the zero chunk and force
-  // the connection to close.
-  var statusCode = this.statusCode;
-  if ((statusCode === 204 || statusCode === 304) &&
-      this.chunkedEncoding === true) {
-    debug(statusCode + ' response should not use chunked encoding,' +
-          ' closing connection.');
-    this.chunkedEncoding = false;
-    this.shouldKeepAlive = false;
-  }
-
-  // keep-alive logic
-  if (this._removedHeader.connection) {
-    this._last = true;
-    this.shouldKeepAlive = false;
-  } else if (state.sentConnectionHeader === false) {
-    var shouldSendKeepAlive = this.shouldKeepAlive &&
-        (state.sentContentLengthHeader ||
-         this.useChunkedEncodingByDefault ||
-         this.agent);
-    if (shouldSendKeepAlive) {
-      state.messageHeader += 'Connection: keep-alive\r\n';
-    } else {
-      this._last = true;
-      state.messageHeader += 'Connection: close\r\n';
-    }
-  }
-
-  if (state.sentContentLengthHeader === false &&
-      state.sentTransferEncodingHeader === false) {
-    if (this._hasBody && !this._removedHeader['transfer-encoding']) {
-      if (this.useChunkedEncodingByDefault) {
-        state.messageHeader += 'Transfer-Encoding: chunked\r\n';
-        this.chunkedEncoding = true;
-      } else {
-        this._last = true;
-      }
-    } else {
-      // Make sure we don't end the 0\r\n\r\n at the end of the message.
-      this.chunkedEncoding = false;
-    }
-  }
-
-  this._header = state.messageHeader + CRLF;
-  this._headerSent = false;
-
-  // wait until the first body chunk, or close(), is sent to flush,
-  // UNLESS we're sending Expect: 100-continue.
-  if (state.sentExpect) this._send('');
-};
-
-function storeHeader(self, state, field, value) {
-  // Protect against response splitting. The if statement is there to
-  // minimize the performance impact in the common case.
-  if (/[\r\n]/.test(value))
-    value = value.replace(/[\r\n]+[ \t]*/g, '');
-
-  state.messageHeader += field + ': ' + value + CRLF;
-
-  if (connectionExpression.test(field)) {
-    state.sentConnectionHeader = true;
-    if (closeExpression.test(value)) {
-      self._last = true;
-    } else {
-      self.shouldKeepAlive = true;
-    }
-
-  } else if (transferEncodingExpression.test(field)) {
-    state.sentTransferEncodingHeader = true;
-    if (chunkExpression.test(value)) self.chunkedEncoding = true;
-
-  } else if (contentLengthExpression.test(field)) {
-    state.sentContentLengthHeader = true;
-  } else if (dateExpression.test(field)) {
-    state.sentDateHeader = true;
-  } else if (expectExpression.test(field)) {
-    state.sentExpect = true;
-  }
-}
-
-
-OutgoingMessage.prototype.setHeader = function(name, value) {
-  if (typeof name !== 'string')
-    throw new TypeError('"name" should be a string');
-  if (value === undefined)
-    throw new Error('"name" and "value" are required for setHeader().');
-  if (this._header)
-    throw new Error('Can\'t set headers after they are sent.');
-
-  if (this._headers === null)
-    this._headers = {};
-
-  var key = name.toLowerCase();
-  this._headers[key] = value;
-  this._headerNames[key] = name;
-
-  if (automaticHeaders[key])
-    this._removedHeader[key] = false;
-};
-
-
-OutgoingMessage.prototype.getHeader = function(name) {
-  if (arguments.length < 1) {
-    throw new Error('`name` is required for getHeader().');
-  }
-
-  if (!this._headers) return;
-
-  var key = name.toLowerCase();
-  return this._headers[key];
-};
-
-
-OutgoingMessage.prototype.removeHeader = function(name) {
-  if (arguments.length < 1) {
-    throw new Error('`name` is required for removeHeader().');
-  }
-
-  if (this._header) {
-    throw new Error('Can\'t remove headers after they are sent.');
-  }
-
-  var key = name.toLowerCase();
-
-  if (key === 'date')
-    this.sendDate = false;
-  else if (automaticHeaders[key])
-    this._removedHeader[key] = true;
-
-  if (this._headers) {
-    delete this._headers[key];
-    delete this._headerNames[key];
-  }
-};
-
-
-OutgoingMessage.prototype._renderHeaders = function() {
-  if (this._header) {
-    throw new Error('Can\'t render headers after they are sent to the client.');
-  }
-
-  if (!this._headers) return {};
-
-  var headers = {};
-  var keys = Object.keys(this._headers);
-
-  for (var i = 0, l = keys.length; i < l; i++) {
-    var key = keys[i];
-    headers[this._headerNames[key]] = this._headers[key];
-  }
-  return headers;
-};
-
-
-Object.defineProperty(OutgoingMessage.prototype, 'headersSent', {
-  configurable: true,
-  enumerable: true,
-  get: function() { return !!this._header; }
-});
-
-
-OutgoingMessage.prototype.write = function(chunk, encoding, callback) {
-  var self = this;
-
-  if (this.finished) {
-    var err = new Error('write after end');
-    process.nextTick(function() {
-      self.emit('error', err);
-      if (callback) callback(err);
-    });
-
-    return true;
-  }
-
-  if (!this._header) {
-    this._implicitHeader();
-  }
-
-  if (!this._hasBody) {
-    debug('This type of response MUST NOT have a body. ' +
-          'Ignoring write() calls.');
-    return true;
-  }
-
-  if (!util.isString(chunk) && !util.isBuffer(chunk)) {
-    throw new TypeError('first argument must be a string or Buffer');
-  }
-
-
-  // If we get an empty string or buffer, then just do nothing, and
-  // signal the user to keep writing.
-  if (chunk.length === 0) return true;
-
-  var len, ret;
-  if (this.chunkedEncoding) {
-    if (util.isString(chunk) &&
-        encoding !== 'hex' &&
-        encoding !== 'base64' &&
-        encoding !== 'binary') {
-      len = Buffer.byteLength(chunk, encoding);
-      chunk = len.toString(16) + CRLF + chunk + CRLF;
-      ret = this._send(chunk, encoding, callback);
-    } else {
-      // buffer, or a non-toString-friendly encoding
-      if (util.isString(chunk))
-        len = Buffer.byteLength(chunk, encoding);
-      else
-        len = chunk.length;
-
-      if (this.connection && !this.connection.corked) {
-        this.connection.cork();
-        var conn = this.connection;
-        process.nextTick(function connectionCork() {
-          if (conn)
-            conn.uncork();
-        });
-      }
-      this._send(len.toString(16), 'binary', null);
-      this._send(crlf_buf, null, null);
-      this._send(chunk, encoding, null);
-      ret = this._send(crlf_buf, null, callback);
-    }
-  } else {
-    ret = this._send(chunk, encoding, callback);
-  }
-
-  debug('write ret = ' + ret);
-  return ret;
-};
-
-
-OutgoingMessage.prototype.addTrailers = function(headers) {
-  this._trailer = '';
-  var keys = Object.keys(headers);
-  var isArray = util.isArray(headers);
-  var field, value;
-  for (var i = 0, l = keys.length; i < l; i++) {
-    var key = keys[i];
-    if (isArray) {
-      field = headers[key][0];
-      value = headers[key][1];
-    } else {
-      field = key;
-      value = headers[key];
-    }
-
-    this._trailer += field + ': ' + value + CRLF;
-  }
-};
-
-
-var crlf_buf = new Buffer('\r\n');
-
-
-OutgoingMessage.prototype.end = function(data, encoding, callback) {
-  if (util.isFunction(data)) {
-    callback = data;
-    data = null;
-  } else if (util.isFunction(encoding)) {
-    callback = encoding;
-    encoding = null;
-  }
-
-  if (data && !util.isString(data) && !util.isBuffer(data)) {
-    throw new TypeError('first argument must be a string or Buffer');
-  }
-
-  if (this.finished) {
-    return false;
-  }
-
-  var self = this;
-  function finish() {
-    self.emit('finish');
-  }
-
-  if (util.isFunction(callback))
-    this.once('finish', callback);
-
-
-  if (!this._header) {
-    this._implicitHeader();
-  }
-
-  if (data && !this._hasBody) {
-    debug('This type of response MUST NOT have a body. ' +
-          'Ignoring data passed to end().');
-    data = null;
-  }
-
-  if (this.connection && data)
-    this.connection.cork();
-
-  var ret;
-  if (data) {
-    // Normal body write.
-    ret = this.write(data, encoding);
-  }
-
-  if (this._hasBody && this.chunkedEncoding) {
-    ret = this._send('0\r\n' + this._trailer + '\r\n', 'binary', finish);
-  } else {
-    // Force a flush, HACK.
-    ret = this._send('', 'binary', finish);
-  }
-
-  if (this.connection && data)
-    this.connection.uncork();
-
-  this.finished = true;
-
-  // There is the first message on the outgoing queue, and we've sent
-  // everything to the socket.
-  debug('outgoing message end.');
-  if (this.output.length === 0 && this.connection._httpMessage === this) {
-    this._finish();
-  }
-
-  return ret;
-};
-
-
-OutgoingMessage.prototype._finish = function() {
-  assert(this.connection);
-  this.emit('prefinish');
-};
-
-
-// This logic is probably a bit confusing. Let me explain a bit:
-//
-// In both HTTP servers and clients it is possible to queue up several
-// outgoing messages. This is easiest to imagine in the case of a client.
-// Take the following situation:
-//
-//    req1 = client.request('GET', '/');
-//    req2 = client.request('POST', '/');
-//
-// When the user does
-//
-//   req2.write('hello world\n');
-//
-// it's possible that the first request has not been completely flushed to
-// the socket yet. Thus the outgoing messages need to be prepared to queue
-// up data internally before sending it on further to the socket's queue.
-//
-// This function, outgoingFlush(), is called by both the Server and Client
-// to attempt to flush any pending messages out to the socket.
-OutgoingMessage.prototype._flush = function() {
-  if (this.socket && this.socket.writable) {
-    var ret;
-    while (this.output.length) {
-      var data = this.output.shift();
-      var encoding = this.outputEncodings.shift();
-      var cb = this.outputCallbacks.shift();
-      ret = this.socket.write(data, encoding, cb);
-    }
-
-    if (this.finished) {
-      // This is a queue to the server or client to bring in the next this.
-      this._finish();
-    } else if (ret) {
-      // This is necessary to prevent https from breaking
-      this.emit('drain');
-    }
-  }
-};
-
-
-OutgoingMessage.prototype.flushHeaders = function outgoingFlushHeaders() {
-  if (!this._header) {
-    // Force-flush the headers.
-    this._implicitHeader();
-    this._send('');
-  }
-};
-
-}).call(this,require('_process'))
-},{"./_http_common":62,"_process":12,"assert":1,"buffer":3,"stream":28,"timers":30,"util":33}],65:[function(require,module,exports){
-// Copyright Joyent, Inc. and other Node contributors.
-//
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the
-// "Software"), to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish,
-// distribute, sublicense, and/or sell copies of the Software, and to permit
-// persons to whom the Software is furnished to do so, subject to the
-// following conditions:
-//
-// The above copyright notice and this permission notice shall be included
-// in all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-// MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
-// NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
-// OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
-// USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-var util = require('util');
-var net = require('net');
-var EventEmitter = require('events').EventEmitter;
-var HTTPParser = require('http-parser-js').HTTPParser;
-var assert = require('assert').ok;
-
-var common = require('./_http_common');
-var parsers = common.parsers;
-var freeParser = common.freeParser;
-var debug = common.debug;
-var CRLF = common.CRLF;
-var continueExpression = common.continueExpression;
-var chunkExpression = common.chunkExpression;
-var httpSocketSetup = common.httpSocketSetup;
-
-var OutgoingMessage = require('./_http_outgoing').OutgoingMessage;
-
-
-var STATUS_CODES = exports.STATUS_CODES = {
-  100 : 'Continue',
-  101 : 'Switching Protocols',
-  102 : 'Processing',                 // RFC 2518, obsoleted by RFC 4918
-  200 : 'OK',
-  201 : 'Created',
-  202 : 'Accepted',
-  203 : 'Non-Authoritative Information',
-  204 : 'No Content',
-  205 : 'Reset Content',
-  206 : 'Partial Content',
-  207 : 'Multi-Status',               // RFC 4918
-  300 : 'Multiple Choices',
-  301 : 'Moved Permanently',
-  302 : 'Moved Temporarily',
-  303 : 'See Other',
-  304 : 'Not Modified',
-  305 : 'Use Proxy',
-  307 : 'Temporary Redirect',
-  308 : 'Permanent Redirect',         // RFC 7238
-  400 : 'Bad Request',
-  401 : 'Unauthorized',
-  402 : 'Payment Required',
-  403 : 'Forbidden',
-  404 : 'Not Found',
-  405 : 'Method Not Allowed',
-  406 : 'Not Acceptable',
-  407 : 'Proxy Authentication Required',
-  408 : 'Request Time-out',
-  409 : 'Conflict',
-  410 : 'Gone',
-  411 : 'Length Required',
-  412 : 'Precondition Failed',
-  413 : 'Request Entity Too Large',
-  414 : 'Request-URI Too Large',
-  415 : 'Unsupported Media Type',
-  416 : 'Requested Range Not Satisfiable',
-  417 : 'Expectation Failed',
-  418 : 'I\'m a teapot',              // RFC 2324
-  422 : 'Unprocessable Entity',       // RFC 4918
-  423 : 'Locked',                     // RFC 4918
-  424 : 'Failed Dependency',          // RFC 4918
-  425 : 'Unordered Collection',       // RFC 4918
-  426 : 'Upgrade Required',           // RFC 2817
-  428 : 'Precondition Required',      // RFC 6585
-  429 : 'Too Many Requests',          // RFC 6585
-  431 : 'Request Header Fields Too Large',// RFC 6585
-  500 : 'Internal Server Error',
-  501 : 'Not Implemented',
-  502 : 'Bad Gateway',
-  503 : 'Service Unavailable',
-  504 : 'Gateway Time-out',
-  505 : 'HTTP Version Not Supported',
-  506 : 'Variant Also Negotiates',    // RFC 2295
-  507 : 'Insufficient Storage',       // RFC 4918
-  509 : 'Bandwidth Limit Exceeded',
-  510 : 'Not Extended',               // RFC 2774
-  511 : 'Network Authentication Required' // RFC 6585
-};
-
-
-function ServerResponse(req) {
-  OutgoingMessage.call(this);
-
-  if (req.method === 'HEAD') this._hasBody = false;
-
-  this.sendDate = true;
-
-  if (req.httpVersionMajor < 1 || req.httpVersionMinor < 1) {
-    this.useChunkedEncodingByDefault = chunkExpression.test(req.headers.te);
-    this.shouldKeepAlive = false;
-  }
-}
-util.inherits(ServerResponse, OutgoingMessage);
-
-ServerResponse.prototype._finish = function() {
-  // DTRACE_HTTP_SERVER_RESPONSE(this.connection);
-  // COUNTER_HTTP_SERVER_RESPONSE();
-  OutgoingMessage.prototype._finish.call(this);
-};
-
-
-
-exports.ServerResponse = ServerResponse;
-
-ServerResponse.prototype.statusCode = 200;
-ServerResponse.prototype.statusMessage = undefined;
-
-function onServerResponseClose() {
-  // EventEmitter.emit makes a copy of the 'close' listeners array before
-  // calling the listeners. detachSocket() unregisters onServerResponseClose
-  // but if detachSocket() is called, directly or indirectly, by a 'close'
-  // listener, onServerResponseClose is still in that copy of the listeners
-  // array. That is, in the example below, b still gets called even though
-  // it's been removed by a:
-  //
-  //   var obj = new events.EventEmitter;
-  //   obj.on('event', a);
-  //   obj.on('event', b);
-  //   function a() { obj.removeListener('event', b) }
-  //   function b() { throw "BAM!" }
-  //   obj.emit('event');  // throws
-  //
-  // Ergo, we need to deal with stale 'close' events and handle the case
-  // where the ServerResponse object has already been deconstructed.
-  // Fortunately, that requires only a single if check. :-)
-  if (this._httpMessage) this._httpMessage.emit('close');
-}
-
-ServerResponse.prototype.assignSocket = function(socket) {
-  assert(!socket._httpMessage);
-  socket._httpMessage = this;
-  socket.on('close', onServerResponseClose);
-  this.socket = socket;
-  this.connection = socket;
-  this.emit('socket', socket);
-  this._flush();
-};
-
-ServerResponse.prototype.detachSocket = function(socket) {
-  assert(socket._httpMessage === this);
-  socket.removeListener('close', onServerResponseClose);
-  socket._httpMessage = null;
-  this.socket = this.connection = null;
-};
-
-ServerResponse.prototype.writeContinue = function(cb) {
-  this._writeRaw('HTTP/1.1 100 Continue' + CRLF + CRLF, 'ascii', cb);
-  this._sent100 = true;
-};
-
-ServerResponse.prototype._implicitHeader = function() {
-  this.writeHead(this.statusCode);
-};
-
-ServerResponse.prototype.writeHead = function(statusCode, reason, obj) {
-  var headers;
-
-  if (util.isString(reason)) {
-    // writeHead(statusCode, reasonPhrase[, headers])
-    this.statusMessage = reason;
-  } else {
-    // writeHead(statusCode[, headers])
-    this.statusMessage =
-        this.statusMessage || STATUS_CODES[statusCode] || 'unknown';
-    obj = reason;
-  }
-  this.statusCode = statusCode;
-
-  if (this._headers) {
-    // Slow-case: when progressive API and header fields are passed.
-    if (obj) {
-      var keys = Object.keys(obj);
-      for (var i = 0; i < keys.length; i++) {
-        var k = keys[i];
-        if (k) this.setHeader(k, obj[k]);
-      }
-    }
-    // only progressive api is used
-    headers = this._renderHeaders();
-  } else {
-    // only writeHead() called
-    headers = obj;
-  }
-
-  var statusLine = 'HTTP/1.1 ' + statusCode.toString() + ' ' +
-                   this.statusMessage + CRLF;
-
-  if (statusCode === 204 || statusCode === 304 ||
-      (100 <= statusCode && statusCode <= 199)) {
-    // RFC 2616, 10.2.5:
-    // The 204 response MUST NOT include a message-body, and thus is always
-    // terminated by the first empty line after the header fields.
-    // RFC 2616, 10.3.5:
-    // The 304 response MUST NOT contain a message-body, and thus is always
-    // terminated by the first empty line after the header fields.
-    // RFC 2616, 10.1 Informational 1xx:
-    // This class of status code indicates a provisional response,
-    // consisting only of the Status-Line and optional headers, and is
-    // terminated by an empty line.
-    this._hasBody = false;
-  }
-
-  // don't keep alive connections where the client expects 100 Continue
-  // but we sent a final status; they may put extra bytes on the wire.
-  if (this._expect_continue && !this._sent100) {
-    this.shouldKeepAlive = false;
-  }
-
-  this._storeHeader(statusLine, headers);
-};
-
-ServerResponse.prototype.writeHeader = function() {
-  this.writeHead.apply(this, arguments);
-};
-
-
-function Server(requestListener) {
-  if (!(this instanceof Server)) return new Server(requestListener);
-  net.Server.call(this, { allowHalfOpen: true });
-
-  if (requestListener) {
-    this.addListener('request', requestListener);
-  }
-
-  // Similar option to this. Too lazy to write my own docs.
-  // http://www.squid-cache.org/Doc/config/half_closed_clients/
-  // http://wiki.squid-cache.org/SquidFaq/InnerWorkings#What_is_a_half-closed_filedescriptor.3F
-  this.httpAllowHalfOpen = false;
-
-  this.addListener('connection', connectionListener);
-
-  this.addListener('clientError', function(err, conn) {
-    conn.destroy(err);
-  });
-
-  this.timeout = 2 * 60 * 1000;
-}
-util.inherits(Server, net.Server);
-
-
-Server.prototype.setTimeout = function(msecs, callback) {
-  this.timeout = msecs;
-  if (callback)
-    this.on('timeout', callback);
-};
-
-
-exports.Server = Server;
-
-
-function connectionListener(socket) {
-  var self = this;
-  var outgoing = [];
-  var incoming = [];
-
-  function abortIncoming() {
-    while (incoming.length) {
-      var req = incoming.shift();
-      req.emit('aborted');
-      req.emit('close');
-    }
-    // abort socket._httpMessage ?
-  }
-
-  function serverSocketCloseListener() {
-    debug('server socket close');
-    // mark this parser as reusable
-    if (this.parser) {
-      freeParser(this.parser, null, this);
-    }
-
-    abortIncoming();
-  }
-
-  debug('SERVER new http connection');
-
-  httpSocketSetup(socket);
-
-  // If the user has added a listener to the server,
-  // request, or response, then it's their responsibility.
-  // otherwise, destroy on timeout by default
-  if (self.timeout)
-    socket.setTimeout(self.timeout);
-  socket.on('timeout', function() {
-    var req = socket.parser && socket.parser.incoming;
-    var reqTimeout = req && !req.complete && req.emit('timeout', socket);
-    var res = socket._httpMessage;
-    var resTimeout = res && res.emit('timeout', socket);
-    var serverTimeout = self.emit('timeout', socket);
-
-    if (!reqTimeout && !resTimeout && !serverTimeout)
-      socket.destroy();
-  });
-
-  var parser = parsers.alloc();
-  parser.reinitialize(HTTPParser.REQUEST);
-  parser.socket = socket;
-  socket.parser = parser;
-  parser.incoming = null;
-
-  // Propagate headers limit from server instance to parser
-  if (util.isNumber(this.maxHeadersCount)) {
-    parser.maxHeaderPairs = this.maxHeadersCount << 1;
-  } else {
-    // Set default value because parser may be reused from FreeList
-    parser.maxHeaderPairs = 2000;
-  }
-
-  socket.addListener('error', socketOnError);
-  socket.addListener('close', serverSocketCloseListener);
-  parser.onIncoming = parserOnIncoming;
-  socket.on('end', socketOnEnd);
-  socket.on('data', socketOnData);
-
-  // TODO(isaacs): Move all these functions out of here
-  function socketOnError(e) {
-    self.emit('clientError', e, this);
-  }
-
-  function socketOnData(d) {
-    assert(!socket._paused);
-    debug('SERVER socketOnData %d', d.length);
-    var ret = parser.execute(d);
-    if (ret instanceof Error) {
-      debug('parse error');
-      socket.destroy(ret);
-    } else if (parser.incoming && parser.incoming.upgrade) {
-      // Upgrade or CONNECT
-      var bytesParsed = ret;
-      var req = parser.incoming;
-      debug('SERVER upgrade or connect', req.method);
-
-      socket.removeListener('data', socketOnData);
-      socket.removeListener('end', socketOnEnd);
-      socket.removeListener('close', serverSocketCloseListener);
-      parser.finish();
-      freeParser(parser, req, null);
-      parser = null;
-
-      var eventName = req.method === 'CONNECT' ? 'connect' : 'upgrade';
-      if (EventEmitter.listenerCount(self, eventName) > 0) {
-        debug('SERVER have listener for %s', eventName);
-        var bodyHead = d.slice(bytesParsed, d.length);
-
-        // TODO(isaacs): Need a way to reset a stream to fresh state
-        // IE, not flowing, and not explicitly paused.
-        socket._readableState.flowing = null;
-        self.emit(eventName, req, socket, bodyHead);
-      } else {
-        // Got upgrade header or CONNECT method, but have no handler.
-        socket.destroy();
-      }
-    }
-
-    if (socket._paused) {
-      // onIncoming paused the socket, we should pause the parser as well
-      debug('pause parser');
-      socket.parser.pause();
-    }
-  }
-
-  function socketOnEnd() {
-    var socket = this;
-    var ret = parser.finish();
-
-    if (ret instanceof Error) {
-      debug('parse error');
-      socket.destroy(ret);
-      return;
-    }
-
-    if (!self.httpAllowHalfOpen) {
-      abortIncoming();
-      if (socket.writable) socket.end();
-    } else if (outgoing.length) {
-      outgoing[outgoing.length - 1]._last = true;
-    } else if (socket._httpMessage) {
-      socket._httpMessage._last = true;
-    } else {
-      if (socket.writable) socket.end();
-    }
-  }
-
-
-  // The following callback is issued after the headers have been read on a
-  // new message. In this callback we setup the response object and pass it
-  // to the user.
-
-  socket._paused = false;
-  function socketOnDrain() {
-    // If we previously paused, then start reading again.
-    if (socket._paused) {
-      socket._paused = false;
-      socket.parser.resume();
-      socket.resume();
-    }
-  }
-  socket.on('drain', socketOnDrain);
-
-  function parserOnIncoming(req, shouldKeepAlive) {
-    incoming.push(req);
-
-    // If the writable end isn't consuming, then stop reading
-    // so that we don't become overwhelmed by a flood of
-    // pipelined requests that may never be resolved.
-    if (!socket._paused) {
-      var needPause = socket._writableState.needDrain;
-      if (needPause) {
-        socket._paused = true;
-        // We also need to pause the parser, but don't do that until after
-        // the call to execute, because we may still be processing the last
-        // chunk.
-        socket.pause();
-      }
-    }
-
-    var res = new ServerResponse(req);
-
-    res.shouldKeepAlive = shouldKeepAlive;
-    // DTRACE_HTTP_SERVER_REQUEST(req, socket);
-    // COUNTER_HTTP_SERVER_REQUEST();
-
-    if (socket._httpMessage) {
-      // There are already pending outgoing res, append.
-      outgoing.push(res);
-    } else {
-      res.assignSocket(socket);
-    }
-
-    // When we're finished writing the response, check if this is the last
-    // respose, if so destroy the socket.
-    res.on('prefinish', resOnFinish);
-    function resOnFinish() {
-      // Usually the first incoming element should be our request.  it may
-      // be that in the case abortIncoming() was called that the incoming
-      // array will be empty.
-      assert(incoming.length === 0 || incoming[0] === req);
-
-      incoming.shift();
-
-      // if the user never called req.read(), and didn't pipe() or
-      // .resume() or .on('data'), then we call req._dump() so that the
-      // bytes will be pulled off the wire.
-      if (!req._consuming && !req._readableState.resumeScheduled)
-        req._dump();
-
-      res.detachSocket(socket);
-
-      if (res._last) {
-        socket.destroySoon();
-      } else {
-        // start sending the next message
-        var m = outgoing.shift();
-        if (m) {
-          m.assignSocket(socket);
-        }
-      }
-    }
-
-    if (!util.isUndefined(req.headers.expect) &&
-        (req.httpVersionMajor == 1 && req.httpVersionMinor == 1) &&
-        continueExpression.test(req.headers['expect'])) {
-      res._expect_continue = true;
-      if (EventEmitter.listenerCount(self, 'checkContinue') > 0) {
-        self.emit('checkContinue', req, res);
-      } else {
-        res.writeContinue();
-        self.emit('request', req, res);
-      }
-    } else {
-      self.emit('request', req, res);
-    }
-    return false; // Not a HEAD response. (Not even a response!)
-  }
-}
-exports._connectionListener = connectionListener;
-
-},{"./_http_common":62,"./_http_outgoing":64,"assert":1,"events":8,"http-parser-js":67,"net":"net","util":33}],66:[function(require,module,exports){
-var FreeList = (function() {
-	function FreeList(name, max, constructor) {
-		this.name = name;
-		this.max = max;
-		this.constructor = constructor != null ? constructor : function() {};
-		this.list = [];
-	}
-
-	FreeList.prototype.alloc = function() {
-		if (this.list.length) {
-			return this.list.shift();
-		} else {
-			return this.constructor.apply(this, arguments);
-		}
+		return Object.keys(obj).reduce(function(result, prop) {
+			// prevent faulty defined getter properties
+			result[prop] = visit(safeGetValueFromPropertyOnObject(obj, prop));
+			return result;
+		}, {});
 	};
 
-	FreeList.prototype.free = function(obj) {
-		if (this.list.length < this.max) {
-			this.list.push(obj);
-			return true;
-		} else {
-			return false;
-		}
-	};
-
-	return FreeList;
-})();
-
-// remain backward compatible
-FreeList.FreeList = FreeList;
-
-module.exports = FreeList;
-
-},{}],67:[function(require,module,exports){
-/*jshint node:true */
-
-var assert = require('assert');
-
-exports.HTTPParser = HTTPParser;
-function HTTPParser(type) {
-  assert.ok(type === HTTPParser.REQUEST || type === HTTPParser.RESPONSE);
-  this.type = type;
-  this.state = type + '_LINE';
-  this.info = {
-    headers: [],
-    upgrade: false
-  };
-  this.trailers = [];
-  this.line = '';
-  this.isChunked = false;
-  this.connection = '';
-  this.headerSize = 0; // for preventing too big headers
-  this.body_bytes = null;
-  this.isUserCall = false;
+	return visit(obj);
 }
-HTTPParser.REQUEST = 'REQUEST';
-HTTPParser.RESPONSE = 'RESPONSE';
-var kOnHeaders = HTTPParser.kOnHeaders = 0;
-var kOnHeadersComplete = HTTPParser.kOnHeadersComplete = 1;
-var kOnBody = HTTPParser.kOnBody = 2;
-var kOnMessageComplete = HTTPParser.kOnMessageComplete = 3;
-var methods = HTTPParser.methods = [
-  'DELETE',
-  'GET',
-  'HEAD',
-  'POST',
-  'PUT',
-  'CONNECT',
-  'OPTIONS',
-  'TRACE',
-  'COPY',
-  'LOCK',
-  'MKCOL',
-  'MOVE',
-  'PROPFIND',
-  'PROPPATCH',
-  'SEARCH',
-  'UNLOCK',
-  'REPORT',
-  'MKACTIVITY',
-  'CHECKOUT',
-  'MERGE',
-  'M-SEARCH',
-  'NOTIFY',
-  'SUBSCRIBE',
-  'UNSUBSCRIBE',
-  'PATCH',
-  'PURGE'
-];
-HTTPParser.prototype.reinitialize = HTTPParser;
-HTTPParser.prototype.close =
-HTTPParser.prototype.pause =
-HTTPParser.prototype.resume = function () {};
-HTTPParser.prototype._compatMode = false;
 
-var maxHeaderSize = 80 * 1024;
-var headerState = {
-  REQUEST_LINE: true,
-  RESPONSE_LINE: true,
-  HEADER: true
-};
-HTTPParser.prototype.execute = function (chunk, start, length) {
-  if (!(this instanceof HTTPParser)) {
-    throw new TypeError('not a HTTPParser');
-  }
-  
-  // backward compat to node < 0.11.4
-  // Note: the start and length params were removed in newer version
-  start = start || 0;
-  length = typeof length === 'number' ? length : chunk.length;
+module.exports = function(data) {
+	return JSON.stringify(ensureProperties(data));
+}
 
-  this.chunk = chunk;
-  this.offset = start;
-  var end = this.end = start + length;
-  try {
-    while (this.offset < end) {
-      if (this[this.state]()) {
-        break;
-      }
-    }
-  } catch (err) {
-    if (this.isUserCall) {
-      throw err;
-    }
-    return err;
-  }
-  this.chunk = null;
-  var length = this.offset - start
-  if (headerState[this.state]) {
-    this.headerSize += length;
-    if (this.headerSize > maxHeaderSize) {
-      return new Error('max header size exceeded');
-    }
-  }
-  return length;
-};
+module.exports.ensureProperties = ensureProperties;
 
-var stateFinishAllowed = {
-  REQUEST_LINE: true,
-  RESPONSE_LINE: true,
-  BODY_RAW: true
-};
-HTTPParser.prototype.finish = function () {
-  if (!stateFinishAllowed[this.state]) {
-    return new Error('invalid state for EOF');
-  }
-  if (this.state === 'BODY_RAW') {
-    this.userCall()(this[kOnMessageComplete]());
-  }
-};
-
-//For correct error handling - see HTTPParser#execute
-//Usage: this.userCall()(userFunction('arg'));
-HTTPParser.prototype.userCall = function () {
-  this.isUserCall = true;
-  var self = this;
-  return function (ret) {
-    self.isUserCall = false;
-    return ret;
-  };
-};
-
-HTTPParser.prototype.nextRequest = function () {
-  this.userCall()(this[kOnMessageComplete]());
-  this.reinitialize(this.type);
-};
-
-HTTPParser.prototype.consumeLine = function () {
-  var end = this.end,
-      chunk = this.chunk;
-  for (var i = this.offset; i < end; i++) {
-    if (chunk[i] === 0x0a) { // \n
-      var line = this.line + chunk.toString('ascii', this.offset, i);
-      if (line.charAt(line.length - 1) === '\r') {
-        line = line.substr(0, line.length - 1);
-      }
-      this.line = '';
-      this.offset = i + 1;
-      return line;
-    }
-  }
-  //line split over multiple chunks
-  this.line += chunk.toString('ascii', this.offset, this.end);
-  this.offset = this.end;
-};
-
-var headerExp = /^([^: \t]+):[ \t]*((?:.*[^ \t])|)/;
-var headerContinueExp = /^[ \t]+(.*[^ \t])/;
-HTTPParser.prototype.parseHeader = function (line, headers) {
-  var match = headerExp.exec(line);
-  var k = match && match[1];
-  if (k) { // skip empty string (malformed header)
-    headers.push(k);
-    headers.push(match[2]);
-  } else {
-    var matchContinue = headerContinueExp.exec(line);
-    if (matchContinue && headers.length) {
-      if (headers[headers.length - 1]) {
-        headers[headers.length - 1] += ' ';
-      }
-      headers[headers.length - 1] += matchContinue[1];
-    }
-  }
-};
-
-var requestExp = /^([A-Z-]+) ([^ ]+) HTTP\/(\d)\.(\d)$/;
-HTTPParser.prototype.REQUEST_LINE = function () {
-  var line = this.consumeLine();
-  if (!line) {
-    return;
-  }
-  var match = requestExp.exec(line);
-  if (match === null) {
-    var err = new Error('Parse Error');
-    err.code = 'HPE_INVALID_CONSTANT';
-    throw err;
-  }
-  this.info.method = this._compatMode ? match[1] : methods.indexOf(match[1]);
-  if (this.info.method === -1) {
-    throw new Error('invalid request method');
-  }
-  if (match[1] === 'CONNECT') {
-    this.info.upgrade = true;
-  }
-  this.info.url = match[2];
-  this.info.versionMajor = +match[3];
-  this.info.versionMinor = +match[4];
-  this.body_bytes = 0;
-  this.state = 'HEADER';
-};
-
-var responseExp = /^HTTP\/(\d)\.(\d) (\d{3}) ?(.*)$/;
-HTTPParser.prototype.RESPONSE_LINE = function () {
-  var line = this.consumeLine();
-  if (!line) {
-    return;
-  }
-  var match = responseExp.exec(line);
-  if (match === null) {
-    var err = new Error('Parse Error');
-    err.code = 'HPE_INVALID_CONSTANT';
-    throw err;
-  }
-  this.info.versionMajor = +match[1];
-  this.info.versionMinor = +match[2];
-  var statusCode = this.info.statusCode = +match[3];
-  this.info.statusMessage = match[4];
-  // Implied zero length.
-  if ((statusCode / 100 | 0) === 1 || statusCode === 204 || statusCode === 304) {
-    this.body_bytes = 0;
-  }
-  this.state = 'HEADER';
-};
-
-HTTPParser.prototype.shouldKeepAlive = function () {
-  if (this.info.versionMajor > 0 && this.info.versionMinor > 0) {
-    if (this.connection.indexOf('close') !== -1) {
-      return false;
-    }
-  } else if (this.connection.indexOf('keep-alive') === -1) {
-    return false;
-  }
-  if (this.body_bytes !== null || this.isChunked) { // || skipBody
-    return true;
-  }
-  return false;
-};
-
-HTTPParser.prototype.HEADER = function () {
-  var line = this.consumeLine();
-  if (line === undefined) {
-    return;
-  }
-  if (line) {
-    this.parseHeader(line, this.info.headers);
-  } else {
-    var headers = this.info.headers;
-    for (var i = 0; i < headers.length; i += 2) {
-      switch (headers[i].toLowerCase()) {
-        case 'transfer-encoding':
-          this.isChunked = headers[i + 1].toLowerCase() === 'chunked';
-          break;
-        case 'content-length':
-          this.body_bytes = +headers[i + 1];
-          break;
-        case 'connection':
-          this.connection += headers[i + 1].toLowerCase();
-          break;
-        case 'upgrade':
-          this.info.upgrade = true;
-          break;
-      }
-    }
-    
-    this.info.shouldKeepAlive = this.shouldKeepAlive();
-    //problem which also exists in original node: we should know skipBody before calling onHeadersComplete
-    var skipBody = this.userCall()(this[kOnHeadersComplete](this.info));
-    
-    if (this.info.upgrade) {
-      this.nextRequest();
-      return true;
-    } else if (this.isChunked && !skipBody) {
-      this.state = 'BODY_CHUNKHEAD';
-    } else if (skipBody || this.body_bytes === 0) {
-      this.nextRequest();
-    } else if (this.body_bytes === null) {
-      this.state = 'BODY_RAW';
-    } else {
-      this.state = 'BODY_SIZED';
-    }
-  }
-};
-
-HTTPParser.prototype.BODY_CHUNKHEAD = function () {
-  var line = this.consumeLine();
-  if (line === undefined) {
-    return;
-  }
-  this.body_bytes = parseInt(line, 16);
-  if (!this.body_bytes) {
-    this.state = 'BODY_CHUNKTRAILERS';
-  } else {
-    this.state = 'BODY_CHUNK';
-  }
-};
-
-HTTPParser.prototype.BODY_CHUNK = function () {
-  var length = Math.min(this.end - this.offset, this.body_bytes);
-  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
-  this.offset += length;
-  this.body_bytes -= length;
-  if (!this.body_bytes) {
-    this.state = 'BODY_CHUNKEMPTYLINE';
-  }
-};
-
-HTTPParser.prototype.BODY_CHUNKEMPTYLINE = function () {
-  var line = this.consumeLine();
-  if (line === undefined) {
-    return;
-  }
-  assert.equal(line, '');
-  this.state = 'BODY_CHUNKHEAD';
-};
-
-HTTPParser.prototype.BODY_CHUNKTRAILERS = function () {
-  var line = this.consumeLine();
-  if (line === undefined) {
-    return;
-  }
-  if (line) {
-    this.parseHeader(line, this.trailers);
-  } else {
-    if (this.trailers.length) {
-      this.userCall()(this[kOnHeaders](this.trailers, this.info.url));
-    }
-    this.nextRequest();
-  }
-};
-
-HTTPParser.prototype.BODY_RAW = function () {
-  var length = this.end - this.offset;
-  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
-  this.offset = this.end;
-};
-
-HTTPParser.prototype.BODY_SIZED = function () {
-  var length = Math.min(this.end - this.offset, this.body_bytes);
-  this.userCall()(this[kOnBody](this.chunk, this.offset, length));
-  this.offset += length;
-  this.body_bytes -= length;
-  if (!this.body_bytes) {
-    this.nextRequest();
-  }
-};
-
-// backward compat to node < 0.11.6
-['Headers', 'HeadersComplete', 'Body', 'MessageComplete'].forEach(function (name) {
-  var k = HTTPParser['kOn' + name];
-  Object.defineProperty(HTTPParser.prototype, 'on' + name, {
-    get: function () {
-      return this[k];
-    },
-    set: function (to) {
-      // hack for backward compatibility
-      this._compatMode = true;
-      return (this[k] = to);
-    }
-  });
-});
-
-},{"assert":1}],68:[function(require,module,exports){
-arguments[4][9][0].apply(exports,arguments)
-},{"dup":9}],69:[function(require,module,exports){
+},{}],75:[function(require,module,exports){
 var ip = exports,
     Buffer = require('buffer').Buffer,
     os = require('os');
@@ -13994,827 +14705,43 @@ function _normalizeFamily(family) {
   return family ? family.toLowerCase() : 'ipv4';
 }
 
-},{"buffer":3,"os":11}],70:[function(require,module,exports){
-module.exports = {
-  Server: require('./lib/server'),
-  Client: require('./lib/client'),
-  Base: require('./lib/index')
-}
-
-},{"./lib/client":71,"./lib/index":72,"./lib/server":74}],71:[function(require,module,exports){
-(function (Buffer){
-var SSDP = require('./')
-  , util = require('util')
-
-
-/**
- *
- * @param opts
- * @param [sock]
- * @constructor
- */
-function SsdpClient(opts, sock) {
-  this._subclass = 'ssdp-client'
-  SSDP.call(this, opts, sock)
-}
-
-
-
-util.inherits(SsdpClient, SSDP)
-
-
-/**
- *
- * @param [cb]
- */
-SsdpClient.prototype.start = function (cb) {
-  this._start(0, this._unicastHost, cb)
-}
-
-
-/**
- *
- * @param {String} serviceType
- * @returns {*}
- */
-SsdpClient.prototype.search = function search(serviceType) {
-  var self = this
-
-  if (!this._started) {
-    return this.start(function () {
-      self.search(serviceType)
-    })
-  }
-
-  var pkt = self._getSSDPHeader(
-    'M-SEARCH',
-    {
-      'HOST': self._ssdpServerHost,
-      'ST': serviceType,
-      'MAN': '"ssdp:discover"',
-      'MX': 3
-    }
-  )
-
-  self._logger.trace('Sending an M-SEARCH request')
-
-  var message = new Buffer(pkt)
-
-  self._send(message, function (err, bytes) {
-    self._logger.trace({'message': pkt}, 'Sent M-SEARCH request')
-  })
-}
-
-
-
-module.exports = SsdpClient
-
-}).call(this,require("buffer").Buffer)
-},{"./":72,"buffer":3,"util":33}],72:[function(require,module,exports){
-(function (process,Buffer){
-'use strict'
-
-var dgram = require('dgram')
-  , EE = require('events').EventEmitter
-  , util = require('util')
-  , ip = require('ip')
-  , Logger = require('./logger')
-
-var httpHeader = /HTTP\/\d{1}\.\d{1} \d+ .*/
-  , ssdpHeader = /^([^:]+):\s*(.*)$/
-
-var nodeVersion = process.version.substr(1)
-  , moduleVersion = require('../package.json').version
-  , moduleName = require('../package.json').name
-
-
-
-/**
- * Options:
- *
- * @param {Object} opts
- * @param {String} opts.ssdpSig SSDP signature
- * @param {String} opts.ssdpIp SSDP multicast group
- * @param {String} opts.ssdpPort SSDP port
- * @param {Number} opts.ssdpTtl Multicast TTL
- * @param {Number} opts.adInterval Interval at which to send out advertisement (ms)
- * @param {String} opts.description Path to SSDP description file
- * @param {String} opts.udn SSDP Unique Device Name
- *
- * @param {Number} opts.ttl Packet TTL
- * @param {Boolean} opts.log Disable/enable logging
- * @param {String} opts.logLevel Log level
- * @param {Boolean} opts.allowWildcards Allow wildcards in M-SEARCH packets (non-standard)
- *
- * @returns {SSDP}
- * @constructor
- */
-function SSDP(opts, sock) {
-  var self = this
-
-  if (!(this instanceof SSDP)) return new SSDP(opts)
-
-  this._subclass = this._subclass || 'ssdp-base'
-
-  // we didn't get options, only socket
-  if (!sock) {
-    if (opts && /^udp\d$/.test(opts.type) && typeof opts.addMembership == 'function') {
-      sock = opts
-      opts = null
-    }
-  }
-
-  opts = opts || {}
-
-  if (sock) {
-    this.sock = sock
-  } else {
-    this.sock = this._createSocket()
-  }
-
-  EE.call(self)
-
-  this._init(opts)
-}
-
-
-util.inherits(SSDP, EE)
-
-
-/**
- * Initializes instance properties.
- * @param opts
- * @private
- */
-SSDP.prototype._init = function (opts) {
-  opts.logger_name = this._subclass
-
-  if (opts.logJSON === undefined) {
-    opts.logJSON = true
-  }
-
-  this._logger = Logger(opts)
-
-  this._ssdpSig = opts.ssdpSig || getSsdpSignature()
-
-  // User shouldn't need to set these
-  this._ssdpIp = opts.ssdpIp || '239.255.255.250'
-  this._ssdpPort = opts.ssdpPort || 1900
-  this._ssdpTtl = opts.ssdpTtl || 1
-
-  this._adInterval = opts.adInterval || 10000
-
-  this._ttl = opts.ttl || 1800
-
-  if (typeof opts.location === 'function') {
-    Object.defineProperty(this, '_location', {
-      enumerable: true,
-      get: opts.location
-    })
-  } else {
-    // Probably should specify these
-    this._location = opts.location || 'http://' + ip.address() + ':' + 10293 + '/upnp/desc.html'
-  }
-
-  this._unicastHost = opts.unicastHost || '0.0.0.0'
-  this._ssdpServerHost = this._ssdpIp + ':' + this._ssdpPort
-
-  this._usns = {}
-  this._udn = opts.udn || 'uuid:f40c2981-7329-40b7-8b04-27f187aecfb5'
-
-  this._allowWildcards = opts.allowWildcards
-}
-
-
-
-/**
- * Creates and returns UDP4 socket.
- * Prior to node v0.12.x `dgram.createSocket` did not accept
- * an object and socket reuse was not available; this method
- * contains a crappy workaround to make version of node before 0.12
- * to work correctly. See https://github.com/diversario/node-ssdp/pull/38
- *
- * @returns {Socket}
- * @private
- */
-SSDP.prototype._createSocket = function () {
-  if (/^v0\.1[2-8]\.\d+/.test(process.version)) {
-    return dgram.createSocket({type: 'udp4', reuseAddr: true})
-  }
-
-  return dgram.createSocket('udp4')
-}
-
-
-/**
- * Advertise shutdown and close UDP socket.
- */
-SSDP.prototype._stop = function () {
-  if (!this.sock) {
-    this._logger.warn('Already stopped.')
-    return
-  }
-
-  this.sock.close()
-  this.sock = null
-
-  this._socketBound = this._started = false
-}
-
-
-/**
- * Configures UDP socket `socket`.
- * Binds event listeners.
- */
-SSDP.prototype._start = function (port, host, cb) {
-  var self = this
-
-  if (self._started) {
-    self._logger.warn('Already started.')
-    return
-  }
-
-  self._started = true
-
-  this.sock.on('error', function onSocketError(err) {
-    self._logger.error(err, 'Socker error')
-  })
-
-  this.sock.on('message', function onSocketMessage(msg, rinfo) {
-    self._parseMessage(msg, rinfo)
-  })
-
-  this.sock.on('listening', function onSocketListening() {
-    var addr = self.sock.address()
-
-    self._logger.info({address: 'http://' + addr.address + ':' + addr.port}, 'SSDP listening')
-
-    addMembership()
-
-    function addMembership() {
-      try {
-        self.sock.addMembership(self._ssdpIp)
-        // self.sock.setMulticastTTL(self._ssdpTtl)
-      } catch (e) {
-        if (e.code === 'ENODEV') {
-          self._logger.warn(e, 'No interface present to add multicast group membership. Scheduling a retry.')
-          setTimeout(addMembership, 5000)
-        } else {
-          throw e
-        }
-      }
-    }
-  })
-
-  this.sock.bind(port, host, cb)
-}
-
-
-
-/**
- * Routes a network message to the appropriate handler.
- *
- * @param msg
- * @param rinfo
- */
-SSDP.prototype._parseMessage = function (msg, rinfo) {
-  msg = msg.toString()
-
-  //this._logger.trace({message: msg}, 'Multicast message')
-
-  var type = msg.split('\r\n').shift()
-
-  // HTTP/#.# ### Response to M-SEARCH
-  if (httpHeader.test(type)) {
-    this._parseResponse(msg, rinfo)
-  } else {
-    this._parseCommand(msg, rinfo)
-  }
-}
-
-
-/**
- * Parses SSDP command.
- *
- * @param msg
- * @param rinfo
- */
-SSDP.prototype._parseCommand = function parseCommand(msg, rinfo) {
-  var method = this._getMethod(msg)
-    , headers = this._getHeaders(msg)
-
-  switch (method) {
-    case 'NOTIFY':
-      this._notify(headers, msg, rinfo)
-      break
-    case 'M-SEARCH':
-      this._msearch(headers, msg, rinfo)
-      break
-    default:
-      this._logger.warn({'message': msg, 'rinfo': rinfo}, 'Unhandled command')
-  }
-}
-
-
-
-/**
- * Handles NOTIFY command
- * Emits `advertise-alive`, `advertise-bye` events.
- *
- * @param headers
- * @param _msg
- * @param _rinfo
- */
-SSDP.prototype._notify = function (headers, _msg, _rinfo) {
-  if (!headers.NTS) this._logger.trace(headers, 'Missing NTS header')
-
-  switch (headers.NTS.toLowerCase()) {
-    // Device coming to life.
-    case 'ssdp:alive':
-      this.emit('advertise-alive', headers)
-      break
-
-    // Device shutting down.
-    case 'ssdp:byebye':
-      this.emit('advertise-bye', headers)
-      break
-
-    default:
-      this._logger.trace({'message': _msg, 'rinfo': _rinfo}, 'Unhandled NOTIFY event')
-  }
-}
-
-
-
-/**
- * Handles M-SEARCH command.
- *
- * @param headers
- * @param msg
- * @param rinfo
- */
-SSDP.prototype._msearch = function (headers, msg, rinfo) {
-  this._logger.trace({'ST': headers.ST, 'address': rinfo.address, 'port': rinfo.port}, 'SSDP M-SEARCH event')
-
-  if (!headers.MAN || !headers.MX || !headers.ST) return
-
-  this._respondToSearch(headers.ST, rinfo)
-}
-
-
-
-/**
- * Sends out a response to M-SEARCH commands.
- *
- * @param {String} serviceType Service type requested by a client
- * @param {Object} rinfo Remote client's address
- * @private
- */
-SSDP.prototype._respondToSearch = function (serviceType, rinfo) {
-  var self = this
-    , peer = rinfo.address
-    , port = rinfo.port
-    , stRegex
-    , acceptor
-
-  // unwrap quoted string
-  if (serviceType[0] == '"' && serviceType[serviceType.length-1] == '"') {
-    serviceType = serviceType.slice(1, -1)
-  }
-
-  if (self._allowWildcards) {
-      stRegex = new RegExp(serviceType.replace(/\*/g, '.*') + '$')
-      acceptor = function(usn, serviceType) {
-          return serviceType === 'ssdp:all' || stRegex.test(usn)
-      }
-  } else {
-      acceptor = function(usn, serviceType) {
-          return serviceType === 'ssdp:all' || usn === serviceType
-      }
-  }
-
-  Object.keys(self._usns).forEach(function (usn) {
-    var udn = self._usns[usn]
-
-    if (self._allowWildcards) {
-        udn = udn.replace(stRegex, serviceType)
-    }
-
-    if (acceptor(usn, serviceType)) {
-      var pkt = self._getSSDPHeader(
-        '200 OK',
-        {
-          'ST': serviceType === 'ssdp:all' ? usn : serviceType,
-          'USN': udn,
-          'LOCATION': self._location,
-          'CACHE-CONTROL': 'max-age=' + self._ttl,
-          'DATE': new Date().toUTCString(),
-          'SERVER': self._ssdpSig,
-          'EXT': ''
-        },
-        true
-      )
-
-      self._logger.trace({'peer': peer, 'port': port}, 'Sending a 200 OK for an M-SEARCH')
-
-      var message = new Buffer(pkt)
-
-      self._send(message, peer, port, function (err, bytes) {
-        self._logger.trace({'message': pkt}, 'Sent M-SEARCH response')
-      })
-    }
-  })
-}
-
-
-
-/**
- * Parses SSDP response message.
- *
- * @param msg
- * @param rinfo
- */
-SSDP.prototype._parseResponse = function parseResponse(msg, rinfo) {
-  this._logger.info({'message': msg}, 'SSDP response')
-
-  var headers = this._getHeaders(msg)
-    , statusCode = this._getStatusCode(msg)
-
-  this.emit('response', headers, statusCode, rinfo)
-}
-
-
-
-SSDP.prototype.addUSN = function (device) {
-  this._usns[device] = this._udn + '::' + device
-}
-
-
-
-SSDP.prototype._getSSDPHeader = function (method, headers, isResponse) {
-  var message = []
-
-  if (isResponse) {
-    message.push('HTTP/1.1 ' + method)
-  } else {
-    message.push(method + ' * HTTP/1.1')
-  }
-
-  Object.keys(headers).forEach(function (header) {
-    message.push(header + ': ' + headers[header])
-  })
-
-  message.push('\r\n')
-
-  return message.join('\r\n')
-}
-
-
-
-SSDP.prototype._getMethod = function _getMethod(msg) {
-  var lines = msg.split("\r\n")
-    , type = lines.shift().split(' ')// command, such as "NOTIFY * HTTP/1.1"
-    , method = type[0]
-
-  return method
-}
-
-
-
-SSDP.prototype._getStatusCode = function _getStatusCode(msg) {
-  var lines = msg.split("\r\n")
-    , type = lines.shift().split(' ')// command, such as "NOTIFY * HTTP/1.1"
-    , code = parseInt(type[1], 10)
-
-  return code
-}
-
-
-
-SSDP.prototype._getHeaders = function _getHeaders(msg) {
-  var lines = msg.split("\r\n")
-
-  var headers = {}
-
-  lines.forEach(function (line) {
-    if (line.length) {
-      var pairs = line.match(ssdpHeader)
-      if (pairs) headers[pairs[1].toUpperCase()] = pairs[2] // e.g. {'HOST': 239.255.255.250:1900}
-    }
-  })
-
-  return headers
-}
-
-
-
-SSDP.prototype._send = function (message, host, port, cb) {
-  var self = this
-
-  if (typeof host === 'function') {
-    cb = host
-    host = this._ssdpIp
-    port = this._ssdpPort
-  }
-
-  self.sock.send(message, 0, message.length, port, host, cb)
-}
-
-
-
-function getSsdpSignature() {
-  return 'node.js/' + nodeVersion + ' UPnP/1.1 ' + moduleName + '/' + moduleVersion
-}
-
-
-
-module.exports = SSDP
-
-}).call(this,require('_process'),require("buffer").Buffer)
-},{"../package.json":75,"./logger":73,"_process":12,"buffer":3,"dgram":"dgram","events":8,"ip":69,"util":33}],73:[function(require,module,exports){
-(function (process){
-/**
- * Use logging facilities when available
- * and stub it out when not.
- */
-
-try {
-  var bunyan = require('bunyan')
-  var PrettyStream = require('bunyan-prettystream')
-
-  process.stdout.setMaxListeners(100)
-} catch(e) {
-  module.exports = function () {
-    var stubs = {};
-
-    ['trace', 'debug', 'info', 'warn', 'error', 'fatal'].forEach(function (level) {
-      stubs[level] = function () {}
-    })
-
-    return stubs
-  }
-
-  return
-}
-
-module.exports = function(config) {
-  if (!config) config = {}
-  
-  var loggerConfig = {
-    name: config.logger_name,
-    streams: [],
-    src: false
-  }
-  
-  if (config.logLevel) {
-    if (config.logJSON) {
-      loggerConfig.streams.push({
-        level: 'error',
-        stream: process.stdout
-      })
-    } else {
-      var prettyStdOut = new PrettyStream()
-      prettyStdOut.pipe(process.stdout)
-
-      loggerConfig.streams.push({
-        level: 'error',
-          stream: prettyStdOut,
-          type: 'raw'
-      })
-    }
-  }
-
-  var logger = bunyan.createLogger(loggerConfig)
-
-  if (process.env.LOG_LEVEL) {
-    logger.level(process.env.LOG_LEVEL)
-  } else {
-  config.logLevel && logger.level(config.logLevel)
-  }
-
-  // enable call source location in the log
-  if (logger.level() <= 20) {
-    logger.src = true
-  }
-
-  return logger
-}
-
-}).call(this,require('_process'))
-},{"_process":12,"bunyan":35,"bunyan-prettystream":34}],74:[function(require,module,exports){
-(function (Buffer){
-var SSDP = require('./')
-  , util = require('util')
-  , assert = require('assert')
-
-function SsdpServer(opts, sock) {
-  this._subclass = 'ssdp-server'
-  SSDP.call(this, opts, sock)
-}
-
-util.inherits(SsdpServer, SSDP)
-
-
-/**
- * Binds UDP socket to an interface/port
- * and starts advertising.
- *
- * @param ipAddress
- */
-SsdpServer.prototype.start = function () {
-  var self = this
-
-  if (self._socketBound) {
-    self._logger.warn('Server already running.')
-    return
-  }
-
-  self._socketBound = true
-
-  this._usns[this._udn] = this._udn
-
-  this._logger.trace('Will try to bind to ' + this._unicastHost + ':' + this._ssdpPort)
-
-  self._start(this._ssdpPort, this._unicastHost, this._initAdLoop.bind(this))
-}
-
-
-/**
- * Binds UDP socket
- *
- * @param ipAddress
- * @private
- */
-SsdpServer.prototype._initAdLoop = function () {
-  var self = this
-
-  self._logger.info('UDP socket bound', {host: this._unicastHost, port: self._ssdpPort})
-
-  // FIXME: what's the point in advertising we're dead
-  // if the cache is going to be busted anyway?
-  self.advertise(false)
-
-  setTimeout(function () {
-    self.advertise(false)
-  }, 1000)
-
-  // Wake up.
-  setTimeout(self.advertise.bind(self), 2000)
-  setTimeout(self.advertise.bind(self), 3000)
-
-  self._startAdLoop()
-}
-
-
-
-
-/**
- * Advertise shutdown and close UDP socket.
- */
-SsdpServer.prototype.stop = function () {
-  if (!this.sock) {
-    this._logger.warn('Already stopped.')
-    return
-  }
-
-  this.advertise(false)
-  this.advertise(false)
-
-  this._stopAdLoop()
-
-  this._stop()
-}
-
-SsdpServer.prototype.pause = function () {
-  if (!this.sock) {
-    this._logger.warn('Already stopped.')
-    return
-  }
-
-  this.advertise(false)
-  this.advertise(false)
-
-  this._stopAdLoop()
-}
-
-SsdpServer.prototype.resume = function () {
-  if (!this.sock) {
-    this._logger.warn('Already stopped.')
-    return
-  }
-
-  this._initAdLoop()
-}
-
-SsdpServer.prototype._startAdLoop = function () {
-  assert.equal(this._adLoopInterval, null, 'Attempting to start a parallel ad loop')
-
-  this._adLoopInterval = setInterval(this.advertise.bind(this), this._adInterval)
-}
-
-
-
-SsdpServer.prototype._stopAdLoop = function () {
-  assert.notEqual(this._adLoopInterval, null, 'Attempting to clear a non-existing interval')
-
-  clearInterval(this._adLoopInterval)
-  this._adLoopInterval = null
-}
-
-
-
-/**
- *
- * @param alive
- */
-SsdpServer.prototype.advertise = function (alive) {
-  var self = this
-
-  if (!this.sock) return
-  if (alive === undefined) alive = true
-
-  Object.keys(self._usns).forEach(function (usn) {
-    var udn = self._usns[usn]
-      , nts = alive ? 'ssdp:alive' : 'ssdp:byebye' // notification sub-type
-
-    var heads = {
-      'HOST': self._ssdpServerHost,
-      'NT': usn, // notification type, in this case same as ST
-      'NTS': nts,
-      'USN': udn
-    }
-
-    if (alive) {
-      heads['LOCATION'] = self._location
-      heads['CACHE-CONTROL'] = 'max-age=1800'
-      heads['SERVER'] = self._ssdpSig // why not include this?
-    }
-
-    self._logger.trace('Sending an advertisement event')
-
-    var message = self._getSSDPHeader('NOTIFY', heads)
-
-    self._send(new Buffer(message), function (err, bytes) {
-      self._logger.trace({'message': message}, 'Outgoing server message')
-    })
-  })
-}
-
-module.exports = SsdpServer
-
-}).call(this,require("buffer").Buffer)
-},{"./":72,"assert":1,"buffer":3,"util":33}],75:[function(require,module,exports){
+},{"buffer":3,"os":11}],76:[function(require,module,exports){
 module.exports={
-  "_args": [
-    [
-      "node-ssdp@git+https://github.com/No9/node-ssdp.git",
-      "/home/anton/code/clowder"
-    ]
+  "name": "node-ssdp",
+  "description": "A node.js SSDP client and server library.",
+  "keywords": [
+    "ssdp",
+    "multicast",
+    "media",
+    "device",
+    "upnp"
   ],
-  "_from": "git+https://github.com/No9/node-ssdp.git",
-  "_id": "node-ssdp@2.5.1",
-  "_inCache": true,
-  "_location": "/node-ssdp",
-  "_phantomChildren": {},
-  "_requested": {
-    "hosted": {
-      "directUrl": "https://raw.githubusercontent.com/No9/node-ssdp/master/package.json",
-      "gitUrl": "git://github.com/No9/node-ssdp.git",
-      "httpsUrl": "git+https://github.com/No9/node-ssdp.git",
-      "shortcut": "github:No9/node-ssdp",
-      "ssh": "git@github.com:No9/node-ssdp.git",
-      "sshUrl": "git+ssh://git@github.com/No9/node-ssdp.git",
-      "type": "github"
-    },
-    "name": "node-ssdp",
-    "raw": "node-ssdp@git+https://github.com/No9/node-ssdp.git",
-    "rawSpec": "git+https://github.com/No9/node-ssdp.git",
-    "scope": null,
-    "spec": "git+https://github.com/No9/node-ssdp.git",
-    "type": "hosted"
-  },
-  "_requiredBy": [
-    "/"
-  ],
-  "_resolved": "git+https://github.com/No9/node-ssdp.git#f884711f9c6c1fece0447e71d2e634acc7e9bc83",
-  "_shasum": "b0d10b8aebe42d9ddc0a64d4aff61e92e735aed1",
-  "_shrinkwrap": null,
-  "_spec": "node-ssdp@git+https://github.com/No9/node-ssdp.git",
-  "_where": "/home/anton/code/clowder",
+  "version": "2.5.1",
   "author": {
-    "email": "ilya.shaisultanov@gmail.com",
-    "name": "Ilya Shaisultanov"
+    "name": "Ilya Shaisultanov",
+    "email": "ilya.shaisultanov@gmail.com"
+  },
+  "dependencies": {
+    "ip": "^0.3.2",
+    "bunyan-pretty-colors": "~0.1.7",
+    "bunyan": "~1.4.0",
+    "bunyan-prettystream": "~0.1.3"
+  },
+  "optionalDependencies": {
+    "bunyan-prettystream": "~0.1.3",
+    "bunyan": "~1.4.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/diversario/node-ssdp.git"
   },
   "bugs": {
     "url": "https://github.com/diversario/node-ssdp/issues"
   },
-  "dependencies": {
-    "bunyan": "~1.4.0",
-    "bunyan-pretty-colors": "~0.1.7",
-    "bunyan-prettystream": "~0.1.3",
-    "ip": "^0.3.2"
+  "main": "./index",
+  "engines": {
+    "node": ">=0.10.0"
   },
-  "description": "A node.js SSDP client and server library.",
   "devDependencies": {
     "chai": "^3.2.0",
     "coveralls": "~2.11.2",
@@ -14823,103 +14750,24 @@ module.exports={
     "mocha-istanbul": "~0.2.0",
     "sinon": "~1.14.1"
   },
+  "scripts": {
+    "test": "make coveralls",
+    "coverage": "istanbul cover node_modules/.bin/_mocha -- test/lib --recursive"
+  },
+  "homepage": "https://github.com/diversario/node-ssdp#readme",
   "directories": {
     "example": "example",
     "test": "test"
   },
-  "engines": {
-    "node": ">=0.10.0"
-  },
-  "gitHead": "f884711f9c6c1fece0447e71d2e634acc7e9bc83",
-  "homepage": "https://github.com/diversario/node-ssdp#readme",
-  "installable": true,
-  "keywords": [
-    "device",
-    "media",
-    "multicast",
-    "ssdp",
-    "upnp"
-  ],
   "license": "MIT",
-  "main": "./index",
-  "name": "node-ssdp",
-  "optionalDependencies": {
-    "bunyan": "~1.4.0",
-    "bunyan-prettystream": "~0.1.3"
-  },
-  "readme": "[![Build Status](https://travis-ci.org/diversario/node-ssdp.svg?branch=master)](https://travis-ci.org/diversario/node-ssdp)\n[![Coverage Status](https://img.shields.io/coveralls/diversario/node-ssdp.svg)](https://coveralls.io/r/diversario/node-ssdp?branch=master)\n[![Dependency Status](https://gemnasium.com/diversario/node-ssdp.png)](https://gemnasium.com/diversario/node-ssdp)\n[![NPM version](https://badge.fury.io/js/node-ssdp.svg)](http://badge.fury.io/js/node-ssdp)\n[![Stories in Ready](https://badge.waffle.io/diversario/node-ssdp.png?label=ready&title=Ready)](https://waffle.io/diversario/node-ssdp)\n\n## Installation\n\n```sh\nnpm install node-ssdp\n```\n\nThere is another package called `ssdp` which is the original unmaintained version. Make sure to install `node-ssdp` instead.\n\n## Usage - Client\n\n```javascript\n    var Client = require('node-ssdp').Client\n      , client = new Client();\n\n    client.on('response', function (headers, statusCode, rinfo) {\n      console.log('Got a response to an m-search.');\n    });\n\n    // search for a service type\n    client.search('urn:schemas-upnp-org:service:ContentDirectory:1');\n\n    // Or get a list of all services on the network\n\n    client.search('ssdp:all');\n```\n\n## Usage - Server\n\n```javascript\n    var Server = require('node-ssdp').Server\n      , server = new Server()\n    ;\n\n    server.addUSN('upnp:rootdevice');\n    server.addUSN('urn:schemas-upnp-org:device:MediaServer:1');\n    server.addUSN('urn:schemas-upnp-org:service:ContentDirectory:1');\n    server.addUSN('urn:schemas-upnp-org:service:ConnectionManager:1');\n\n    server.on('advertise-alive', function (headers) {\n      // Expire old devices from your cache.\n      // Register advertising device somewhere (as designated in http headers heads)\n    });\n\n    server.on('advertise-bye', function (headers) {\n      // Remove specified device from cache.\n    });\n\n    // start the server\n    server.start();\n\n    process.on('exit', function(){\n      server.stop() // advertise shutting down and stop listening\n    })\n```\n\nTake a look at `example` directory as well to see examples or client and server.\n\n##Configuration\n`new SSDP([options, [socket]])`\n\nSSDP constructor accepts an optional configuration object and an optional initialized socket. At the moment, the following is supported:\n\n- `logLevel` _String_ Specifies log level to print. Possible values: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL`. If not explicitly set in options logging is disabled completely.\n- `logJSON` _Boolean_ Log JSON strings (using [bunyan](https://github.com/trentm/node-bunyan)). Default: `true`.\n- `ssdpSig` _String_ SSDP signature. Default: `node.js/NODE_VERSION UPnP/1.1 node-ssdp/PACKAGE_VERSION`\n- `ssdpIp` _String_ SSDP multicast group. Default: `239.255.255.250`.\n- `ssdpPort` _Number_ SSDP port. Default: `1900`\n- `ssdpTtl` _Number_ Multicast TTL. Default: `1`\n- `adInterval` _Number_ `advertise` event frequency (ms). Default: 10 sec.\n- `unicastHost` _String_ IP address or hostname of server where SSDP service is running. This is used in `HOST` header. Default: `0.0.0.0`.\n- `location` _String_ URL pointing to description of your service, or a function which returns that URL\n- `udn` _String_ Unique Device Name. Default: `uuid:f40c2981-7329-40b7-8b04-27f187aecfb5`.\n- `description` _String_ Path to description file. Default: `upnp/desc.php`.\n- `ttl` _Number_ Packet TTL. Default: `1800`.\n- `allowWildcards` _Boolean_ Accept wildcards (`*`) in `serviceTypes` of `M-SEARCH` packets, e.g. `usn:Belkin:device:**`. Default: `false`\n\n###Logging\nAside from `logLevel` configuration option you can set the level via an environment variable `LOG_LEVEL`, which overrides configuration.\n\nAt log levels `DEBUG` and `TRACE` module will print call source location.\n\nUse `bunyan` CLI tool to pretty-print JSON logs; running the module with pretty-print enabled is not recommended. \n\n# License\n\n(The MIT License)\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the 'Software'), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n\n[![Analytics](https://ga-beacon.appspot.com/UA-51511945-1/node-ssdp/README.md)](https://github.com/igrigorik/ga-beacon)\n",
+  "gitHead": "e50793af0c7f43a4aace706fcb08d070a983ce2e",
+  "readme": "[![Build Status](https://travis-ci.org/diversario/node-ssdp.svg?branch=master)](https://travis-ci.org/diversario/node-ssdp)\r\n[![Coverage Status](https://img.shields.io/coveralls/diversario/node-ssdp.svg)](https://coveralls.io/r/diversario/node-ssdp?branch=master)\r\n[![Dependency Status](https://gemnasium.com/diversario/node-ssdp.png)](https://gemnasium.com/diversario/node-ssdp)\r\n[![NPM version](https://badge.fury.io/js/node-ssdp.svg)](http://badge.fury.io/js/node-ssdp)\r\n[![Stories in Ready](https://badge.waffle.io/diversario/node-ssdp.png?label=ready&title=Ready)](https://waffle.io/diversario/node-ssdp)\r\n\r\n## Installation\r\n\r\n```sh\r\nnpm install node-ssdp\r\n```\r\n\r\nThere is another package called `ssdp` which is the original unmaintained version. Make sure to install `node-ssdp` instead.\r\n\r\n## Usage - Client\r\n\r\n```javascript\r\n    var Client = require('node-ssdp').Client\r\n      , client = new Client();\r\n\r\n    client.on('response', function (headers, statusCode, rinfo) {\r\n      console.log('Got a response to an m-search.');\r\n    });\r\n\r\n    // search for a service type\r\n    client.search('urn:schemas-upnp-org:service:ContentDirectory:1');\r\n\r\n    // Or get a list of all services on the network\r\n\r\n    client.search('ssdp:all');\r\n```\r\n\r\n## Usage - Server\r\n\r\n```javascript\r\n    var Server = require('node-ssdp').Server\r\n      , server = new Server()\r\n    ;\r\n\r\n    server.addUSN('upnp:rootdevice');\r\n    server.addUSN('urn:schemas-upnp-org:device:MediaServer:1');\r\n    server.addUSN('urn:schemas-upnp-org:service:ContentDirectory:1');\r\n    server.addUSN('urn:schemas-upnp-org:service:ConnectionManager:1');\r\n\r\n    server.on('advertise-alive', function (headers) {\r\n      // Expire old devices from your cache.\r\n      // Register advertising device somewhere (as designated in http headers heads)\r\n    });\r\n\r\n    server.on('advertise-bye', function (headers) {\r\n      // Remove specified device from cache.\r\n    });\r\n\r\n    // start the server\r\n    server.start();\r\n\r\n    process.on('exit', function(){\r\n      server.stop() // advertise shutting down and stop listening\r\n    })\r\n```\r\n\r\nTake a look at `example` directory as well to see examples or client and server.\r\n\r\n##Configuration\r\n`new SSDP([options, [socket]])`\r\n\r\nSSDP constructor accepts an optional configuration object and an optional initialized socket. At the moment, the following is supported:\r\n\r\n- `logLevel` _String_ Specifies log level to print. Possible values: `TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`, `FATAL`. If not explicitly set in options logging is disabled completely.\r\n- `logJSON` _Boolean_ Log JSON strings (using [bunyan](https://github.com/trentm/node-bunyan)). Default: `true`.\r\n- `ssdpSig` _String_ SSDP signature. Default: `node.js/NODE_VERSION UPnP/1.1 node-ssdp/PACKAGE_VERSION`\r\n- `ssdpIp` _String_ SSDP multicast group. Default: `239.255.255.250`.\r\n- `ssdpPort` _Number_ SSDP port. Default: `1900`\r\n- `ssdpTtl` _Number_ Multicast TTL. Default: `1`\r\n- `adInterval` _Number_ `advertise` event frequency (ms). Default: 10 sec.\r\n- `unicastHost` _String_ IP address or hostname of server where SSDP service is running. This is used in `HOST` header. Default: `0.0.0.0`.\r\n- `location` _String_ URL pointing to description of your service, or a function which returns that URL\r\n- `udn` _String_ Unique Device Name. Default: `uuid:f40c2981-7329-40b7-8b04-27f187aecfb5`.\r\n- `description` _String_ Path to description file. Default: `upnp/desc.php`.\r\n- `ttl` _Number_ Packet TTL. Default: `1800`.\r\n- `allowWildcards` _Boolean_ Accept wildcards (`*`) in `serviceTypes` of `M-SEARCH` packets, e.g. `usn:Belkin:device:**`. Default: `false`\r\n\r\n###Logging\r\nAside from `logLevel` configuration option you can set the level via an environment variable `LOG_LEVEL`, which overrides configuration.\r\n\r\nAt log levels `DEBUG` and `TRACE` module will print call source location.\r\n\r\nUse `bunyan` CLI tool to pretty-print JSON logs; running the module with pretty-print enabled is not recommended. \r\n\r\n# License\r\n\r\n(The MIT License)\r\n\r\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the 'Software'), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\r\n\r\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\r\n\r\nTHE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\r\n\r\n[![Analytics](https://ga-beacon.appspot.com/UA-51511945-1/node-ssdp/README.md)](https://github.com/igrigorik/ga-beacon)\r\n",
   "readmeFilename": "README.md",
-  "repository": {
-    "type": "git",
-    "url": "git+ssh://git@github.com/diversario/node-ssdp.git"
-  },
-  "scripts": {
-    "coverage": "istanbul cover node_modules/.bin/_mocha -- test/lib --recursive",
-    "test": "make coveralls"
-  },
-  "version": "2.5.1"
+  "_id": "node-ssdp@2.5.1",
+  "_shasum": "d1e33a258fe354383574932e77ca98f73ba35f4d",
+  "_from": "git+https://github.com/No9/node-ssdp.git",
+  "_resolved": "git+https://github.com/No9/node-ssdp.git#e50793af0c7f43a4aace706fcb08d070a983ce2e"
 }
-
-},{}],76:[function(require,module,exports){
-var hasProp = Object.prototype.hasOwnProperty;
-
-function throwsMessage(err) {
-	return '[Throws: ' + (err ? err.message : '?') + ']';
-}
-
-function safeGetValueFromPropertyOnObject(obj, property) {
-	if (hasProp.call(obj, property)) {
-		try {
-			return obj[property];
-		}
-		catch (err) {
-			return throwsMessage(err);
-		}
-	}
-
-	return obj[property];
-}
-
-function ensureProperties(obj) {
-	var seen = [ ]; // store references to objects we have seen before
-
-	function visit(obj) {
-		if (obj === null || typeof obj !== 'object') {
-			return obj;
-		}
-
-		if (seen.indexOf(obj) !== -1) {
-			return '[Circular]';
-		}
-		seen.push(obj);
-
-		if (typeof obj.toJSON === 'function') {
-			try {
-				return visit(obj.toJSON());
-			} catch(err) {
-				return throwsMessage(err);
-			}
-		}
-
-		if (Array.isArray(obj)) {
-			return obj.map(visit);
-		}
-
-		return Object.keys(obj).reduce(function(result, prop) {
-			// prevent faulty defined getter properties
-			result[prop] = visit(safeGetValueFromPropertyOnObject(obj, prop));
-			return result;
-		}, {});
-	};
-
-	return visit(obj);
-}
-
-module.exports = function(data) {
-	return JSON.stringify(ensureProperties(data));
-}
-
-module.exports.ensureProperties = ensureProperties;
 
 },{}],77:[function(require,module,exports){
 chrome.app.runtime.onLaunched.addListener(function () { // eslint-disable-line
@@ -15005,7 +14853,7 @@ chrome.runtime.onMessage.addListener(function (event) {
   }
 })
 
-},{"http":"http","node-ssdp":70}],"debug":[function(require,module,exports){
+},{"http":"http","node-ssdp":67}],"debug":[function(require,module,exports){
 
 /**
  * This is the web browser implementation of `debug()`.
@@ -15176,7 +15024,7 @@ function localstorage(){
   } catch (e) {}
 }
 
-},{"./debug":36,"localstorage-memory":37}],"depd":[function(require,module,exports){
+},{"./debug":34,"localstorage-memory":35}],"depd":[function(require,module,exports){
 (function (process){
 /*!
  * depd
@@ -15709,7 +15557,7 @@ function DeprecationError(namespace, message, stack) {
 }
 
 }).call(this,require('_process'))
-},{"./lib/compat":41,"_process":12,"events":8,"path":"path"}],"dgram":[function(require,module,exports){
+},{"./lib/compat":39,"_process":12,"events":8,"path":"path"}],"dgram":[function(require,module,exports){
 (function (Buffer){
 /*global chrome */
 
@@ -16141,7 +15989,7 @@ Socket.prototype.ref = function () {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":3,"events":8,"inherits":42,"run-series":43}],"fs":[function(require,module,exports){
+},{"buffer":3,"events":8,"inherits":40,"run-series":41}],"fs":[function(require,module,exports){
 (function (process){
 var util = require('util')
 var Buffer = require('buffer').Buffer
@@ -17411,7 +17259,7 @@ https.request = function (params, cb) {
     params.scheme = 'https';
     return http.request.call(this, params, cb);
 }
-},{"./http":48}],"http":[function(require,module,exports){
+},{"./http":46}],"http":[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -17531,7 +17379,7 @@ exports.createClient = util.deprecate(function(port, host) {
   return new Client(port, host);
 }, 'http.createClient is deprecated. Use `http.request` instead.');
 
-},{"./_http_agent":60,"./_http_client":61,"./_http_common":62,"./_http_incoming":63,"./_http_outgoing":64,"./_http_server":65,"events":8,"util":33}],"net":[function(require,module,exports){
+},{"./_http_agent":59,"./_http_client":60,"./_http_common":61,"./_http_incoming":62,"./_http_outgoing":63,"./_http_server":64,"events":8,"util":33}],"net":[function(require,module,exports){
 (function (process,Buffer){
 /*global chrome */
 
@@ -18690,7 +18538,7 @@ function errnoException (err, syscall) {
 }
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":12,"buffer":3,"core-util-is":59,"events":8,"inherits":68,"stream":28,"timers":30,"util":33}],"path":[function(require,module,exports){
+},{"_process":12,"buffer":3,"core-util-is":57,"events":8,"inherits":58,"stream":28,"timers":30,"util":33}],"path":[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //

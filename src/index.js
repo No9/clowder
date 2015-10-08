@@ -13,7 +13,16 @@ var createBus = require('chrome-bus')
 var wikidbevents = require('./wikidbevents')
 var bus = createBus()
 
-bus.emit(wikidbevents.RECENT)
+var wikiview = document.getElementById('wikidbview') 
+wikiview.addEventListener('contentload', function (evt) { // You have to wait for the webview to load before attaching the eventbus 
+  var wvbus = createBus(wikiview) // Pass in the webview when creating the bus 
+  wvbus.on(wikidbevents.RECENTREPONSE, function (msg) {
+    console.log('Message Received')
+    console.log(msg)
+  })
+  
+  wvbus.emit(wikidbevents.RECENT, '')
+})
 var connection = new Connection()
 var Pages = require('./pages')
 var pages = new Pages()

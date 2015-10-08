@@ -23,6 +23,7 @@ bus.on(wikidbevents.WRITE, function (msg) {
 
 bus.on(wikidbevents.RECENT, function (msg) {
   var recentlist = [];
+  console.log('WIKI DB RECENT REQUEST')
   var rs = wdb.recent().pipe(through.obj(function (row, enc, next) {
 	console.log('key:  ' + row.meta.key)
 	console.log('hash: ' + row.hash)
