@@ -7032,10 +7032,8 @@ function ChromeBus (opts) {
   } else {
     this._key = opts.key || 'chrome-bus'
     chrome.runtime.onMessage.addListener(function (ev) { // eslint-disable-line
-      if (ev.key === self._key) {
-        try { var value = JSON.parse(ev.newValue) } catch (err) { return }
+        var value = JSON.parse(ev) // } catch (err) { return }
         if (Array.isArray(value)) emit.apply(self, value)
-      }
     })
   }
 }

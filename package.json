@@ -29,7 +29,7 @@
   },
   "homepage": "https://github.com/No9/clowder#readme",
   "dependencies": {
-    "chrome-bus": "^2.0.0",
+    "chrome-bus": "^2.1.0",
     "chrome-debug": "^1.0.0",
     "chrome-depd": "^1.0.1",
     "chrome-dgram": "^2.1.7",

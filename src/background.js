@@ -13,6 +13,10 @@ var Server = require('node-ssdp').Server
 var Client = require('node-ssdp').Client
 var httpServer = {}
 var server = new Server()
+var createBus = require('chrome-bus')
+var cnnevents = require('./connectionevents')
+var svcmgr = createBus()
+
 server.addUSN('upnp:rootdevice')
 server.addUSN('urn:schemas-upnp-org:service:ContentDirectory:1')
 
@@ -38,17 +42,6 @@ function startServices () {
   } else {
     server.start()
   }
-  
-  
-  // var client = new Client()
-  // 
-  // client.on('response', function (headers, statusCode, rinfo) {
-  //   console.log('Got a response to an m-search.')
-  //   console.log(headers)
-  //   console.log(statusCode)
-  //   console.log(rinfo)
-  // })
-  // client.search('urn:schemas-upnp-org:service:ContentDirectory:1')
 }
 
 function stopServices () {
@@ -56,27 +49,14 @@ function stopServices () {
   httpServer.close()
 }
 
-chrome.runtime.onMessage.addListener(function (event) {
-  console.log('Got message from webpage: ' + event)
-  var msg = JSON.parse(event)
-  if (msg.type === 'service') {
-    switch (msg.action) {
-      case 'start' :
-        startServices()
-        var msg = {}
-        msg.type = 'service'
-        msg.action = 'started'
-        chrome.runtime.sendMessage([JSON.stringify(msg)])
-        break
-      case 'stop' :
-        stopServices()
-        var msg = {}
-        msg.type = 'service'
-        msg.action = 'stopped'
-        chrome.runtime.sendMessage([JSON.stringify(msg)])
-        break
-      default :
-        break
-    }
-  }
+svcmgr.on(cnnevents.START, function (data) {
+  console.log('starting services')
+  startServices()
+  svcmgr.emit(cnnevents.STARTRESPONSE, '')
+})
+
+svcmgr.on(cnnevents.STOP, function (data) {
+  console.log('stopping services')
+  stopServices()
+  svcmgr.emit(cnnevents.STOPRESPONSE)
 })

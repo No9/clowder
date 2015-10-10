@@ -7044,6 +7044,67 @@ function hasOwnProperty(obj, prop) {
 
 }).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
 },{"./support/isBuffer":32,"_process":12,"inherits":9}],34:[function(require,module,exports){
+var EventEmitter = require('events').EventEmitter
+var util = require('util')
+
+module.exports = ChromeBus
+util.inherits(ChromeBus, EventEmitter)
+
+var emit = EventEmitter.prototype.emit
+var on = EventEmitter.prototype.on
+
+function ChromeBus (opts) {
+  if (!(this instanceof ChromeBus)) return new ChromeBus(opts)
+  if (!opts) opts = {}
+
+  var self = this
+  EventEmitter.call(this)
+  if (typeof opts === 'string') opts = { key: opts }
+  if (opts.tagName === 'WEBVIEW') {
+    this._key = 'chrome-bus'
+    this.source = opts.contentWindow
+    window.addEventListener('message', function (ev) {
+      var value = JSON.parse(ev.data)
+      if (Array.isArray(value)) emit.apply(self, value)
+    })
+  } else if (window.location.href.indexOf('#fragment') > -1) {
+    this._key = 'chrome-bus'
+    window.addEventListener('message', function (ev) {
+      if (!self.source) {
+        self.source = ev.source
+      }
+      var value = JSON.parse(ev.data)
+      if (Array.isArray(value)) emit.apply(self, value)
+    }, false)
+  } else {
+    this._key = opts.key || 'chrome-bus'
+    chrome.runtime.onMessage.addListener(function (ev) { // eslint-disable-line
+        var value = JSON.parse(ev) // } catch (err) { return }
+        if (Array.isArray(value)) emit.apply(self, value)
+    })
+  }
+}
+
+ChromeBus.prototype.on = function (name, f) {
+  on.apply(this, arguments)
+}
+
+ChromeBus.prototype.emit = function (name) {
+  emit.apply(this, arguments)
+  var args = [].slice.call(arguments)
+  if (this.source) {
+    this.source.postMessage([JSON.stringify(args)], '*')
+  } else {
+    if (window.location.href.indexOf('#fragment') > -1) {
+      console.warn('This is a webview and the host page has not evented to it yet so the channel is not set up')
+      return
+    }
+    chrome.runtime.sendMessage([JSON.stringify(args)]) // eslint-disable-line  
+  }
+  return this
+}
+
+},{"events":8,"util":33}],35:[function(require,module,exports){
 
 /**
  * This is the common logic for both the Node.js and web browser
@@ -7242,7 +7303,7 @@ function coerce(val) {
   return val;
 }
 
-},{"ms":36}],35:[function(require,module,exports){
+},{"ms":37}],36:[function(require,module,exports){
 (function(root) {
   var localStorageMemory = {};
   var cache = {};
@@ -7323,7 +7384,7 @@ function coerce(val) {
 
 
 
-},{}],36:[function(require,module,exports){
+},{}],37:[function(require,module,exports){
 /**
  * Helpers.
  */
@@ -7450,7 +7511,7 @@ function plural(ms, n, name) {
   return Math.ceil(ms / n) + ' ' + name + 's';
 }
 
-},{}],37:[function(require,module,exports){
+},{}],38:[function(require,module,exports){
 (function (Buffer){
 /*!
  * depd
@@ -7487,7 +7548,7 @@ function bufferConcat(bufs) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":3}],38:[function(require,module,exports){
+},{"buffer":3}],39:[function(require,module,exports){
 /*!
  * depd
  * Copyright(c) 2014 Douglas Christopher Wilson
@@ -7590,7 +7651,7 @@ function getConstructorName(obj) {
   return (receiver.constructor && receiver.constructor.name) || null
 }
 
-},{}],39:[function(require,module,exports){
+},{}],40:[function(require,module,exports){
 (function (Buffer){
 /*!
  * depd
@@ -7663,9 +7724,9 @@ function toString(obj) {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"./buffer-concat":37,"./callsite-tostring":38,"buffer":3}],40:[function(require,module,exports){
+},{"./buffer-concat":38,"./callsite-tostring":39,"buffer":3}],41:[function(require,module,exports){
 arguments[4][9][0].apply(exports,arguments)
-},{"dup":9}],41:[function(require,module,exports){
+},{"dup":9}],42:[function(require,module,exports){
 var dezalgo = require('dezalgo')
 
 module.exports = function (tasks, cb) {
@@ -7689,7 +7750,7 @@ module.exports = function (tasks, cb) {
   }
 }
 
-},{"dezalgo":42}],42:[function(require,module,exports){
+},{"dezalgo":43}],43:[function(require,module,exports){
 var wrappy = require('wrappy')
 module.exports = wrappy(dezalgo)
 
@@ -7713,7 +7774,7 @@ function dezalgo (cb) {
   }
 }
 
-},{"asap":43,"wrappy":45}],43:[function(require,module,exports){
+},{"asap":44,"wrappy":46}],44:[function(require,module,exports){
 "use strict";
 
 // rawAsap provides everything we need except exception management.
@@ -7781,7 +7842,7 @@ RawTask.prototype.call = function () {
     }
 };
 
-},{"./raw":44}],44:[function(require,module,exports){
+},{"./raw":45}],45:[function(require,module,exports){
 (function (global){
 "use strict";
 
@@ -8005,7 +8066,7 @@ rawAsap.makeRequestCallFromTimer = makeRequestCallFromTimer;
 // https://github.com/tildeio/rsvp.js/blob/cddf7232546a9cf858524b75cde6f9edf72620a7/lib/rsvp/asap.js
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],45:[function(require,module,exports){
+},{}],46:[function(require,module,exports){
 // Returns a wrapper function that returns a wrapped callback
 // The wrapper function should do some stuff, and return a
 // presumably different callback function.
@@ -8040,7 +8101,7 @@ function wrappy (fn, cb) {
   }
 }
 
-},{}],46:[function(require,module,exports){
+},{}],47:[function(require,module,exports){
 var ClientRequest = require('./lib/request')
 var extend = require('xtend')
 var statusCodes = require('builtin-status-codes')
@@ -8093,7 +8154,7 @@ http.METHODS = [
 	'PUT',
 	'DELETE' // TODO: include the methods from RFC 2616 and 2518?
 ]
-},{"./lib/request":48,"builtin-status-codes":50,"url":31,"xtend":56}],47:[function(require,module,exports){
+},{"./lib/request":49,"builtin-status-codes":51,"url":31,"xtend":57}],48:[function(require,module,exports){
 exports.fetch = isFunction(window.fetch) && isFunction(window.ReadableByteStream)
 
 exports.blobConstructor = false
@@ -8127,7 +8188,7 @@ function isFunction (value) {
 }
 
 xhr = null // Help gc
-},{}],48:[function(require,module,exports){
+},{}],49:[function(require,module,exports){
 (function (process,Buffer){
 var capability = require('./capability')
 var foreach = require('foreach')
@@ -8411,7 +8472,7 @@ var unsafeHeaders = [
 ]
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"./capability":47,"./response":49,"_process":12,"buffer":3,"foreach":51,"indexof":52,"inherits":53,"object-keys":54,"stream":28}],49:[function(require,module,exports){
+},{"./capability":48,"./response":50,"_process":12,"buffer":3,"foreach":52,"indexof":53,"inherits":54,"object-keys":55,"stream":28}],50:[function(require,module,exports){
 (function (process,Buffer){
 var capability = require('./capability')
 var foreach = require('foreach')
@@ -8588,7 +8649,7 @@ IncomingMessage.prototype._onXHRProgress = function () {
 }
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"./capability":47,"_process":12,"buffer":3,"foreach":51,"inherits":53,"stream":28}],50:[function(require,module,exports){
+},{"./capability":48,"_process":12,"buffer":3,"foreach":52,"inherits":54,"stream":28}],51:[function(require,module,exports){
 module.exports = {
   "100": "Continue",
   "101": "Switching Protocols",
@@ -8649,7 +8710,7 @@ module.exports = {
   "511": "Network Authentication Required"
 }
 
-},{}],51:[function(require,module,exports){
+},{}],52:[function(require,module,exports){
 
 var hasOwn = Object.prototype.hasOwnProperty;
 var toString = Object.prototype.toString;
@@ -8673,7 +8734,7 @@ module.exports = function forEach (obj, fn, ctx) {
 };
 
 
-},{}],52:[function(require,module,exports){
+},{}],53:[function(require,module,exports){
 
 var indexOf = [].indexOf;
 
@@ -8684,9 +8745,9 @@ module.exports = function(arr, obj){
   }
   return -1;
 };
-},{}],53:[function(require,module,exports){
+},{}],54:[function(require,module,exports){
 arguments[4][9][0].apply(exports,arguments)
-},{"dup":9}],54:[function(require,module,exports){
+},{"dup":9}],55:[function(require,module,exports){
 'use strict';
 
 // modified from https://github.com/es-shims/es5-shim
@@ -8773,7 +8834,7 @@ keysShim.shim = function shimObjectKeys() {
 
 module.exports = keysShim;
 
-},{"./isArguments":55}],55:[function(require,module,exports){
+},{"./isArguments":56}],56:[function(require,module,exports){
 'use strict';
 
 var toStr = Object.prototype.toString;
@@ -8792,7 +8853,7 @@ module.exports = function isArguments(value) {
 	return isArgs;
 };
 
-},{}],56:[function(require,module,exports){
+},{}],57:[function(require,module,exports){
 module.exports = extend
 
 function extend() {
@@ -8811,11 +8872,11 @@ function extend() {
     return target
 }
 
-},{}],57:[function(require,module,exports){
+},{}],58:[function(require,module,exports){
 arguments[4][23][0].apply(exports,arguments)
-},{"buffer":3,"dup":23}],58:[function(require,module,exports){
+},{"buffer":3,"dup":23}],59:[function(require,module,exports){
 arguments[4][9][0].apply(exports,arguments)
-},{"dup":9}],59:[function(require,module,exports){
+},{"dup":9}],60:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -9091,7 +9152,7 @@ Agent.prototype.destroy = function() {
 
 exports.globalAgent = new Agent();
 
-},{"events":8,"net":"net","util":33}],60:[function(require,module,exports){
+},{"events":8,"net":"net","util":33}],61:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -9673,7 +9734,7 @@ ClientRequest.prototype.clearTimeout = function(cb) {
 };
 
 }).call(this,require('_process'))
-},{"./_http_agent":59,"./_http_common":61,"./_http_outgoing":63,"_process":12,"assert":1,"buffer":3,"events":8,"http-parser-js":66,"net":"net","url":31,"util":33}],61:[function(require,module,exports){
+},{"./_http_agent":60,"./_http_common":62,"./_http_outgoing":64,"_process":12,"assert":1,"buffer":3,"events":8,"http-parser-js":67,"net":"net","url":31,"util":33}],62:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -9901,7 +9962,7 @@ function httpSocketSetup(socket) {
 }
 exports.httpSocketSetup = httpSocketSetup;
 
-},{"./_http_incoming":62,"freelist":65,"http-parser-js":66,"util":33}],62:[function(require,module,exports){
+},{"./_http_incoming":63,"freelist":66,"http-parser-js":67,"util":33}],63:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -10099,7 +10160,7 @@ IncomingMessage.prototype._dump = function() {
   }
 };
 
-},{"stream":28,"util":33}],63:[function(require,module,exports){
+},{"stream":28,"util":33}],64:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -10733,7 +10794,7 @@ OutgoingMessage.prototype.flushHeaders = function outgoingFlushHeaders() {
 };
 
 }).call(this,require('_process'))
-},{"./_http_common":61,"_process":12,"assert":1,"buffer":3,"stream":28,"timers":30,"util":33}],64:[function(require,module,exports){
+},{"./_http_common":62,"_process":12,"assert":1,"buffer":3,"stream":28,"timers":30,"util":33}],65:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -11231,7 +11292,7 @@ function connectionListener(socket) {
 }
 exports._connectionListener = connectionListener;
 
-},{"./_http_common":61,"./_http_outgoing":63,"assert":1,"events":8,"http-parser-js":66,"net":"net","util":33}],65:[function(require,module,exports){
+},{"./_http_common":62,"./_http_outgoing":64,"assert":1,"events":8,"http-parser-js":67,"net":"net","util":33}],66:[function(require,module,exports){
 var FreeList = (function() {
 	function FreeList(name, max, constructor) {
 		this.name = name;
@@ -11265,7 +11326,7 @@ FreeList.FreeList = FreeList;
 
 module.exports = FreeList;
 
-},{}],66:[function(require,module,exports){
+},{}],67:[function(require,module,exports){
 /*jshint node:true */
 
 var assert = require('assert');
@@ -11623,14 +11684,14 @@ HTTPParser.prototype.BODY_SIZED = function () {
   });
 });
 
-},{"assert":1}],67:[function(require,module,exports){
+},{"assert":1}],68:[function(require,module,exports){
 module.exports = {
   Server: require('./lib/server'),
   Client: require('./lib/client'),
   Base: require('./lib/index')
 }
 
-},{"./lib/client":68,"./lib/index":69,"./lib/server":71}],68:[function(require,module,exports){
+},{"./lib/client":69,"./lib/index":70,"./lib/server":72}],69:[function(require,module,exports){
 (function (Buffer){
 var SSDP = require('./')
   , util = require('util')
@@ -11699,7 +11760,7 @@ SsdpClient.prototype.search = function search(serviceType) {
 module.exports = SsdpClient
 
 }).call(this,require("buffer").Buffer)
-},{"./":69,"buffer":3,"util":33}],69:[function(require,module,exports){
+},{"./":70,"buffer":3,"util":33}],70:[function(require,module,exports){
 (function (process,Buffer){
 'use strict'
 
@@ -12160,7 +12221,7 @@ function getSsdpSignature() {
 module.exports = SSDP
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"../package.json":76,"./logger":70,"_process":12,"buffer":3,"dgram":"dgram","events":8,"ip":75,"util":33}],70:[function(require,module,exports){
+},{"../package.json":77,"./logger":71,"_process":12,"buffer":3,"dgram":"dgram","events":8,"ip":76,"util":33}],71:[function(require,module,exports){
 (function (process){
 /**
  * Use logging facilities when available
@@ -12230,7 +12291,7 @@ module.exports = function(config) {
 }
 
 }).call(this,require('_process'))
-},{"_process":12,"bunyan":73,"bunyan-prettystream":72}],71:[function(require,module,exports){
+},{"_process":12,"bunyan":74,"bunyan-prettystream":73}],72:[function(require,module,exports){
 (function (Buffer){
 var SSDP = require('./')
   , util = require('util')
@@ -12392,7 +12453,7 @@ SsdpServer.prototype.advertise = function (alive) {
 module.exports = SsdpServer
 
 }).call(this,require("buffer").Buffer)
-},{"./":69,"assert":1,"buffer":3,"util":33}],72:[function(require,module,exports){
+},{"./":70,"assert":1,"buffer":3,"util":33}],73:[function(require,module,exports){
 "use strict";
 
 var Stream = require('stream').Stream;
@@ -12824,7 +12885,7 @@ PrettyStream.prototype.end = function end(){
 
 module.exports = PrettyStream;
 
-},{"http":"http","stream":28,"util":33}],73:[function(require,module,exports){
+},{"http":"http","stream":28,"util":33}],74:[function(require,module,exports){
 (function (process,Buffer){
 /**
  * Copyright (c) 2014 Trent Mick. All rights reserved.
@@ -14262,7 +14323,7 @@ module.exports.RotatingFileStream = RotatingFileStream;
 module.exports.safeCycles = safeCycles;
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":12,"assert":1,"buffer":3,"events":8,"fs":"fs","os":11,"safe-json-stringify":74,"util":33}],74:[function(require,module,exports){
+},{"_process":12,"assert":1,"buffer":3,"events":8,"fs":"fs","os":11,"safe-json-stringify":75,"util":33}],75:[function(require,module,exports){
 var hasProp = Object.prototype.hasOwnProperty;
 
 function throwsMessage(err) {
@@ -14323,7 +14384,7 @@ module.exports = function(data) {
 
 module.exports.ensureProperties = ensureProperties;
 
-},{}],75:[function(require,module,exports){
+},{}],76:[function(require,module,exports){
 var ip = exports,
     Buffer = require('buffer').Buffer,
     os = require('os');
@@ -14705,7 +14766,7 @@ function _normalizeFamily(family) {
   return family ? family.toLowerCase() : 'ipv4';
 }
 
-},{"buffer":3,"os":11}],76:[function(require,module,exports){
+},{"buffer":3,"os":11}],77:[function(require,module,exports){
 module.exports={
   "name": "node-ssdp",
   "description": "A node.js SSDP client and server library.",
@@ -14769,7 +14830,7 @@ module.exports={
   "_resolved": "git+https://github.com/No9/node-ssdp.git#e50793af0c7f43a4aace706fcb08d070a983ce2e"
 }
 
-},{}],77:[function(require,module,exports){
+},{}],78:[function(require,module,exports){
 chrome.app.runtime.onLaunched.addListener(function () { // eslint-disable-line
   chrome.app.window.create('index.html', { // eslint-disable-line
     'bounds': {
@@ -14785,6 +14846,10 @@ var Server = require('node-ssdp').Server
 var Client = require('node-ssdp').Client
 var httpServer = {}
 var server = new Server()
+var createBus = require('chrome-bus')
+var cnnevents = require('./connectionevents')
+var svcmgr = createBus()
+
 server.addUSN('upnp:rootdevice')
 server.addUSN('urn:schemas-upnp-org:service:ContentDirectory:1')
 
@@ -14810,17 +14875,6 @@ function startServices () {
   } else {
     server.start()
   }
-  
-  
-  // var client = new Client()
-  // 
-  // client.on('response', function (headers, statusCode, rinfo) {
-  //   console.log('Got a response to an m-search.')
-  //   console.log(headers)
-  //   console.log(statusCode)
-  //   console.log(rinfo)
-  // })
-  // client.search('urn:schemas-upnp-org:service:ContentDirectory:1')
 }
 
 function stopServices () {
@@ -14828,32 +14882,29 @@ function stopServices () {
   httpServer.close()
 }
 
-chrome.runtime.onMessage.addListener(function (event) {
-  console.log('Got message from webpage: ' + event)
-  var msg = JSON.parse(event)
-  if (msg.type === 'service') {
-    switch (msg.action) {
-      case 'start' :
-        startServices()
-        var msg = {}
-        msg.type = 'service'
-        msg.action = 'started'
-        chrome.runtime.sendMessage([JSON.stringify(msg)])
-        break
-      case 'stop' :
-        stopServices()
-        var msg = {}
-        msg.type = 'service'
-        msg.action = 'stopped'
-        chrome.runtime.sendMessage([JSON.stringify(msg)])
-        break
-      default :
-        break
-    }
-  }
+svcmgr.on(cnnevents.START, function (data) {
+  console.log('starting services')
+  startServices()
+  svcmgr.emit(cnnevents.STARTRESPONSE, '')
 })
 
-},{"http":"http","node-ssdp":67}],"debug":[function(require,module,exports){
+svcmgr.on(cnnevents.STOP, function (data) {
+  console.log('stopping services')
+  stopServices()
+  svcmgr.emit(cnnevents.STOPRESPONSE)
+})
+
+},{"./connectionevents":79,"chrome-bus":34,"http":"http","node-ssdp":68}],79:[function(require,module,exports){
+function ConnectionEvents () {
+}
+
+ConnectionEvents.START = 'START'
+ConnectionEvents.STARTRESPONSE = 'STARTRESPONSE'
+ConnectionEvents.STOP = 'STOP'
+ConnectionEvents.STOPRESPONSE = 'STOPRESPONSE'
+
+module.exports = ConnectionEvents
+},{}],"debug":[function(require,module,exports){
 
 /**
  * This is the web browser implementation of `debug()`.
@@ -15024,7 +15075,7 @@ function localstorage(){
   } catch (e) {}
 }
 
-},{"./debug":34,"localstorage-memory":35}],"depd":[function(require,module,exports){
+},{"./debug":35,"localstorage-memory":36}],"depd":[function(require,module,exports){
 (function (process){
 /*!
  * depd
@@ -15557,7 +15608,7 @@ function DeprecationError(namespace, message, stack) {
 }
 
 }).call(this,require('_process'))
-},{"./lib/compat":39,"_process":12,"events":8,"path":"path"}],"dgram":[function(require,module,exports){
+},{"./lib/compat":40,"_process":12,"events":8,"path":"path"}],"dgram":[function(require,module,exports){
 (function (Buffer){
 /*global chrome */
 
@@ -15989,7 +16040,7 @@ Socket.prototype.ref = function () {
 }
 
 }).call(this,require("buffer").Buffer)
-},{"buffer":3,"events":8,"inherits":40,"run-series":41}],"fs":[function(require,module,exports){
+},{"buffer":3,"events":8,"inherits":41,"run-series":42}],"fs":[function(require,module,exports){
 (function (process){
 var util = require('util')
 var Buffer = require('buffer').Buffer
@@ -17259,7 +17310,7 @@ https.request = function (params, cb) {
     params.scheme = 'https';
     return http.request.call(this, params, cb);
 }
-},{"./http":46}],"http":[function(require,module,exports){
+},{"./http":47}],"http":[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -17379,7 +17430,7 @@ exports.createClient = util.deprecate(function(port, host) {
   return new Client(port, host);
 }, 'http.createClient is deprecated. Use `http.request` instead.');
 
-},{"./_http_agent":59,"./_http_client":60,"./_http_common":61,"./_http_incoming":62,"./_http_outgoing":63,"./_http_server":64,"events":8,"util":33}],"net":[function(require,module,exports){
+},{"./_http_agent":60,"./_http_client":61,"./_http_common":62,"./_http_incoming":63,"./_http_outgoing":64,"./_http_server":65,"events":8,"util":33}],"net":[function(require,module,exports){
 (function (process,Buffer){
 /*global chrome */
 
@@ -18538,7 +18589,7 @@ function errnoException (err, syscall) {
 }
 
 }).call(this,require('_process'),require("buffer").Buffer)
-},{"_process":12,"buffer":3,"core-util-is":57,"events":8,"inherits":58,"stream":28,"timers":30,"util":33}],"path":[function(require,module,exports){
+},{"_process":12,"buffer":3,"core-util-is":58,"events":8,"inherits":59,"stream":28,"timers":30,"util":33}],"path":[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -18854,4 +18905,4 @@ function config (name) {
   return false
 }
 
-},{}]},{},[77]);
+},{}]},{},[78]);
