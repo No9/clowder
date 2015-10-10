@@ -6351,6 +6351,7 @@ var Showdown={extensions:{}},forEach=Showdown.forEach=function(a,b){if(typeof a.
             tabMode: 'indent',
             lineWrapping: true
         });
+        window.editor = editor
 
     // Really not the best way to do things as it includes Markdown formatting along with words
     function updateWordCount() {
