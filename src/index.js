@@ -47,7 +47,7 @@ var editorview = document.getElementById('editorview')
 
 editorview.addEventListener('contentload', function (evt) { // You have to wait for the webview to load before attaching the eventbus 
   editorbus = createBus(editorview) // Pass in the webview when creating the bus 
-  editorbus.on(editorevents.RECENTREPONSE, function (msg) {
+  editorbus.on(editorevents.LATESTRESPONSE, function (msg) {
     console.log('latest content')
     console.log(msg)
   })
@@ -64,7 +64,7 @@ var pagestable = document.getElementById('pagestable')
 pages.appendTable(pagestable)
 
 document.getElementById('btnSave').addEventListener('click', function (evt) {
-  editorbus.emit(wikidbevents.RECENT, '')
+  editorbus.emit(editorevents.LATEST, '')
 })
 
 function updateWebviews () {

@@ -50,6 +50,7 @@
   },
   "devDependencies": {
     "chokidar": "^1.0.5",
-    "tiny-lr": "^0.1.6"
+    "tiny-lr": "^0.1.6",
+    "tape": "~4.1.0"
   }
 }
