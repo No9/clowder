@@ -1,3 +1,17 @@
+
+#titleInput:required:invalid, input:focus:invalid {
+  background-image: url(/images/invalid.png);
+  background-position: right top;
+  background-repeat: no-repeat;
+  border: solid 1px
+}
+#titleInput:required:valid {
+  background-image: url(/images/valid.png);
+  background-position: right top;
+  background-repeat: no-repeat;
+  border: solid 1px
+}
+
 .container {
   max-width: 800px; }
 .header {

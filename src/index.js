@@ -53,6 +53,7 @@ editorview.addEventListener('contentload', function (evt) { // You have to wait 
   })
   document.getElementById('btnCreate').addEventListener('click', function (evt) {
     pgmgr('createpage')
+    document.getElementById('titleInput').focus()
     editorbus.emit(editorevents.NEW, '')
   })
 })
@@ -64,6 +65,11 @@ var pagestable = document.getElementById('pagestable')
 pages.appendTable(pagestable)
 
 document.getElementById('btnSave').addEventListener('click', function (evt) {
+  if (document.getElementById('titleInput').value === '') {
+    document.getElementById('titleInput').focus()
+    console.log('YOU CAN\' SAVE IT')
+    return false
+  }
   editorbus.emit(editorevents.LATEST, '')
 })
 
