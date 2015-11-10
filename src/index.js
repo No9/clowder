@@ -33,23 +33,25 @@ connectionbus.on(connectionevents.STOPRESPONSE, function (evt) {
 })
 
 // Attach buses to views
-var wikiview = document.getElementById('wikidbview') 
+var wikiview = document.getElementById('wikidbview')
+var wvbus
 wikiview.addEventListener('contentload', function (evt) { // You have to wait for the webview to load before attaching the eventbus 
-  var wvbus = createBus(wikiview) // Pass in the webview when creating the bus 
-  wvbus.on(wikidbevents.RECENTREPONSE, function (msg) {
-    console.log('Message Received')
+  wvbus = createBus(wikiview) // Pass in the webview when creating the bus 
+  wvbus.on(wikidbevents.RECENTRESPONSE, function (msg) {
+    console.log('Recentlist Received')
     console.log(msg)
   })
   wvbus.emit(wikidbevents.RECENT, '')
 })
 
 var editorview = document.getElementById('editorview')
-
+var editorbus
 editorview.addEventListener('contentload', function (evt) { // You have to wait for the webview to load before attaching the eventbus 
   editorbus = createBus(editorview) // Pass in the webview when creating the bus 
   editorbus.on(editorevents.LATESTRESPONSE, function (msg) {
     console.log('latest content')
     console.log(msg)
+    wvbus.emit(wikidbevents.WRITE, { 'page': msg.content, 'opts' : { 'key' : document.getElementById('titleInput').value, 'prev': undefined, 'tag': undefined }})
   })
   document.getElementById('btnCreate').addEventListener('click', function (evt) {
     pgmgr('createpage')
@@ -70,6 +72,8 @@ document.getElementById('btnSave').addEventListener('click', function (evt) {
     console.log('YOU CAN\' SAVE IT')
     return false
   }
+  
+  // msg { page: '', opts:{ key: 'welcome page', prev: undefined, tag: 'welcome' }}
   editorbus.emit(editorevents.LATEST, '')
 })
 
