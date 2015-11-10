@@ -40,7 +40,15 @@ wikiview.addEventListener('contentload', function (evt) { // You have to wait fo
   wvbus.on(wikidbevents.RECENTRESPONSE, function (msg) {
     console.log('Recentlist Received')
     console.log(msg)
+    recentpages.update(recentpagestile, msg)
   })
+  
+  // Update the UI on a write response
+  wvbus.on(wikidbevents.WRITERESPONSE, function(msg) {
+    wvbus.emit(wikidbevents.RECENT, '')
+  })
+  
+  // Get the recent content
   wvbus.emit(wikidbevents.RECENT, '')
 })
 
@@ -62,9 +70,15 @@ editorview.addEventListener('contentload', function (evt) { // You have to wait 
 
 // UI Components
 var Pages = require('./pages')
+var RecentPages = require('./tiles/recentpages')
+
 var pages = new Pages()
+var recentpages = new RecentPages() 
+var recentpagestile = document.getElementById('recentpagestile') 
 var pagestable = document.getElementById('pagestable')
+
 pages.appendTable(pagestable)
+
 
 document.getElementById('btnSave').addEventListener('click', function (evt) {
   if (document.getElementById('titleInput').value === '') {

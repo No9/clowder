@@ -12331,7 +12331,15 @@ wikiview.addEventListener('contentload', function (evt) { // You have to wait fo
   wvbus.on(wikidbevents.RECENTRESPONSE, function (msg) {
     console.log('Recentlist Received')
     console.log(msg)
+    recentpages.update(recentpagestile, msg)
   })
+  
+  // Update the UI on a write response
+  wvbus.on(wikidbevents.WRITERESPONSE, function(msg) {
+    wvbus.emit(wikidbevents.RECENT, '')
+  })
+  
+  // Get the recent content
   wvbus.emit(wikidbevents.RECENT, '')
 })
 
@@ -12353,9 +12361,15 @@ editorview.addEventListener('contentload', function (evt) { // You have to wait 
 
 // UI Components
 var Pages = require('./pages')
+var RecentPages = require('./tiles/recentpages')
+
 var pages = new Pages()
+var recentpages = new RecentPages() 
+var recentpagestile = document.getElementById('recentpagestile') 
 var pagestable = document.getElementById('pagestable')
+
 pages.appendTable(pagestable)
+
 
 document.getElementById('btnSave').addEventListener('click', function (evt) {
   if (document.getElementById('titleInput').value === '') {
@@ -12396,7 +12410,7 @@ document.getElementById('btnShare').addEventListener('click', function (evt) {
   pgmgr('sharepages')
 })
 
-},{"./connection":72,"./connectionevents":73,"./editorevents":74,"./pagemanager":76,"./pages":77,"./wikidbevents":78,"chrome-bus":34}],76:[function(require,module,exports){
+},{"./connection":72,"./connectionevents":73,"./editorevents":74,"./pagemanager":76,"./pages":77,"./tiles/recentpages":78,"./wikidbevents":79,"chrome-bus":34}],76:[function(require,module,exports){
 var pages = {
   'homepage' : document.getElementById('homepage'),
   'listpages' : document.getElementById('listpages'),
@@ -12474,6 +12488,29 @@ function () {
 */
 
 },{"hyperscript":67}],78:[function(require,module,exports){
+var h = require('hyperscript')
+var RecentPages = function () {
+  
+}
+// Expected output format
+// <h5>Recent Pages</h5>
+//   <ul>
+//     <li>A test page</li>
+//   </ul>
+RecentPages.prototype.update = function (element, recentlist) {
+  while (element.firstChild) {
+    element.removeChild(element.firstChild);
+  }
+  element.appendChild(h('h5', 'Recent Pages'))
+  element.appendChild(h('ul',
+    recentlist.map(function (k) {
+      return h('li', k.meta.key)
+    })
+  ))
+}
+
+module.exports = RecentPages
+},{"hyperscript":67}],79:[function(require,module,exports){
 function WikiEvents () {
 }
 
