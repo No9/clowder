@@ -1,4 +1,9 @@
-
+#pageview {
+    height:100vh;
+    background:#f00;
+    color:#fff;
+    visibility: hidden
+}
 #titleInput:required:invalid, input:focus:invalid {
   background-image: url(/images/invalid.png);
   background-position: right top;

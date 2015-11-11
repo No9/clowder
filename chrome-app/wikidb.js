@@ -27467,21 +27467,24 @@ bus.on(wikidbevents.RECENT, function (msg) {
     console.log('hash: ' + row.hash)
     console.log('date: ' + new Date(row.meta.time))
     console.log('-----------------------------')
-    var r = wdb.createReadStream(row.hash)
-    r.pipe(through.obj(function(rowdata, enc, next) {
-      row.content = rowdata.toString()
-      console.log('row')
-      console.log(row)
-      recentlist.push(row)
-    }))
-    r.on('end', function () { console.log('r ended'); next() })
+    recentlist.push(row)
+    next()
   }))
-  console.log(rs)
   rs.on('finish', function () {
     console.log(wikidbevents.RECENTRESPONSE)
     console.log(recentlist)
 	  bus.emit(wikidbevents.RECENTRESPONSE, recentlist)
   })
+})
+
+bus.on(wikidbevents.READ, function (msg) {
+  var r = wdb.createReadStream(msg.hash)
+    r.pipe(through.obj(function(row, enc, next) {
+      console.log(wikidbevents.READ)
+      msg.content = row
+      bus.emit(wikidbevents.READRESPONSE, msg)
+    }))
+    r.on('end', function () { console.log(wikidbevents.READ + ' ended');  })
 })
 
 },{"./appevents":233,"./wikidbevents":235,"chrome-bus":53,"level-browserify":140,"through2":218,"wikidb":226}],235:[function(require,module,exports){
@@ -27492,6 +27495,8 @@ WikiEvents.WRITE = 'wikiwrite'
 WikiEvents.WRITERESPONSE = 'wikiwriteresp'
 WikiEvents.RECENT = 'wikirecent'
 WikiEvents.RECENTRESPONSE = 'wikirecentresp'
+WikiEvents.READ = 'wikiread'
+WikiEvents.READRESPONSE = 'wikireadresp'
 module.exports = WikiEvents
 
 },{}],"debug":[function(require,module,exports){

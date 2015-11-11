@@ -2,6 +2,7 @@ var createBus = require('chrome-bus')
 var Connection = require('./connection') // Manages the services
 var connection = new Connection()
 var pgmgr = require('./pagemanager') // Handles tabs
+var markdown = require( "markdown" ).markdown
 
 // Constants 
 var wikidbevents = require('./wikidbevents')
@@ -37,6 +38,7 @@ var wikiview = document.getElementById('wikidbview')
 var wvbus
 wikiview.addEventListener('contentload', function (evt) { // You have to wait for the webview to load before attaching the eventbus 
   wvbus = createBus(wikiview) // Pass in the webview when creating the bus 
+  recentpages = new RecentPages(wvbus)
   wvbus.on(wikidbevents.RECENTRESPONSE, function (msg) {
     console.log('Recentlist Received')
     console.log(msg)
@@ -48,6 +50,14 @@ wikiview.addEventListener('contentload', function (evt) { // You have to wait fo
     wvbus.emit(wikidbevents.RECENT, '')
   })
   
+  // render a read 
+  wvbus.on(wikidbevents.READRESPONSE, function(msg) {
+    console.log(msg)
+    var b = new Buffer(msg.content.data)
+    // TODO: Render page
+    console.log(markdown.toHTML(b.toString()))
+    document.body.innerHTML = markdown.toHTML(b.toString())
+  })
   // Get the recent content
   wvbus.emit(wikidbevents.RECENT, '')
 })
@@ -73,7 +83,7 @@ var Pages = require('./pages')
 var RecentPages = require('./tiles/recentpages')
 
 var pages = new Pages()
-var recentpages = new RecentPages() 
+var recentpages
 var recentpagestile = document.getElementById('recentpagestile') 
 var pagestable = document.getElementById('pagestable')
 
